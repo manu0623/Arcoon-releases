@@ -1053,6 +1053,9 @@ class DualScreenManager(
     }
 
     private val _isCompanionActive = MutableStateFlow(false)
+
+    /** True while the companion screen is only away for a moment (sleep, wake, relaunch). */
+    private val _companionGrace = MutableStateFlow(false)
     val isCompanionActive: StateFlow<Boolean> = _isCompanionActive
 
     /**
@@ -1064,10 +1067,40 @@ class DualScreenManager(
         kotlinx.coroutines.flow.combine(
             _isDualScreenDevice,
             _isCompanionActive,
-            _isRolesSwapped
-        ) { dualScreen, companionActive, swapped ->
-            dualScreen && companionActive && !swapped
+            _isRolesSwapped,
+            _companionGrace
+        ) { dualScreen, companionActive, swapped, grace ->
+            // During sleep / wake the lower screen briefly disappears; the roles hold through it
+            // (grace) instead of the app flashing into single-screen mode and back.
+            !swapped && (grace || (dualScreen && companionActive))
         }.stateIn(activityIndependentScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
+
+    private var companionGraceJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Keeps the screen roles while the lower screen is away for sleep or a relaunch: until the
+     * device is awake again and a few seconds have passed, or until the companion is back.
+     */
+    private fun holdRolesThroughSleep(reason: String) {
+        if (!_isDualScreenDevice.value && !_companionGrace.value) return
+        Log.d(TAG, "Holding screen roles ($reason)")
+        com.nendo.argosy.util.ArcoonTrace.log("roles held through sleep: $reason")
+        _companionGrace.value = true
+        companionGraceJob?.cancel()
+        companionGraceJob = activityIndependentScope.launch {
+            val power = appContext.getSystemService(android.os.PowerManager::class.java)
+            kotlinx.coroutines.delay(1_500)
+            while (power?.isInteractive == false) kotlinx.coroutines.delay(500)
+            kotlinx.coroutines.delay(4_000)
+            _companionGrace.value = false
+        }
+    }
+
+    private fun endRoleHold() {
+        companionGraceJob?.cancel()
+        companionGraceJob = null
+        _companionGrace.value = false
+    }
 
     val presentationShowsHints: StateFlow<Boolean> =
         kotlinx.coroutines.flow.combine(_hasPresentationScreen, _isCompanionActive) { presentation, companion ->
@@ -1521,11 +1554,41 @@ class DualScreenManager(
         primaryDisplayId: Int?,
         gameDisplayId: Int? = emulatorDisplayId
     ): Boolean {
-        if (!_swappedIsGameActive.value) return false
+        // a game left suspended with Home isn't on screen: the launcher takes both screens back
+        if (!gameOnScreen.value) return false
         val gameDisplay = gameDisplayId ?: return false
         if (gameDisplay == primaryDisplayId) return false
         val showcase = showcaseDisplayId() ?: return true
         return gameDisplay == showcase
+    }
+
+    /**
+     * A game is running *and in front*. A game suspended with Home still counts as active for its
+     * session, but the screens go back to the launcher (board below, hero above), as in Cocoon;
+     * treating it as on screen left the top screen black and the lower one on the game dashboard.
+     */
+    val gameOnScreen: StateFlow<Boolean> =
+        kotlinx.coroutines.flow.combine(
+            _swappedIsGameActive,
+            gameSessionManager?.sessionState ?: kotlinx.coroutines.flow.MutableStateFlow(null)
+        ) { active, suspended -> active && suspended == null }
+            .stateIn(activityIndependentScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
+
+    // Debug markers in the full log: every change of who shows what on which screen.
+    init {
+        activityIndependentScope.launch {
+            kotlinx.coroutines.flow.combine(
+                listOf(companionHoldsPrimary, gameOnScreen, _swappedIsGameActive, _isCompanionActive, _isRolesSwapped)
+            ) { values -> values.joinToString() }
+                .collect { _ ->
+                    com.nendo.argosy.util.ArcoonTrace.log(
+                        "screens: companionHoldsPrimary=${companionHoldsPrimary.value} gameOnScreen=${gameOnScreen.value} " +
+                            "gameActive=${_swappedIsGameActive.value} companionActive=${_isCompanionActive.value} " +
+                            "swapped=${_isRolesSwapped.value} grace=${_companionGrace.value} dual=${_isDualScreenDevice.value} " +
+                            "emulatorDisplay=$emulatorDisplayId suspended=${gameSessionManager?.sessionState?.value?.title}"
+                    )
+                }
+        }
     }
 
     val presentationSlot: StateFlow<com.nendo.argosy.ui.dualscreen.PresentationSlot> =
@@ -1751,6 +1814,7 @@ class DualScreenManager(
     }
 
     private fun onScreenRemoved(displayId: Int) {
+        holdRolesThroughSleep("screen removed")
         releaseForeignAppOnDisplayChange(displayId)
         dockedDark = displayAffinityHelper.isDockedDark
         companionLaunchJob?.cancel()
@@ -2078,6 +2142,7 @@ class DualScreenManager(
     // --- Public methods for companion -> DSM direction ---
 
     fun onCompanionResumed() {
+        endRoleHold()
         clearForeignAppOnSecondary("companionResumed")
         companionPausedPending = false
         companionLaunchAttempts = 0
@@ -2093,6 +2158,7 @@ class DualScreenManager(
      * that display so the companion relaunch paths stand down until the companion resumes.
      */
     fun onCompanionStopped(displayId: Int, finishing: Boolean, recreating: Boolean) {
+        if (!finishing || recreating) holdRolesThroughSleep("companion stopped")
         _isCompanionActive.value = false
         companionPausedPending = false
         companionWatchdogJob?.cancel()

@@ -189,7 +189,9 @@ private fun PresentationSlotScene(
             )
         }
         when (slot) {
-            PresentationSlot.Fallback -> Unit
+            // Nothing to show yet (the board is still loading, or between screens): the theme's
+            // wallpaper instead of a black screen.
+            PresentationSlot.Fallback -> com.nendo.argosy.ui.theme.CocoonWallpaper(animated = false)
             is PresentationSlot.HomeLayoutPreview -> Box(
                 modifier = Modifier.fillMaxSize().padding(Dimens.spacingLg),
                 contentAlignment = Alignment.Center

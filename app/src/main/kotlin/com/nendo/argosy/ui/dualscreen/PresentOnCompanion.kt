@@ -3,6 +3,7 @@ package com.nendo.argosy.ui.dualscreen
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import com.nendo.argosy.DualScreenManagerHolder
 
 /**
@@ -15,7 +16,12 @@ import com.nendo.argosy.DualScreenManagerHolder
  */
 @Composable
 fun PresentOnCompanion(owner: SlotOwner, slot: PresentationSlot) {
-    val manager = DualScreenManagerHolder.instance ?: return
-    LaunchedEffect(owner, slot) { manager.presentSlot(owner, slot) }
-    DisposableEffect(owner) { onDispose { manager.releaseSlot(owner) } }
+    /*
+     * Follows the manager rather than reading it once: on a cold start the screen can be drawn
+     * before the manager exists, or the manager can be replaced, and a slot published to nobody
+     * (or to the old one) left the top screen showing nothing for the highlighted folder.
+     */
+    val manager = DualScreenManagerHolder.instanceFlow.collectAsState().value ?: return
+    LaunchedEffect(manager, owner, slot) { manager.presentSlot(owner, slot) }
+    DisposableEffect(manager, owner) { onDispose { manager.releaseSlot(owner) } }
 }

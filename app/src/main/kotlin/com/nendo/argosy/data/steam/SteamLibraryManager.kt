@@ -538,6 +538,17 @@ class SteamLibraryManager @Inject constructor(
     private suspend fun writeSteamArt(gameId: Long, appId: Long, title: String, cover: String, hero: String) {
         recordArtSource(gameArtDao, imageCacheManager, gameId, ArtSlot.COVER, listOf(cover), title, steamAppId = appId)
         recordArtSource(gameArtDao, imageCacheManager, gameId, ArtSlot.BACKGROUND, listOf(hero), title, steamAppId = appId)
+        recordSteamLogo(gameId, appId, title)
+    }
+
+    /** Steam's transparent game logo, shown over the hero art on the top screen. */
+    private suspend fun recordSteamLogo(gameId: Long, appId: Long, title: String) {
+        runCatching {
+            recordArtSource(
+                gameArtDao, imageCacheManager, gameId, ArtSlot.LOGO,
+                listOf("https://steamcdn-a.akamaihd.net/steam/apps/$appId/logo.png"), title, steamAppId = appId
+            )
+        }
     }
 
     private fun extractAssociation(common: KeyValue, type: String): String? {
@@ -575,6 +586,8 @@ class SteamLibraryManager @Inject constructor(
             )
         } else {
             gameDao.updateSteamInstallInfo(existing.id, installDir)
+            // games added before logos were fetched get theirs on the next library sync
+            existing.steamAppId?.let { recordSteamLogo(existing.id, it, existing.title) }
         }
 
         Log.d(TAG, "Updated game: ${existing.title}")

@@ -74,7 +74,13 @@ fun NavGraph(
             )
         }
 
-        composable(Screen.Home.route) {
+        composable(
+            Screen.Home.route,
+            exitTransition = {
+                if (targetState.destination.route == Screen.Settings.route) androidx.compose.animation.ExitTransition.None
+                else fadeOut(animationSpec = tween(100))
+            }
+        ) {
             val useClassicHome by com.nendo.argosy.ui.cocoon.CocoonMode.useClassicHome.collectAsState()
             if (!useClassicHome) {
                 com.nendo.argosy.ui.cocoon.CocoonHomeScreen(
@@ -289,6 +295,10 @@ fun NavGraph(
 
         composable(
             route = Screen.Settings.route,
+            // Settings appears at once instead of fading in: the fade sometimes stopped part-way on
+            // the lower screen and left it black until a button was pressed.
+            enterTransition = { androidx.compose.animation.EnterTransition.None },
+            popEnterTransition = { androidx.compose.animation.EnterTransition.None },
             arguments = listOf(
                 navArgument("section") {
                     type = NavType.StringType

@@ -95,6 +95,9 @@ object Logger {
     private var fileWriter: FileWriter? = null
     private var currentLogDate: LocalDate? = null
     private var logDirectory: String? = null
+
+    /** Where the app's log files go (the folder chosen in Settings), or null when logging is off. */
+    val currentLogDirectory: String? get() = logDirectory
     private var versionName: String = "unknown"
     private var fileLogLevel: LogLevel = LogLevel.INFO
 

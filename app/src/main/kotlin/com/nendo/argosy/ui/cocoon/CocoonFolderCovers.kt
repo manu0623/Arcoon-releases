@@ -74,6 +74,10 @@ fun CocoonFolderCovers(
 
         LaunchedEffect(focusedIndex, rows, visibleColumns) {
             if (count == 0) return@LaunchedEffect
+            // Right after R3, let the covers finish sliding before scrolling; scrolling at the same
+            // moment cut the slide short.
+            val wait = reflow.until - android.os.SystemClock.uptimeMillis()
+            if (wait > 0) kotlinx.coroutines.delay(wait)
             val column = focusedIndex / rows
             val first = state.firstVisibleItemIndex / rows
             val last = first + visibleColumns - 1
@@ -135,10 +139,14 @@ fun CocoonFolderCovers(
                                     val column = index / rows - state.firstVisibleItemIndex / rows
                                     val p = wave.progress(column.coerceAtLeast(0), index % rows)
                                     alpha = p
-                                    val scale = 0.84f + 0.16f * p
-                                    scaleX = scale
-                                    scaleY = scale
-                                    translationY = (1f - p) * 18.dp.toPx()
+                                    // The highlighted cover only fades: the cursor corners measure its
+                                    // place once, so a cover still growing would leave them off-size.
+                                    if (index != focusedIndex) {
+                                        val scale = 0.84f + 0.16f * p
+                                        scaleX = scale
+                                        scaleY = scale
+                                        translationY = (1f - p) * 18.dp.toPx()
+                                    }
                                 } else Modifier
                             )
                             .then(

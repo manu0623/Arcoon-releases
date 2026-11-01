@@ -164,13 +164,30 @@ class CocoonCursor {
     internal var view: android.view.View? = null
     internal val rects = androidx.compose.runtime.mutableStateMapOf<Any, Rect>()
     internal val outsets = HashMap<Any, Float>()
+    internal val coords = HashMap<Any, androidx.compose.ui.layout.LayoutCoordinates>()
+    internal var host: androidx.compose.ui.layout.LayoutCoordinates? = null
     internal val order = androidx.compose.runtime.mutableStateListOf<Any>()
+    /** Full-screen pages open on top of this host's items: its cursor stays hidden meanwhile. */
+    internal val covered = androidx.compose.runtime.mutableIntStateOf(0)
 
     /** The most recently focused target still focused, with its outset. */
     internal fun active(): Pair<Rect, Float>? {
         val key = order.lastOrNull() ?: return null
-        val rect = rects[key] ?: return null
-        return rect to (outsets[key] ?: 0f)
+        rects[key] ?: return null
+        val local = localRect(key) ?: return null
+        return local to (outsets[key] ?: 0f)
+    }
+
+    /**
+     * The item's bounds in the host's own space. Measured through the layers in between, so a
+     * board that zooms or fades (opening a folder) carries its cursor with it exactly; measuring
+     * in screen space and drawing inside the zooming board applied the zoom twice (the drift).
+     */
+    private fun localRect(key: Any): Rect? {
+        val h = host ?: return null
+        val c = coords[key] ?: return null
+        if (!h.isAttached || !c.isAttached) return null
+        return runCatching { h.localBoundingBoxOf(c, clipBounds = false) }.getOrNull()
     }
 }
 
@@ -193,10 +210,19 @@ private fun Modifier.cocoonCursorTarget(cursor: CocoonCursor, focused: Boolean, 
         } else {
             cursor.order.remove(key)
         }
+        onDispose { }
+    }
+    /*
+     * The item's place is forgotten only when the item itself goes away (another screen). Losing
+     * focus keeps it: the cursor glides from there. Forgetting it on every focus change made the
+     * cursor think the screen had changed, so it appeared on the next item instead of travelling.
+     */
+    androidx.compose.runtime.DisposableEffect(cursor, key) {
         onDispose {
             cursor.order.remove(key)
             cursor.rects.remove(key)
             cursor.outsets.remove(key)
+            cursor.coords.remove(key)
         }
     }
     this.onGloballyPositioned { coords ->
@@ -204,21 +230,37 @@ private fun Modifier.cocoonCursorTarget(cursor: CocoonCursor, focused: Boolean, 
         val pos = coords.positionInRoot()
         val rect = Rect(pos.x, pos.y, pos.x + coords.size.width, pos.y + coords.size.height)
         bounds.rect = rect
-        if (focused && cursor.rects[key] != rect) cursor.rects[key] = rect
+        cursor.coords[key] = coords
+        if (cursor.rects[key] != rect && (focused || key in cursor.rects)) cursor.rects[key] = rect
     }
 }
 
-/** Hosts one sliding cursor for every [cocoonBrackets] inside [content]. */
+/**
+ * Hosts one sliding cursor for every [cocoonBrackets] inside [content].
+ *
+ * [covers]: this host belongs to a full-screen page drawn over another page (Personalization,
+ * Themes…). The page underneath keeps its own row focused, and its cursor is drawn by an outer
+ * host above everything, so it would show through as a second, mismatched cursor. While a
+ * covering host is up, the host it covers draws nothing.
+ */
 @androidx.compose.runtime.Composable
 fun CocoonCursorHost(
     modifier: Modifier = Modifier,
+    covers: Boolean = false,
     content: @androidx.compose.runtime.Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
 ) {
     val cursor = androidx.compose.runtime.remember { CocoonCursor() }
-    cursor.view = androidx.compose.ui.platform.LocalView.current
-    var origin by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val view = androidx.compose.ui.platform.LocalView.current
+    cursor.view = view
+    val parent = LocalCocoonCursor.current
+    if (covers && parent != null && parent !== cursor && parent.view === view) {
+        androidx.compose.runtime.DisposableEffect(parent) {
+            parent.covered.intValue++
+            onDispose { parent.covered.intValue-- }
+        }
+    }
     androidx.compose.foundation.layout.Box(
-        modifier = modifier.onGloballyPositioned { origin = it.positionInRoot() }
+        modifier = modifier.onGloballyPositioned { cursor.host = it }
     ) {
         val scope = this
         androidx.compose.runtime.CompositionLocalProvider(LocalCocoonCursor provides cursor) {
@@ -231,11 +273,13 @@ fun CocoonCursorHost(
         val hasTarget = cursor.order.isNotEmpty()
         androidx.compose.runtime.LaunchedEffect(Unit) {
             var last = 0L
+            var gliding = false
             while (true) {
                 androidx.compose.runtime.withFrameNanos { now ->
-                    val dt = if (last == 0L) 0.016f else ((now - last) / 1e9f).coerceIn(0f, 0.05f)
+                    val dt = if (!gliding || last == 0L) 0.016f else ((now - last) / 1e9f).coerceIn(0f, 0.034f)
                     last = now
-                    if (follower.decay(dt)) tick++
+                    gliding = follower.decay(dt)
+                    if (gliding) tick++
                 }
             }
         }
@@ -257,9 +301,21 @@ fun CocoonCursorHost(
             tick
             val active = cursor.active()
             val goal = active?.let { (r, o) ->
-                Rect(r.left - origin.x - o, r.top - origin.y - o, r.right - origin.x + o, r.bottom - origin.y + o)
+                Rect(r.left - o, r.top - o, r.right + o, r.bottom + o)
             }
-            val r = goal?.let { follower.place(it, cursor.order.lastOrNull()) }
+            // The item the cursor was on is gone (another screen opened): appear on the new item
+            // instead of gliding over from where the old screen had it.
+            val activeKey = cursor.order.lastOrNull()
+            if (follower.drawnKey != null && follower.drawnKey != activeKey && follower.drawnKey !in cursor.rects) {
+                follower.reset()
+            }
+            if (cursor.covered.intValue > 0) {
+                // A page is open over this one: no cursor here, and when it closes the cursor
+                // appears straight on its item instead of gliding in from where it was.
+                follower.reset()
+                return@Canvas
+            }
+            val r = goal?.let { follower.place(it, activeKey) }
             if (alpha > 0.01f && r != null) {
                 val b = if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.settings.cursorAnimated) {
                     breath * CocoonBracketSpec.breath.toPx()
@@ -270,6 +326,14 @@ fun CocoonCursorHost(
     }
 }
 
+
+/**
+ * One slide from item to item: 260 ms, starting at once and settling softly, with no creeping
+ * tail. The first frame of a slide used to count all the idle time before it, so the cursor
+ * jumped most of the way and only the end looked animated.
+ */
+private const val GLIDE_SECONDS = 0.26f
+private val GLIDE_EASE = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 /** Moves the drawn cursor toward its goal: eased glide to a new item, then locked onto it. */
 private class CursorFollower {
@@ -286,6 +350,14 @@ private class CursorFollower {
     private var startR = 0f
     private var startB = 0f
     private var elapsed = 1f
+
+    val drawnKey: Any? get() = key
+
+    /** Forget the drawn position, so the next item is shown in place (no glide). */
+    fun reset() {
+        drawn = null
+        key = null
+    }
 
     /** Called while drawing: where the cursor goes this frame. */
     fun place(goal: Rect, goalKey: Any?): Rect {
@@ -309,10 +381,8 @@ private class CursorFollower {
     /** Called once a frame; true while the cursor is still gliding (so it redraws). */
     fun decay(dt: Float): Boolean {
         if (elapsed >= 1f) return false
-        // A fixed 150 ms ease-out glide: quick off the mark, then it lands and stops cleanly
-        // (no long creeping tail, which is what felt like a pull).
-        elapsed = (elapsed + dt / 0.15f).coerceAtMost(1f)
-        val remaining = (1f - elapsed).let { it * it * it }
+        elapsed = (elapsed + dt / GLIDE_SECONDS).coerceAtMost(1f)
+        val remaining = 1f - GLIDE_EASE.transform(elapsed)
         gapL = startL * remaining; gapT = startT * remaining
         gapR = startR * remaining; gapB = startB * remaining
         return true

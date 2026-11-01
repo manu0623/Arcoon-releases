@@ -1,4 +1,6 @@
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URI
 import java.util.Properties
 
 plugins {
@@ -15,6 +17,23 @@ val keystoreProperties = Properties().apply {
         load(keystorePropertiesFile.inputStream())
     }
 }
+
+// ---- Arcoon: build numbers ----
+// Every customRelease build gets the next number (Arcoon 3.0.1, 3.0.2, …), so the app can tell a
+// newer build apart and offer it as an update.
+val arcoonVersionFile = rootProject.file("arcoon-version.properties")
+val arcoonBuild: Int = Properties().apply {
+    if (arcoonVersionFile.exists()) arcoonVersionFile.inputStream().use { load(it) }
+}.getProperty("build", "1").trim().toInt()
+val arcoonVersionName = "3.0.$arcoonBuild"
+// Release channel: "test" (default) publishes GitHub pre-releases and skips the slow code
+// shrinking step; "stable" (arcoon.channel=stable in local.properties) makes a fully optimized
+// normal release.
+val arcoonLocalProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val arcoonStable = arcoonLocalProperties.getProperty("arcoon.channel", "test").trim().equals("stable", ignoreCase = true)
 
 val envPropertiesFile = rootProject.file(".env")
 val envProperties = Properties().apply {
@@ -34,8 +53,8 @@ android {
         applicationId = "com.nendo.argosy"
         minSdk = 26
         targetSdk = 35
-        versionCode = 368
-        versionName = "2.27.3"
+        versionCode = 400 + arcoonBuild
+        versionName = arcoonVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -99,8 +118,9 @@ android {
             }
         }
         create("customRelease") {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // test builds skip shrinking (minutes instead of ~13); stable builds are fully optimized
+            isMinifyEnabled = arcoonStable
+            isShrinkResources = arcoonStable
             isDebuggable = false
             applicationIdSuffix = ".release"
             matchingFallbacks += listOf("release")
@@ -380,4 +400,94 @@ val verifyReleaseSigningConfig = tasks.register("verifyReleaseSigningConfig") {
 tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
     dependsOn(verifyQuayPassReleaseConfig)
     dependsOn(verifyReleaseSigningConfig)
+}
+
+// ---- Arcoon: after each customRelease build ----
+// 1. a copy of the APK goes to the Desktop folder, 2. it is published as a GitHub release (when a
+// token is set in local.properties) so the app on the Thor can update itself, 3. the build number
+// goes up by one for next time.
+val arcoonApkDir = file(arcoonLocalProperties.getProperty("arcoon.apkFolder", "C:/Users/manu0/Desktop/arcoon launcher apks"))
+val arcoonApkName = "Arcoon-$arcoonVersionName.apk"
+
+val arcoonCopyApk = tasks.register("arcoonCopyApk") {
+    doLast {
+        val outDir = layout.buildDirectory.dir("outputs/apk/customRelease").get().asFile
+        val apk = outDir.listFiles()?.filter { it.name.endsWith(".apk") }?.maxByOrNull { it.lastModified() }
+        if (apk == null) {
+            logger.warn("Arcoon: no customRelease APK found to copy")
+            return@doLast
+        }
+        arcoonApkDir.mkdirs()
+        apk.copyTo(File(arcoonApkDir, arcoonApkName), overwrite = true)
+        logger.lifecycle("Arcoon: copied $arcoonApkName to $arcoonApkDir")
+    }
+}
+
+val arcoonPublishRelease = tasks.register("arcoonPublishRelease") {
+    mustRunAfter(arcoonCopyApk)
+    doLast {
+        val token = arcoonLocalProperties.getProperty("arcoon.githubToken")?.trim().orEmpty()
+        val repo = arcoonLocalProperties.getProperty("arcoon.releasesRepo", "manu0623/Arcoon-releases").trim()
+        val apk = File(arcoonApkDir, arcoonApkName)
+        if (token.isEmpty()) {
+            logger.lifecycle("Arcoon: no arcoon.githubToken in local.properties, skipping the GitHub release")
+            return@doLast
+        }
+        if (!apk.exists()) {
+            logger.warn("Arcoon: $arcoonApkName not found, skipping the GitHub release")
+            return@doLast
+        }
+        fun open(url: String, method: String, type: String): HttpURLConnection =
+            (URI(url).toURL().openConnection() as HttpURLConnection).apply {
+                requestMethod = method
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Accept", "application/vnd.github+json")
+                setRequestProperty("Content-Type", type)
+                connectTimeout = 30_000
+                readTimeout = 300_000
+            }
+        val tag = "v$arcoonVersionName"
+        val body = "{\"tag_name\":\"$tag\",\"name\":\"Arcoon $arcoonVersionName\"," +
+            "\"body\":\"Arcoon build $arcoonBuild (${if (arcoonStable) "stable" else "test"})\",\"draft\":false,\"prerelease\":${!arcoonStable}}"
+        val create = open("https://api.github.com/repos/$repo/releases", "POST", "application/json")
+        create.outputStream.use { it.write(body.toByteArray()) }
+        val code = create.responseCode
+        val reply = (if (code in 200..299) create.inputStream else create.errorStream)?.bufferedReader()?.readText().orEmpty()
+        if (code !in 200..299) {
+            logger.warn("Arcoon: GitHub release failed ($code): ${reply.take(300)}")
+            return@doLast
+        }
+        val id = Regex("\"id\"\\s*:\\s*(\\d+)").find(reply)?.groupValues?.get(1)
+        if (id == null) {
+            logger.warn("Arcoon: GitHub release created but its id was not found")
+            return@doLast
+        }
+        val upload = open(
+            "https://uploads.github.com/repos/$repo/releases/$id/assets?name=$arcoonApkName",
+            "POST", "application/vnd.android.package-archive"
+        )
+        upload.setFixedLengthStreamingMode(apk.length())
+        upload.outputStream.use { out -> apk.inputStream().use { it.copyTo(out) } }
+        val uploaded = upload.responseCode
+        if (uploaded in 200..299) {
+            logger.lifecycle("Arcoon: published $tag (${if (arcoonStable) "release" else "pre-release"}) to github.com/$repo")
+        } else {
+            logger.warn("Arcoon: APK upload failed ($uploaded): ${upload.errorStream?.bufferedReader()?.readText()?.take(300)}")
+        }
+    }
+}
+
+val arcoonBumpBuild = tasks.register("arcoonBumpBuild") {
+    mustRunAfter(arcoonCopyApk, arcoonPublishRelease)
+    doLast {
+        arcoonVersionFile.writeText(
+            "# Arcoon build number: goes up by one after every customRelease build.\nbuild=${arcoonBuild + 1}\n"
+        )
+        logger.lifecycle("Arcoon: next build will be 3.0.${arcoonBuild + 1}")
+    }
+}
+
+tasks.matching { it.name == "assembleCustomRelease" }.configureEach {
+    finalizedBy(arcoonCopyApk, arcoonPublishRelease, arcoonBumpBuild)
 }

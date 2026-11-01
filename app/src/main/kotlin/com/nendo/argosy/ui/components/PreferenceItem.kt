@@ -99,7 +99,13 @@ internal fun preferenceModifier(
     onDirectionalTap: ((Int) -> Unit)? = null
 ): Modifier {
     // Cocoon rows: a dark rounded card in every state; focus is the corner brackets, not a tint.
-    val preferenceShape = RoundedCornerShape(14.dp)
+    val group = com.nendo.argosy.ui.screens.settings.components.LocalSettingsGroupPosition.current
+    val preferenceShape = if (group == null) RoundedCornerShape(14.dp) else RoundedCornerShape(
+        topStart = if (group.first) 16.dp else 4.dp,
+        topEnd = if (group.first) 16.dp else 4.dp,
+        bottomStart = if (group.last) 16.dp else 4.dp,
+        bottomEnd = if (group.last) 16.dp else 4.dp
+    )
     val currentDirectionalTap by rememberUpdatedState(onDirectionalTap)
     val accent = preferenceAccent(isDangerous)
     val card = com.nendo.argosy.ui.theme.CocoonSurface.Chip

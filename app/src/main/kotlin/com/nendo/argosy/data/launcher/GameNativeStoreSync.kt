@@ -268,6 +268,7 @@ class GameNativeStoreSync @Inject constructor(
             val insertedId = gameDao.insert(game)
             writeArtSource(insertedId, ArtSlot.COVER, meta.coverUrl, meta.title)
             writeArtSource(insertedId, ArtSlot.BACKGROUND, meta.backgroundUrl, meta.title)
+            meta.logoUrl?.let { writeArtSource(insertedId, ArtSlot.LOGO, it, meta.title) }
             recordScreenshots(insertedId, meta.screenshotUrls, cacheScreenshots)
             Logger.debug(TAG, "reconcile: added | store=${store.slug}, title=${meta.title}, id=$id")
             added++
@@ -392,6 +393,7 @@ class GameNativeStoreSync @Inject constructor(
             title = name,
             coverUrl = "https://steamcdn-a.akamaihd.net/steam/apps/${match.id}/library_600x900.jpg",
             backgroundUrl = "https://steamcdn-a.akamaihd.net/steam/apps/${match.id}/library_hero.jpg",
+            logoUrl = "https://steamcdn-a.akamaihd.net/steam/apps/${match.id}/logo.png",
             description = details?.plainShortDescription,
             genre = details?.genres?.mapNotNull { it.description }?.joinToString(", ")?.takeIf { it.isNotBlank() },
             screenshotUrls = screenshots
@@ -429,6 +431,7 @@ class GameNativeStoreSync @Inject constructor(
         val title: String,
         val coverUrl: String? = null,
         val backgroundUrl: String? = null,
+        val logoUrl: String? = null,
         val developer: String? = null,
         val releaseYear: Int? = null,
         val genre: String? = null,

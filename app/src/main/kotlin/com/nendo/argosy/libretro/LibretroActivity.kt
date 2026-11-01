@@ -3731,6 +3731,18 @@ class LibretroActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        val pauseStartedAt = android.os.SystemClock.uptimeMillis()
+        try {
+            pauseAndSave()
+        } finally {
+            com.nendo.argosy.util.ArcoonTrace.log(
+                "game pause took ${android.os.SystemClock.uptimeMillis() - pauseStartedAt} ms " +
+                    "(core=$resolvedCoreId suspended=$suspendedByHome)"
+            )
+        }
+    }
+
+    private fun pauseAndSave() {
         releaseCoreHeldKeys()
         hideSecondScreen()
         stopRollingSave()

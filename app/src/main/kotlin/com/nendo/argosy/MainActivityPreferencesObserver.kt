@@ -22,6 +22,7 @@ class MainActivityPreferencesObserver(
     private val screenCaptureManager: ScreenCaptureManager,
     private val onDualScreenChanged: (Boolean) -> Unit,
     private val hasWindowFocus: () -> Boolean,
+    private val appContext: android.content.Context,
 ) {
 
     private var previousPrimaryColor: Int? = null
@@ -36,6 +37,12 @@ class MainActivityPreferencesObserver(
                     logDirectory = prefs.fileLoggingPath,
                     enabled = prefs.fileLoggingEnabled,
                     level = prefs.fileLogLevel
+                )
+                // the full device log (logcat-*.txt) follows the same switch and folder
+                com.nendo.argosy.util.DebugLogcat.apply(
+                    context = appContext,
+                    enabled = prefs.fileLoggingEnabled,
+                    directory = prefs.fileLoggingPath
                 )
                 SaveDebugLogger.configure(
                     versionName = BuildConfig.VERSION_NAME,

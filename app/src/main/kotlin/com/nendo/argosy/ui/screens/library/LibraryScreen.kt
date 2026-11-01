@@ -258,6 +258,8 @@ fun LibraryScreen(
     val density = LocalDensity.current
     val isCompactList = uiState.isListLayout && uiState.libraryListStyle == LibraryListStyle.COMPACT
     var compactHeaderHeightPx by remember { mutableStateOf(0) }
+    var folderTopPx by remember { mutableStateOf(0) }
+    val folderTopDp = with(androidx.compose.ui.platform.LocalDensity.current) { folderTopPx.toDp() }
     val defaultHeaderHeightPx = with(density) { Dimens.headerHeightLg.toPx() }.toInt()
     val headerHeightPx = if (isCompactList && compactHeaderHeightPx > 0) {
         compactHeaderHeightPx
@@ -673,7 +675,10 @@ fun LibraryScreen(
                                     keys = remember(uiState.games) { uiState.games.map { it.id } },
                                     focusedIndex = uiState.focusedIndex,
                                     rows = cocoonRows,
-                                    topPadding = com.nendo.argosy.ui.cocoon.COCOON_FOLDER_HEADER_HEIGHT + com.nendo.argosy.ui.cocoon.COCOON_DOCK_HEIGHT,
+                                    topPadding = maxOf(
+                                        com.nendo.argosy.ui.cocoon.COCOON_FOLDER_HEADER_HEIGHT + com.nendo.argosy.ui.cocoon.COCOON_DOCK_HEIGHT,
+                                        folderTopDp
+                                    ) + 6.dp,
                                     focusedTitle = uiState.focusedGame?.title,
                                     focusedSubtitle = uiState.focusedGame?.platformDisplayName,
                                     modifier = Modifier.fillMaxSize(),
@@ -735,7 +740,11 @@ fun LibraryScreen(
                     val dockApps by (com.nendo.argosy.DualScreenManagerHolder.instance?.homeAppsFlow
                         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<String>()) }).collectAsState()
                     val dockContext = androidx.compose.ui.platform.LocalContext.current
-                    Column(modifier = Modifier.background(com.nendo.argosy.ui.theme.CocoonSurface.Background)) {
+                    Column(
+                        modifier = Modifier
+                            .onSizeChanged { folderTopPx = it.height }
+                            .background(com.nendo.argosy.ui.theme.CocoonSurface.Background)
+                    ) {
                     com.nendo.argosy.ui.cocoon.CocoonDock(
                         apps = dockApps,
                         focusedIndex = dockFocus ?: -1,

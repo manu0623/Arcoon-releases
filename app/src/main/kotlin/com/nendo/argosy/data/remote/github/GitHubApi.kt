@@ -9,10 +9,11 @@ import retrofit2.http.Query
 
 interface GitHubApi {
 
-    @GET("repos/nendotools/argosy-launcher/releases/latest")
+    // Arcoon: updates come from Arcoon's public releases repository
+    @GET("repos/manu0623/Arcoon-releases/releases/latest")
     suspend fun getLatestRelease(): Response<GitHubRelease>
 
-    @GET("repos/nendotools/argosy-launcher/releases")
+    @GET("repos/manu0623/Arcoon-releases/releases")
     suspend fun getReleases(
         @Query("per_page") perPage: Int = 10,
         @Query("page") page: Int = 1
