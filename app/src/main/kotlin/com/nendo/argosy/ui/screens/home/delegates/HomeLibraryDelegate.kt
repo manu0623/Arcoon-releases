@@ -1,0 +1,901 @@
+package com.nendo.argosy.ui.screens.home.delegates
+
+import android.content.Context
+import com.nendo.argosy.R
+import com.nendo.argosy.data.local.entity.GameEntity
+import com.nendo.argosy.data.local.entity.getDisplayName
+import com.nendo.argosy.data.model.GameSource
+import com.nendo.argosy.data.model.ResolvedGameArt
+import com.nendo.argosy.data.model.tieredByOwnership
+import com.nendo.argosy.data.emulator.EmulatorDetector
+import com.nendo.argosy.data.emulator.LaunchProgressTracker
+import com.nendo.argosy.data.platform.LocalPlatformIds
+import com.nendo.argosy.data.preferences.BoxArtBorderStyle
+import com.nendo.argosy.data.preferences.UserPreferencesRepository
+import com.nendo.argosy.data.repository.DownloadFileStatusRepository
+import com.nendo.argosy.data.repository.GameRepository
+import com.nendo.argosy.data.repository.PlatformRepository
+import com.nendo.argosy.domain.model.CompletionStatus
+import com.nendo.argosy.domain.model.PinnedCollection
+import com.nendo.argosy.domain.usecase.collection.GetGamesForPinnedCollectionUseCase
+import com.nendo.argosy.domain.usecase.collection.GetPinnedCollectionsUseCase
+import com.nendo.argosy.domain.usecase.recommendation.GenerateRecommendationsUseCase
+import com.nendo.argosy.core.notification.NotificationManager
+import com.nendo.argosy.core.notification.NotificationText
+import com.nendo.argosy.core.notification.showError
+import com.nendo.argosy.core.notification.showSuccess
+import com.nendo.argosy.ui.common.toHomeGameUi
+import com.nendo.argosy.ui.screens.common.GameGradientRequest
+import com.nendo.argosy.ui.screens.common.GradientExtractionDelegate
+import com.nendo.argosy.ui.screens.home.HomeGameUi
+import com.nendo.argosy.ui.screens.home.HomeGameUiSortProps
+import com.nendo.argosy.ui.screens.home.HomePlatformUi
+import com.nendo.argosy.ui.screens.home.HomeRow
+import com.nendo.argosy.ui.screens.home.HomeRowItem
+import com.nendo.argosy.ui.screens.home.PLATFORM_ROW_LIMIT
+import com.nendo.argosy.ui.screens.home.PlatformGameLoader
+import com.nendo.argosy.ui.screens.home.toHomePlatformUi
+import com.nendo.argosy.ui.util.heldWhile
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAdjusters
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
+import javax.inject.Inject
+import javax.inject.Singleton
+
+private const val TILE_PICKER_LIMIT = 60
+private const val MAX_DISPLAYED_RECOMMENDATIONS = 16
+private const val RECOMMENDATION_PENALTY = 0.9f
+private val EXCLUDED_RECOMMENDATION_STATUSES = setOf(
+    CompletionStatus.FINISHED.apiValue,
+    CompletionStatus.COMPLETED_100.apiValue,
+    CompletionStatus.NEVER_PLAYING.apiValue
+)
+private const val RECENT_GAMES_LIMIT = 32
+private const val RECENT_GAMES_CANDIDATE_POOL = 40
+private const val NEW_GAME_THRESHOLD_HOURS = 24L
+private const val RECENT_PLAYED_THRESHOLD_HOURS = 4L
+
+data class LibraryState(
+    val platforms: List<HomePlatformUi> = emptyList(),
+    val platformItems: List<HomeRowItem> = emptyList(),
+    val platformItemsFor: Long? = null,
+    val platformItemsComplete: Boolean = false,
+    val recentGames: List<HomeGameUi> = emptyList(),
+    val favoriteGames: List<HomeGameUi> = emptyList(),
+    val recommendedGames: List<HomeGameUi> = emptyList(),
+    val androidGames: List<HomeGameUi> = emptyList(),
+    val steamGames: List<HomeGameUi> = emptyList(),
+    val pinnedCollections: List<PinnedCollection> = emptyList(),
+    val pinnedGames: Map<Long, List<HomeGameUi>> = emptyMap(),
+    val pinnedGamesLoading: Set<Long> = emptySet(),
+    val repairedCoverPaths: Map<Long, String> = emptyMap()
+)
+
+private data class RecentGamesCache(
+    val games: List<HomeGameUi>?,
+    val version: Long
+)
+
+@Singleton
+class HomeLibraryDelegate @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val preferencesRepository: UserPreferencesRepository,
+    private val gameRepository: GameRepository,
+    private val platformRepository: PlatformRepository,
+    private val generateRecommendationsUseCase: GenerateRecommendationsUseCase,
+    private val getPinnedCollectionsUseCase: GetPinnedCollectionsUseCase,
+    private val getGamesForPinnedCollectionUseCase: GetGamesForPinnedCollectionUseCase,
+    private val gradientExtractionDelegate: GradientExtractionDelegate,
+    private val emulatorDetector: EmulatorDetector,
+    private val notificationManager: NotificationManager,
+    private val repairImageCacheUseCase: com.nendo.argosy.domain.usecase.cache.RepairImageCacheUseCase,
+    private val downloadFileStatusRepository: DownloadFileStatusRepository,
+    private val steamPathResolver: com.nendo.argosy.data.steam.SteamPathResolver,
+    private val collectionRepository: com.nendo.argosy.data.repository.CollectionRepository,
+    private val appsRepository: com.nendo.argosy.data.repository.AppsRepository,
+    private val launchProgressTracker: LaunchProgressTracker
+) {
+    private val _state = MutableStateFlow(LibraryState())
+    val state: StateFlow<LibraryState> = _state.asStateFlow()
+
+    private val recentGamesCache = AtomicReference(RecentGamesCache(null, 0L))
+    private val deferredRecentsRefreshes = MutableStateFlow(0L)
+    private val recentsObservers = AtomicInteger()
+    private var cachedPlatformDisplayNames: Map<Long, String> = emptyMap()
+    private val pendingCoverRepairs = mutableSetOf<Long>()
+    private val platformGameLoader = PlatformGameLoader(gameRepository, downloadFileStatusRepository)
+    private val platformLoadGeneration = AtomicLong()
+
+    private val initialLoadMutex = Mutex()
+    @Volatile
+    var initialLoadComplete: Boolean = false
+        private set
+    @Volatile
+    var cachedStartRow: HomeRow = HomeRow.Continue
+        private set
+
+    /**
+     * Runs the first-time data load once and caches the resolved start row. Subsequent
+     * callers block on the mutex only long enough to read the cached row, so both the
+     * startup waterfall and HomeViewModel.init can invoke this without double-fetching.
+     */
+    suspend fun ensureInitialLoad(scope: CoroutineScope): HomeRow {
+        val startRow = initialLoadMutex.withLock {
+            if (initialLoadComplete) return@withLock cachedStartRow
+            val resolved = runInitialLoad()
+            cachedStartRow = resolved
+            initialLoadComplete = true
+            resolved
+        }
+        startBackgroundFollowUp(scope, startRow)
+        return startRow
+    }
+
+    fun loadInitialData(scope: CoroutineScope, onStartRowResolved: (HomeRow) -> Unit) {
+        scope.launch {
+            val startRow = ensureInitialLoad(scope)
+            onStartRowResolved(startRow)
+        }
+    }
+
+    private suspend fun runInitialLoad(): HomeRow {
+        gameRepository.awaitStorageReady()
+        val prefs = preferencesRepository.userPreferences.first()
+        val installedOnly = prefs.installedOnlyHome
+
+        val allPlatforms = platformRepository.getPlatformsWithGames()
+        val platforms = allPlatforms.withoutOwnRowPlatforms()
+        cachedPlatformDisplayNames = allPlatforms.associate { it.id to it.getDisplayName() }
+        var favorites = gameRepository.getFavorites()
+        val androidGames = gameRepository.getByPlatformSorted(LocalPlatformIds.ANDROID, limit = PLATFORM_ROW_LIMIT)
+            .let { if (installedOnly) filterPlayable(it) else it }
+        val steamGameUis = loadSteamRow(installedOnly)
+
+        val newThreshold = Instant.now().minus(NEW_GAME_THRESHOLD_HOURS, ChronoUnit.HOURS)
+        var recentlyPlayed = gameRepository.getRecentlyPlayed(RECENT_GAMES_CANDIDATE_POOL)
+        var newlyAdded = gameRepository.getNewlyAdded(newThreshold, installedOnly, RECENT_GAMES_CANDIDATE_POOL)
+        var allCandidates = (recentlyPlayed + newlyAdded).distinctBy { it.id }
+
+        val allDisplayed = (favorites + allCandidates).distinctBy { it.id }
+        if (discoverGamesIfNeeded(allDisplayed)) {
+            favorites = gameRepository.getFavorites()
+            recentlyPlayed = gameRepository.getRecentlyPlayed(RECENT_GAMES_CANDIDATE_POOL)
+            newlyAdded = gameRepository.getNewlyAdded(newThreshold, installedOnly, RECENT_GAMES_CANDIDATE_POOL)
+            allCandidates = (recentlyPlayed + newlyAdded).distinctBy { it.id }
+        }
+
+        if (installedOnly) {
+            favorites = filterPlayable(favorites)
+        }
+
+        val playableGames = if (installedOnly) filterPlayable(allCandidates) else allCandidates
+        val sortedRecent = sortRecentGamesWithNewPriority(playableGames)
+        val validatedRecent = sortedRecent.take(RECENT_GAMES_LIMIT).toUis()
+        recentGamesCache.set(RecentGamesCache(validatedRecent, recentGamesCache.get().version))
+
+        val platformUis = platforms.map { it.toHomePlatformUi(emulatorDetector) }
+        val favoriteUis = favorites.toUis()
+        val androidGameUis = androidGames.toUis()
+
+        val startRow = when {
+            validatedRecent.isNotEmpty() -> HomeRow.Continue
+            favoriteUis.isNotEmpty() -> HomeRow.Favorites
+            androidGameUis.isNotEmpty() -> HomeRow.Android
+            steamGameUis.isNotEmpty() -> HomeRow.Steam
+            platformUis.isNotEmpty() -> HomeRow.Platform(0)
+            else -> HomeRow.Continue
+        }
+
+        _state.update {
+            it.copy(
+                platforms = platformUis,
+                recentGames = validatedRecent,
+                favoriteGames = favoriteUis,
+                androidGames = androidGameUis,
+                steamGames = steamGameUis
+            )
+        }
+
+        return startRow
+    }
+
+    private fun startBackgroundFollowUp(scope: CoroutineScope, startRow: HomeRow) {
+        scope.launch {
+            if (startRow is HomeRow.Platform) {
+                _state.value.platforms.getOrNull(startRow.index)?.let { loadPlatformGames(it) }
+            }
+            loadRecommendations()
+            scope.launch(Dispatchers.IO) { gameRepository.validateLocalFiles() }
+        }
+    }
+
+    fun observePlatformChanges(scope: CoroutineScope, onPlatformsChanged: (List<HomePlatformUi>, List<HomePlatformUi>) -> Unit) {
+        scope.launch {
+            platformRepository.observePlatformsWithGames().collect { platforms ->
+                cachedPlatformDisplayNames = platforms.associate { it.id to it.getDisplayName() }
+                val currentPlatforms = _state.value.platforms
+                val newPlatformUis = platforms.withoutOwnRowPlatforms().map { it.toHomePlatformUi(emulatorDetector) }
+                onPlatformsChanged(currentPlatforms, newPlatformUis)
+                _state.update { it.copy(platforms = newPlatformUis) }
+            }
+        }
+    }
+
+    fun observeRecentlyPlayedChanges(scope: CoroutineScope, onRecentGamesUpdated: (List<HomeGameUi>) -> Unit) {
+        scope.launch {
+            gameRepository.awaitStorageReady()
+            val newThreshold = Instant.now().minus(NEW_GAME_THRESHOLD_HOURS, ChronoUnit.HOURS)
+            val played = gameRepository.observeRecentlyPlayed(RECENT_GAMES_CANDIDATE_POOL)
+            val source = combine(played, deferredRecentsRefreshes) { recentlyPlayed, _ -> recentlyPlayed }
+            recentsObservers.incrementAndGet()
+            try {
+                source.heldWhile(launchProgressTracker.launchLive).collect { recentlyPlayed ->
+                    val installedOnly = installedOnlyHome()
+                    val newlyAdded = gameRepository.getNewlyAdded(newThreshold, installedOnly, RECENT_GAMES_CANDIDATE_POOL)
+                    val allCandidates = (recentlyPlayed + newlyAdded).distinctBy { it.id }
+
+                    val playableGames = if (installedOnly) filterPlayable(allCandidates) else allCandidates
+                    val sorted = sortRecentGamesWithNewPriority(playableGames)
+                    val validated = sorted.take(RECENT_GAMES_LIMIT).toUis()
+
+                    recentGamesCache.set(RecentGamesCache(validated, recentGamesCache.get().version))
+                    _state.update { it.copy(recentGames = validated) }
+                    onRecentGamesUpdated(validated)
+                }
+            } finally {
+                recentsObservers.decrementAndGet()
+            }
+        }
+    }
+
+    fun observePinnedCollections(scope: CoroutineScope) {
+        scope.launch {
+            getPinnedCollectionsUseCase().collect { pinnedList ->
+                val allPinIds = pinnedList.map { it.id }.toSet()
+                _state.update { it.copy(pinnedCollections = pinnedList, pinnedGamesLoading = allPinIds) }
+
+                pinnedList.forEach { pinned ->
+                    launch { prefetchGamesForPinnedCollection(pinned) }
+                }
+            }
+        }
+    }
+
+    suspend fun loadRecentGames() {
+        val currentCache = recentGamesCache.get()
+        val startVersion = currentCache.version
+
+        val gameUis = if (currentCache.games != null) {
+            currentCache.games
+        } else if (deferIfRecentsHeld()) {
+            return
+        } else {
+            val newThreshold = Instant.now().minus(NEW_GAME_THRESHOLD_HOURS, ChronoUnit.HOURS)
+            val installedOnly = installedOnlyHome()
+            var recentlyPlayed = gameRepository.getRecentlyPlayed(RECENT_GAMES_CANDIDATE_POOL)
+            var newlyAdded = gameRepository.getNewlyAdded(newThreshold, installedOnly, RECENT_GAMES_CANDIDATE_POOL)
+            var allCandidates = (recentlyPlayed + newlyAdded).distinctBy { it.id }
+
+            if (discoverGamesIfNeeded(allCandidates)) {
+                recentlyPlayed = gameRepository.getRecentlyPlayed(RECENT_GAMES_CANDIDATE_POOL)
+                newlyAdded = gameRepository.getNewlyAdded(newThreshold, installedOnly, RECENT_GAMES_CANDIDATE_POOL)
+                allCandidates = (recentlyPlayed + newlyAdded).distinctBy { it.id }
+            }
+
+            val playableGames = if (installedOnly) filterPlayable(allCandidates) else allCandidates
+            val sorted = sortRecentGamesWithNewPriority(playableGames)
+            val validated = sorted.take(RECENT_GAMES_LIMIT).toUis()
+
+            recentGamesCache.compareAndSet(
+                RecentGamesCache(null, startVersion),
+                RecentGamesCache(validated, startVersion)
+            )
+            validated
+        }
+
+        _state.update { it.copy(recentGames = gameUis) }
+    }
+
+    suspend fun loadFavorites() {
+        var games = gameRepository.getFavorites()
+        if (discoverGamesIfNeeded(games)) {
+            games = gameRepository.getFavorites()
+        }
+        val installedOnly = preferencesRepository.userPreferences.first().installedOnlyHome
+        if (installedOnly) {
+            games = filterPlayable(games)
+        }
+        val gameUis = games.toUis()
+        _state.update { it.copy(favoriteGames = gameUis) }
+    }
+
+    suspend fun loadRecommendations() {
+        val prefs = preferencesRepository.preferences.first()
+        val storedIds = prefs.recommendedGameIds
+
+        if (storedIds.isNotEmpty()) {
+            val games = gameRepository.getByIds(storedIds)
+            val orderedGames = storedIds.mapNotNull { id -> games.find { it.id == id } }
+
+            val displayedGames = orderedGames
+                .filter { it.status !in EXCLUDED_RECOMMENDATION_STATUSES }
+                .take(MAX_DISPLAYED_RECOMMENDATIONS)
+
+            applyPenaltiesToDisplayed(displayedGames.map { it.id })
+
+            val gameUis = displayedGames.toUis()
+            _state.update { it.copy(recommendedGames = gameUis) }
+        }
+    }
+
+    fun regenerateRecommendations(scope: CoroutineScope) {
+        scope.launch {
+            val ids = generateRecommendationsUseCase(forceRegenerate = true)
+            if (ids.isNotEmpty()) {
+                val games = gameRepository.getByIds(ids)
+                val orderedGames = ids.mapNotNull { id -> games.find { it.id == id } }
+
+                val displayedGames = orderedGames
+                    .filter { it.status !in EXCLUDED_RECOMMENDATION_STATUSES }
+                    .take(MAX_DISPLAYED_RECOMMENDATIONS)
+
+                applyPenaltiesToDisplayed(displayedGames.map { it.id })
+
+                val gameUis = displayedGames.toUis()
+                _state.update { it.copy(recommendedGames = gameUis) }
+                notificationManager.showSuccess(
+                    NotificationText.Res(R.string.home_notice_recommendations_updated)
+                )
+            } else {
+                _state.update { it.copy(recommendedGames = emptyList()) }
+                notificationManager.showError(
+                    NotificationText.Res(R.string.home_notice_recommendations_insufficient)
+                )
+            }
+        }
+    }
+
+    suspend fun refreshRecommendationsIfNeeded() {
+        val prefs = preferencesRepository.preferences.first()
+        val lastGen = prefs.lastRecommendationGeneration
+
+        val shouldGenerate = if (lastGen == null) {
+            true
+        } else {
+            val lastGenWeek = lastGen.atZone(java.time.ZoneId.systemDefault())
+                .toLocalDate()
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.SATURDAY))
+            val currentWeek = LocalDate.now()
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.SATURDAY))
+            currentWeek.isAfter(lastGenWeek)
+        }
+
+        if (shouldGenerate) {
+            val ids = generateRecommendationsUseCase()
+            if (ids.isNotEmpty()) {
+                val games = gameRepository.getByIds(ids)
+                val orderedGames = ids.mapNotNull { id -> games.find { it.id == id } }
+                _state.update { it.copy(recommendedGames = orderedGames.toUis()) }
+            }
+        }
+    }
+
+    suspend fun loadPlatforms() {
+        val installedOnly = preferencesRepository.userPreferences.first().installedOnlyHome
+        val allPlatforms = platformRepository.getPlatformsWithGames()
+        val platforms = allPlatforms.withoutOwnRowPlatforms()
+        cachedPlatformDisplayNames = allPlatforms.associate { it.id to it.getDisplayName() }
+        val platformUis = platforms.map { it.toHomePlatformUi(emulatorDetector) }
+        val androidGames = gameRepository.getByPlatformSorted(LocalPlatformIds.ANDROID, limit = PLATFORM_ROW_LIMIT)
+            .let { if (installedOnly) filterPlayable(it) else it }
+        val androidGameUis = androidGames.toUis()
+        val steamGameUis = loadSteamRow(installedOnly)
+        _state.update { state ->
+            val sameRows = state.platforms.map { it.id } == platformUis.map { it.id }
+            state.copy(
+                platforms = if (sameRows) platformUis else state.platforms,
+                androidGames = androidGameUis,
+                steamGames = steamGameUis
+            )
+        }
+    }
+
+    /**
+     * Loads [platform]'s row. Every caller goes through here, and only the most recent call may
+     * publish: a load overtaken by another stops at its next publish, so a platform the cursor has
+     * left can never write over the one it moved to. The leading page is published only when the
+     * row does not already show this platform, so a refresh never shrinks a full row.
+     */
+    suspend fun loadPlatformGames(platform: HomePlatformUi) {
+        val generation = platformLoadGeneration.incrementAndGet()
+        val prefs = preferencesRepository.userPreferences.first()
+        val showsEveryGame = prefs.homeLayout.showsEveryGame
+        platformGameLoader.load(
+            platformId = platform.id,
+            showsEveryGame = showsEveryGame,
+            installedOnly = prefs.installedOnlyHome,
+            publishLeadingPage = _state.value.platformItemsFor != platform.id,
+            toUi = { game, art -> game.toUi(art) },
+            publish = { games, complete ->
+                publishPlatformItems(platform, games, complete, showsEveryGame, generation)
+            }
+        )
+    }
+
+    private fun publishPlatformItems(
+        platform: HomePlatformUi,
+        games: List<HomeGameUi>,
+        complete: Boolean,
+        showsEveryGame: Boolean,
+        generation: Long
+    ): Boolean {
+        if (platformLoadGeneration.get() != generation) return false
+        val gameItems: List<HomeRowItem> = games.map { HomeRowItem.Game(it) }
+        val items = if (showsEveryGame) {
+            gameItems
+        } else {
+            gameItems + HomeRowItem.ViewAll(
+                platformId = platform.id,
+                platformName = platform.name,
+                logoPath = platform.logoPath
+            )
+        }
+        _state.update {
+            it.copy(platformItems = items, platformItemsFor = platform.id, platformItemsComplete = complete)
+        }
+        return true
+    }
+
+    suspend fun loadGamesForPinnedCollection(pinId: Long) {
+        val pinned = _state.value.pinnedCollections.find { it.id == pinId } ?: return
+        var games = getGamesForPinnedCollectionUseCase(pinned).first()
+        if (discoverGamesIfNeeded(games)) {
+            games = getGamesForPinnedCollectionUseCase(pinned).first()
+        }
+        val installedOnly = preferencesRepository.userPreferences.first().installedOnlyHome
+        if (installedOnly) {
+            games = filterPlayable(games)
+        }
+        val gameUis = games.toUis()
+        _state.update { state ->
+            state.copy(
+                pinnedGames = state.pinnedGames + (pinId to gameUis),
+                pinnedGamesLoading = state.pinnedGamesLoading - pinId
+            )
+        }
+    }
+
+    suspend fun refreshCurrentRow(currentRow: HomeRow, focusedGameId: Long?): RefreshResult {
+        return when (currentRow) {
+            HomeRow.Favorites -> {
+                var games = gameRepository.getFavorites()
+                val installedOnly = preferencesRepository.userPreferences.first().installedOnlyHome
+                if (installedOnly) {
+                    games = filterPlayable(games)
+                }
+                val gameUis = games.toUis()
+                _state.update { it.copy(favoriteGames = gameUis) }
+                RefreshResult(gameUis.map { it.id }, isEmpty = gameUis.isEmpty())
+            }
+            HomeRow.Continue -> {
+                if (deferIfRecentsHeld()) {
+                    val shown = _state.value.recentGames
+                    return RefreshResult(shown.map { it.id }, isEmpty = shown.isEmpty())
+                }
+                invalidateRecentGamesCache()
+                val newThreshold = Instant.now().minus(NEW_GAME_THRESHOLD_HOURS, ChronoUnit.HOURS)
+                val installedOnly = installedOnlyHome()
+                val recentlyPlayed = gameRepository.getRecentlyPlayed(RECENT_GAMES_CANDIDATE_POOL)
+                val newlyAdded = gameRepository.getNewlyAdded(newThreshold, installedOnly, RECENT_GAMES_CANDIDATE_POOL)
+                val allCandidates = (recentlyPlayed + newlyAdded).distinctBy { it.id }
+
+                val playableGames = if (installedOnly) filterPlayable(allCandidates) else allCandidates
+                val sorted = sortRecentGamesWithNewPriority(playableGames)
+                val validated = sorted.take(RECENT_GAMES_LIMIT).toUis()
+
+                val currentCache = recentGamesCache.get()
+                recentGamesCache.compareAndSet(
+                    RecentGamesCache(null, currentCache.version),
+                    RecentGamesCache(validated, currentCache.version)
+                )
+
+                _state.update { it.copy(recentGames = validated) }
+                RefreshResult(validated.map { it.id }, isEmpty = validated.isEmpty())
+            }
+            is HomeRow.Platform -> {
+                val platform = _state.value.platforms.getOrNull(currentRow.index) ?: return RefreshResult(emptyList())
+                loadPlatformGames(platform)
+                val shown = _state.value.takeIf { it.platformItemsFor == platform.id }?.platformItems.orEmpty()
+                RefreshResult(shown.mapNotNull { (it as? HomeRowItem.Game)?.game?.id })
+            }
+            HomeRow.Recommendations -> {
+                loadRecommendations()
+                RefreshResult(_state.value.recommendedGames.map { it.id })
+            }
+            HomeRow.Android -> {
+                val installedOnly = preferencesRepository.userPreferences.first().installedOnlyHome
+                val games = gameRepository.getByPlatformSorted(LocalPlatformIds.ANDROID, limit = PLATFORM_ROW_LIMIT)
+                    .let { if (installedOnly) filterPlayable(it) else it }
+                val gameUis = games.toUis()
+                _state.update { it.copy(androidGames = gameUis) }
+                RefreshResult(gameUis.map { it.id }, isEmpty = gameUis.isEmpty())
+            }
+            HomeRow.Steam -> {
+                val installedOnly = preferencesRepository.userPreferences.first().installedOnlyHome
+                val gameUis = loadSteamRow(installedOnly)
+                _state.update { it.copy(steamGames = gameUis) }
+                RefreshResult(gameUis.map { it.id }, isEmpty = gameUis.isEmpty())
+            }
+            is HomeRow.PinnedRegular -> {
+                loadGamesForPinnedCollection(currentRow.pinId)
+                RefreshResult((_state.value.pinnedGames[currentRow.pinId] ?: emptyList()).map { it.id })
+            }
+            is HomeRow.PinnedVirtual -> {
+                loadGamesForPinnedCollection(currentRow.pinId)
+                RefreshResult((_state.value.pinnedGames[currentRow.pinId] ?: emptyList()).map { it.id })
+            }
+            HomeRow.ContinueWatching, HomeRow.NextUp, is HomeRow.MediaLibrary ->
+                RefreshResult(emptyList())
+        }
+    }
+
+    fun updateAchievementCounts(gameId: Long, total: Int, earned: Int) {
+        _state.update { state ->
+            state.copy(
+                recentGames = state.recentGames.map {
+                    if (it.id == gameId) it.copy(achievementCount = total, earnedAchievementCount = earned) else it
+                },
+                favoriteGames = state.favoriteGames.map {
+                    if (it.id == gameId) it.copy(achievementCount = total, earnedAchievementCount = earned) else it
+                },
+                recommendedGames = state.recommendedGames.map {
+                    if (it.id == gameId) it.copy(achievementCount = total, earnedAchievementCount = earned) else it
+                },
+                androidGames = state.androidGames.map {
+                    if (it.id == gameId) it.copy(achievementCount = total, earnedAchievementCount = earned) else it
+                },
+                steamGames = state.steamGames.map {
+                    if (it.id == gameId) it.copy(achievementCount = total, earnedAchievementCount = earned) else it
+                },
+                platformItems = state.platformItems.map { item ->
+                    when (item) {
+                        is HomeRowItem.Game -> if (item.game.id == gameId) {
+                            HomeRowItem.Game(item.game.copy(achievementCount = total, earnedAchievementCount = earned))
+                        } else item
+                        is HomeRowItem.Media, is HomeRowItem.ViewAll -> item
+                    }
+                }
+            )
+        }
+    }
+
+    fun extractGradientsForVisibleGames(scope: CoroutineScope, currentItems: List<HomeRowItem>, focusedIndex: Int) {
+        val games = currentItems.filterIsInstance<HomeRowItem.Game>().map { it.game }
+        if (games.isEmpty()) return
+        val requests = games.map { GameGradientRequest(it.id, it.coverPath) }
+        gradientExtractionDelegate.extractForVisibleGames(scope, requests, focusedIndex)
+    }
+
+    fun extractGradientForGame(scope: CoroutineScope, gameId: Long, bitmap: android.graphics.Bitmap, isFocused: Boolean) {
+        gradientExtractionDelegate.extractForGame(scope, gameId, bitmap, prioritize = isFocused)
+        recordCoverShape(scope, gameId, bitmap)
+    }
+
+    /**
+     * Stores the shape of a cover the first time one is drawn, so later screens can allocate space
+     * for it before the image is decoded rather than reflowing once it arrives.
+     */
+    private fun recordCoverShape(scope: CoroutineScope, gameId: Long, bitmap: android.graphics.Bitmap) {
+        if (bitmap.width <= 0 || bitmap.height <= 0) return
+        val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+        scope.launch { gameRepository.recordCoverAspectRatio(gameId, ratio) }
+    }
+
+    fun repairCoverImage(scope: CoroutineScope, gameId: Long, failedPath: String) {
+        if (pendingCoverRepairs.contains(gameId)) return
+        pendingCoverRepairs.add(gameId)
+
+        scope.launch {
+            val repairedUrl = repairImageCacheUseCase.repairCover(gameId, failedPath)
+            if (repairedUrl != null) {
+                _state.update { state ->
+                    state.copy(repairedCoverPaths = state.repairedCoverPaths + (gameId to repairedUrl))
+                }
+            }
+            pendingCoverRepairs.remove(gameId)
+        }
+    }
+
+    fun invalidateRecentGamesCache() {
+        recentGamesCache.updateAndGet { RecentGamesCache(null, it.version + 1) }
+    }
+
+    private fun deferIfRecentsHeld(): Boolean {
+        if (recentsObservers.get() == 0 || !launchProgressTracker.launchLive.value) return false
+        deferredRecentsRefreshes.update { it + 1 }
+        return true
+    }
+
+    private suspend fun prefetchGamesForPinnedCollection(pinned: PinnedCollection) {
+        var games = getGamesForPinnedCollectionUseCase(pinned).first()
+        val installedOnly = preferencesRepository.userPreferences.first().installedOnlyHome
+        if (installedOnly) {
+            games = filterPlayable(games)
+        }
+        val gameUis = games.toUis()
+        _state.update { state ->
+            state.copy(
+                pinnedGames = state.pinnedGames + (pinned.id to gameUis),
+                pinnedGamesLoading = state.pinnedGamesLoading - pinned.id
+            )
+        }
+    }
+
+    private suspend fun applyPenaltiesToDisplayed(displayedIds: List<Long>) {
+        val prefs = preferencesRepository.preferences.first()
+        val penalties = prefs.recommendationPenalties.toMutableMap()
+        var updated = false
+
+        for (id in displayedIds) {
+            val current = penalties[id] ?: 0f
+            if (current < RECOMMENDATION_PENALTY) {
+                penalties[id] = RECOMMENDATION_PENALTY
+                updated = true
+            }
+        }
+
+        if (updated) {
+            val weekKey = LocalDate.now()
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.SATURDAY))
+                .toString()
+            preferencesRepository.setRecommendationPenalties(penalties, weekKey)
+        }
+    }
+
+    private suspend fun discoverGamesIfNeeded(games: List<GameEntity>): Boolean =
+        platformGameLoader.discoverStalePaths(games).isNotEmpty()
+
+    private suspend fun installedOnlyHome(): Boolean =
+        preferencesRepository.userPreferences.first().installedOnlyHome
+
+    private suspend fun filterPlayable(candidates: List<GameEntity>): List<GameEntity> {
+        return candidates.filter { downloadFileStatusRepository.isContentAvailable(it) }
+    }
+
+    private fun sortRecentGamesWithNewPriority(games: List<GameEntity>): List<GameEntity> {
+        val now = Instant.now()
+        val newThreshold = now.minus(NEW_GAME_THRESHOLD_HOURS, ChronoUnit.HOURS)
+        val recentPlayedThreshold = now.minus(RECENT_PLAYED_THRESHOLD_HOURS, ChronoUnit.HOURS)
+
+        return games.sortedWith(
+            compareBy<GameEntity> { game ->
+                val isNew = game.addedAt.isAfter(newThreshold) && game.lastPlayed == null
+                val playedRecently = game.lastPlayed?.isAfter(recentPlayedThreshold) == true
+                when {
+                    playedRecently -> 0
+                    isNew -> 1
+                    else -> 2
+                }
+            }.thenByDescending { game ->
+                game.lastPlayed?.toEpochMilli() ?: game.addedAt.toEpochMilli()
+            }
+        )
+    }
+
+    /**
+     * Installed games matching [query], for the custom grid's picker. Filtering to what is on the
+     * device is the point: a tile is a shortcut to play something, so offering a game that would
+     * first have to download makes the grid a second download queue.
+     */
+    suspend fun searchInstalledForTiles(query: String): List<com.nendo.argosy.ui.components.TilePickerEntry> {
+        val matches = gameRepository
+            .searchInstalled(query.trim(), TILE_PICKER_LIMIT)
+            .first()
+        val playable = filterPlayable(matches)
+        val art = gameRepository.getArt(playable.map { it.id })
+        return playable.map { game ->
+            com.nendo.argosy.ui.components.TilePickerEntry(
+                target = com.nendo.argosy.domain.model.HomeTileTargetRef.Game(game.id),
+                title = game.title,
+                subtitle = cachedPlatformDisplayNames[game.platformId].orEmpty(),
+                coverPath = art[game.id]?.coverPath
+            )
+        }
+    }
+
+    /**
+     * Games RetroAchievements knows matching [query], for the tile that tracks one. Not narrowed
+     * to the device the way [searchInstalledForTiles] is: progress belongs to the account, not to
+     * the file, so the picker offers the whole library with installed games first.
+     */
+    suspend fun searchRaCompatibleForTiles(query: String): List<com.nendo.argosy.ui.components.TilePickerEntry> {
+        val games = gameRepository
+            .searchRaCompatible(query.trim(), TILE_PICKER_LIMIT)
+            .first()
+        val art = gameRepository.getArt(games.map { it.id })
+        return games.map { game ->
+                com.nendo.argosy.ui.components.TilePickerEntry(
+                    target = com.nendo.argosy.domain.model.HomeTileTargetRef.Game(game.id),
+                    title = game.title,
+                    subtitle = context.getString(
+                        R.string.home_tile_picker_ra_progress,
+                        cachedPlatformDisplayNames[game.platformId].orEmpty(),
+                        game.earnedAchievementCount,
+                        game.achievementCount
+                    ),
+                    coverPath = art[game.id]?.coverPath,
+                    isLocal = game.isDownloaded
+                )
+            }
+    }
+
+    /**
+     * Collections and apps a tile can point at. Both are small enough to list whole, so they are
+     * filtered in memory rather than through a query the way the library has to be.
+     */
+    suspend fun collectionsForTiles(query: String): List<com.nendo.argosy.ui.components.TilePickerEntry> =
+        collectionRepository.getAllCollections()
+            .filter { it.name.isNotBlank() }
+            .filter { query.isBlank() || it.name.lowercase().contains(query) }
+            .take(TILE_PICKER_LIMIT)
+            .map { collection ->
+                val count = collectionRepository.getGameCountInCollection(collection.id)
+                com.nendo.argosy.ui.components.TilePickerEntry(
+                    target = com.nendo.argosy.domain.model.HomeTileTargetRef.Collection(collection.id),
+                    title = collection.name,
+                    subtitle = context.resources.getQuantityString(
+                        R.plurals.home_tile_picker_collection_game_count,
+                        count,
+                        count
+                    ),
+                    coverPath = collectionRepository.getCollectionCoverPaths(collection.id)
+                        .firstOrNull()
+                )
+            }
+
+    /**
+     * Names and art for the collections and apps a page points at. Resolved by id the same way the
+     * games are, so a target that has since been deleted comes back absent and the tile can say so
+     * rather than rendering blank.
+     */
+    suspend fun resolveTileCollections(
+        ids: List<Long>
+    ): Map<Long, com.nendo.argosy.ui.components.TileCollectionUi> {
+        if (ids.isEmpty()) return emptyMap()
+        return collectionRepository.getAllCollections()
+            .filter { it.id in ids }
+            .associate { collection ->
+                collection.id to com.nendo.argosy.ui.components.TileCollectionUi(
+                    name = collection.name,
+                    coverPaths = collectionRepository.getCollectionCoverPaths(collection.id),
+                    gameCount = collectionRepository.getGameCountInCollection(collection.id)
+                )
+            }
+    }
+
+    suspend fun resolveTileApps(packageNames: List<String>): Map<String, String> {
+        if (packageNames.isEmpty()) return emptyMap()
+        return appsRepository.getInstalledApps(includeSystemApps = true)
+            .filter { it.packageName in packageNames }
+            .associate { it.packageName to it.label }
+    }
+
+    private val emulatorPackages: Set<String> by lazy {
+        com.nendo.argosy.data.emulator.EmulatorRegistry.getAll()
+            .map { it.packageName }
+            .toSet()
+    }
+
+    /**
+     * Emulators first, then everything else alphabetically. A tile on a game launcher's home screen
+     * is far more likely to be an emulator than a browser, so the packages Argosy already knows are
+     * emulators are worth surfacing above an alphabetical wall of apps.
+     */
+    private val tilePickerAppOrder =
+        compareByDescending<com.nendo.argosy.data.repository.InstalledApp> {
+            it.packageName in emulatorPackages
+        }.thenBy { it.label.lowercase() }
+
+    suspend fun appsForTiles(query: String): List<com.nendo.argosy.ui.components.TilePickerEntry> =
+        appsRepository.getInstalledApps(includeSystemApps = false)
+            .filter { query.isBlank() || it.label.lowercase().contains(query) }
+            .sortedWith(tilePickerAppOrder)
+            .take(TILE_PICKER_LIMIT)
+            .map { app ->
+                com.nendo.argosy.ui.components.TilePickerEntry(
+                    target = com.nendo.argosy.domain.model.HomeTileTargetRef.App(app.packageName),
+                    title = app.label,
+                    subtitle = if (app.packageName in emulatorPackages) {
+                        context.getString(R.string.home_tile_picker_app_emulator)
+                    } else {
+                        context.getString(R.string.home_tile_picker_app_other)
+                    },
+                    packageName = app.packageName
+                )
+            }
+
+    /**
+     * One picker entry for a known game, used when something other than a search names the game -
+     * a finished download offering itself a place on the grid.
+     */
+    suspend fun tilePickerEntryFor(gameId: Long): com.nendo.argosy.ui.components.TilePickerEntry? {
+        val game = gameRepository.getByIds(listOf(gameId)).firstOrNull() ?: return null
+        return com.nendo.argosy.ui.components.TilePickerEntry(
+            target = com.nendo.argosy.domain.model.HomeTileTargetRef.Game(game.id),
+            title = game.title,
+            subtitle = cachedPlatformDisplayNames[game.platformId].orEmpty(),
+            coverPath = gameRepository.getArt(game.id).coverPath
+        )
+    }
+
+    /**
+     * Resolves the games a curated page points at. Looked up by id across the library rather than
+     * taken from a section, because the tiles on a page share nothing but having been placed there.
+     */
+    suspend fun resolveTileGames(gameIds: List<Long>): Map<Long, HomeGameUi> {
+        if (gameIds.isEmpty()) return emptyMap()
+        return gameRepository.getByIds(gameIds).toUis().associateBy { it.id }
+    }
+
+    suspend fun platformOptionsForTiles(): List<com.nendo.argosy.ui.components.FeatureSetupOption> =
+        platformRepository.getPlatformsWithGames()
+            .withoutOwnRowPlatforms()
+            .map {
+                com.nendo.argosy.ui.components.FeatureSetupOption(
+                    id = it.id,
+                    label = it.getDisplayName(),
+                    shortLabel = it.shortName
+                )
+            }
+            .sortedBy { it.label }
+
+    private suspend fun GameEntity.toUi(art: ResolvedGameArt?): HomeGameUi = toHomeGameUi(
+        downloadStatus = downloadFileStatusRepository,
+        art = art,
+        firstScreenshotUrl = null,
+        platformDisplayName = cachedPlatformDisplayNames[platformId],
+        gradientColors = gradientExtractionDelegate.getGradient(id)
+    )
+
+    private suspend fun List<GameEntity>.toUis(): List<HomeGameUi> {
+        val art = gameRepository.getArt(map { it.id })
+        return map { it.toUi(art[it.id]) }
+    }
+
+    private suspend fun loadSteamRow(installedOnly: Boolean): List<HomeGameUi> {
+        val candidates = gameRepository.getByPlatformSorted(LocalPlatformIds.STEAM, limit = PLATFORM_ROW_LIMIT)
+        withContext(Dispatchers.IO) {
+            candidates.forEach { steamPathResolver.isGameInstalled(it) }
+        }
+        val games = gameRepository.getByPlatformSorted(LocalPlatformIds.STEAM, limit = PLATFORM_ROW_LIMIT)
+            .toUis()
+        val shown = if (installedOnly) games.filter { it.isDownloaded } else games
+        return tieredByOwnership(shown, HomeGameUiSortProps)
+    }
+}
+
+data class RefreshResult(
+    val gameIds: List<Long>,
+    val isEmpty: Boolean = false
+)
+
+private fun List<com.nendo.argosy.data.local.entity.PlatformEntity>.withoutOwnRowPlatforms() =
+    filter { it.id != LocalPlatformIds.STEAM && it.id != LocalPlatformIds.ANDROID }

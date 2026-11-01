@@ -1,0 +1,53 @@
+package com.nendo.argosy.data.local.entity
+
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+import java.io.File
+import java.time.Instant
+
+@Entity(
+    tableName = "game_files",
+    foreignKeys = [
+        ForeignKey(
+            entity = GameEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["gameId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index("gameId"),
+        Index(value = ["rommFileId"]),
+        Index(value = ["gameId", "versionGroup"]),
+        Index(value = ["versionGroup"])
+    ]
+)
+data class GameFileEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val gameId: Long,
+    val rommFileId: Long? = null,
+    val romId: Long = 0,
+    val fileName: String,
+    val filePath: String,
+    val category: String,
+    val fileSize: Long,
+    val localPath: String? = null,
+    val downloadedAt: Instant? = null,
+    val isLaunchTarget: Boolean = false,
+    val isMultiDisc: Boolean = false,
+    val m3uPath: String? = null,
+    val romHashPrefix: String? = null,
+    val regions: String? = null,
+    val versionGroup: String? = null,
+    val trackTitle: String? = null,
+    val trackNumber: Int? = null,
+    val durationSeconds: Double? = null,
+    val docTitle: String? = null,
+    val docSource: String? = null,
+    val docSourceUrl: String? = null
+) {
+    fun isLocallyPresent(): Boolean = localPath?.let { File(it).exists() } == true
+}

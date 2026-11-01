@@ -1,0 +1,185 @@
+name: review-argosy
+description: Reviews an Argosy change against the project's laws. One reviewer selects the domain policies the change needs, and a supervisor writes the summary the PR gate reads.
+all_steps:
+  rules:
+    - ref: findings-handling
+      position: before_instruction
+    - ref: plain-terminology
+      position: before_instruction
+
+max_steps: 10
+facet_pools:
+  argosy-domain-policies:
+    candidates:
+      - id: ui-input
+        description: Composables, screens, modals, input handlers, focus, footer hints, lists. Choose for any change under ui/ or libretro/ui that renders or handles input.
+        policy: argosy-ui-input
+      - id: settings
+        description: Preferences, DataStore keys, settings sections, SettingsConfirmRouter, SettingsGeneralRouter, SettingsInitRouter. Choose when a setting is added, changed or rendered.
+        policy: argosy-settings
+      - id: tokens-design
+        description: Colors, dimensions, typography, motion, tokens.json, generated theme files, visual styling and user-facing copy in strings XML. Choose for visual or copy changes.
+        policy: argosy-tokens-design
+      - id: architecture
+        description: ViewModels, delegates, repositories, use cases, models, Compose state, layer boundaries, storage access. Choose for most Kotlin logic changes.
+        policy: argosy-architecture
+      - id: data-threading
+        description: Entities, DAOs, migrations, schema JSON, network calls, coroutine dispatchers, launch, session and sync hot paths. Choose when data, I/O or threading changes.
+        policy: argosy-data-threading
+      - id: dual-screen
+        description: ui/dualscreen, SecondaryHomeActivity, DualScreenManager, CompanionHost, PresentationSlot, screen layouts and display handling.
+        policy: argosy-dual-screen
+      - id: platform-emulator
+        description: PlatformDefinitions, EmulatorRegistry, LibretroCoreRegistry, other registries, EmulatorResolver, GameLauncher, core options and BIOS.
+        policy: argosy-platform-emulator
+      - id: sync-saves
+        description: data/sync, save and state caches, save path resolution, save channels, platform save handlers, archive shapes.
+        policy: argosy-sync-saves
+      - id: ra-hardcore
+        description: LibretroActivity, HotkeyDispatcher, InGameMenu, cheats, rewind, save states, launch modes, play options, RetroAchievements code.
+        policy: argosy-ra-hardcore
+
+initial_step: gather
+
+steps:
+  - name: gather
+    uses: review-gather-with-clarification-to-reviewers
+    rules:
+      - condition: Review target information gathered
+        next: review
+      - condition: Cannot identify review target, insufficient info
+        next: ABORT
+        appendix: |
+          Clarifications needed:
+          - {Question 1}
+          - {Question 2}
+
+  - name: review
+    capabilities: readonly
+    tags:
+      - review
+    edit: false
+    persona: coding-reviewer
+    policy:
+      - contract-change
+      - review
+      - coding
+      - testing
+      - ai-antipattern
+      - argosy-core
+      - argosy-evidence
+    knowledge:
+      - argosy-structure
+      - unit-testing
+    dynamic_facets:
+      pool: argosy-domain-policies
+    instruction: review-coding
+    output_contracts:
+      report:
+        - name: coding-review.md
+          format: coding-review
+    rules:
+      - condition: approved
+        next: review-synthesis
+      - condition: needs_fix
+        next: supervise
+
+  - name: review-synthesis
+    capabilities: readonly
+    tags:
+      - review
+      - final-gate
+      - supervise
+    edit: false
+    persona: supervisor
+    policy:
+      - contract-change
+      - review
+      - argosy-core
+    knowledge:
+      - argosy-structure
+    pass_previous_response: false
+    rules:
+      - condition: APPROVE
+        next: COMPLETE
+      - condition: REJECT
+        next: COMPLETE
+    instruction: &review_synthesis_instruction |
+      ## Review results
+      {previous_response}
+
+      This workflow only reviews. Do not build, run tests, or edit files.
+      Your job is to merge the review results into the final summary.
+
+      Steps:
+      1. Read `review-target.md` and every reviewer report that exists in the Report Directory. Do not assume a report exists; the results table lists only reports this run produced. If the task names a previous summary file, read it and use it only to classify findings as new, persists or resolved.
+      2. Merge the results. Keep only findings on lines the change adds or modifies.
+      3. Mark each finding blocking or suggestion, as the policies define. Only blocking findings count toward REJECT.
+      4. List every changed file under a maintainer-locked path in "Needs maintainer discussion". This never causes REJECT.
+      5. Write the summary. Plain ASCII only. Write the Range line with the full 40-character base and head commit hashes; the PR check compares the head hash with the PR head.
+    output_contracts: &review_synthesis_output_contracts
+      report:
+        - name: review-summary.md
+          format: |
+            ```markdown
+            # Review summary
+
+            ## Verdict: APPROVE / REJECT
+
+            Range: {base sha}..{head sha}
+
+            ## Summary
+            {2-3 sentences merging all review results}
+
+            ## Needs maintainer discussion
+            {Only when a changed file is under a maintainer-locked path: one line per file with what changed. Omit the section otherwise.}
+
+            ## Review results
+            | Review | Result | Main findings |
+            |--------|--------|---------------|
+            | each review that exists | APPROVE/REJECT | {overview} |
+
+            ## Blocking findings (new)
+            | # | finding_id | Policy | Location | Problem | Fix |
+            |---|------------|--------|----------|---------|-----|
+            | 1 | SUM-NEW-src-file-L42 | argosy-core | `file:line` | description | fix |
+
+            ## Blocking findings (persists)
+            | # | finding_id | Policy | Previous | Current | Problem |
+            |---|------------|--------|----------|---------|---------|
+            | 1 | SUM-PERSIST-src-file-L77 | argosy-ui-input | `file:line` | `file:line` | description |
+
+            ## Resolved
+            | finding_id | Policy | Evidence |
+            |------------|--------|----------|
+            | SUM-RESOLVED-src-file-L10 | argosy-architecture | `file:line` |
+
+            ## Suggestions
+            - {non-blocking suggestions}
+
+            ## REJECT conditions
+            - REJECT only when at least one blocking finding is new or persists
+            - A finding without a finding_id is invalid
+            ```
+
+  - name: supervise
+    capabilities: readonly
+    tags:
+      - review
+      - supervise
+    edit: false
+    persona: supervisor
+    policy:
+      - contract-change
+      - review
+      - argosy-core
+    knowledge:
+      - argosy-structure
+    pass_previous_response: false
+    rules:
+      - condition: APPROVE
+        next: COMPLETE
+      - condition: REJECT
+        next: COMPLETE
+    instruction: *review_synthesis_instruction
+    output_contracts: *review_synthesis_output_contracts

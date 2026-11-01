@@ -1,0 +1,192 @@
+package com.nendo.argosy.ui.screens.gamedetail.components
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.PriorityHigh
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import com.nendo.argosy.ui.theme.LocalLauncherTheme
+import android.content.Context
+import androidx.annotation.StringRes
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import com.nendo.argosy.R
+import com.nendo.argosy.data.local.entity.SaveSyncEntity
+import com.nendo.argosy.ui.theme.Dimens
+import com.nendo.argosy.util.formatClockDateTime
+import com.nendo.argosy.util.formatRelativeTimeVerbose
+import java.time.Instant
+
+enum class SaveSyncStatus {
+    SYNCED,
+    LOCAL_NEWER,
+    SERVER_NEWER,
+    LOCAL_ONLY,
+    PENDING_UPLOAD,
+    NEEDS_RESOLUTION,
+    NO_SAVE,
+    NOT_CONFIGURED
+}
+
+/**
+ * The one reading of a stored sync status. Direction is decided in the sync layer and recorded on
+ * the row, so a screen that collapses two directions into one tells the user the opposite of what
+ * happened. `CONFLICT` is absent on purpose: nothing writes it, and a real conflict is parked in
+ * `pending_conflicts` rather than carried here.
+ */
+fun mapSaveSyncStatus(raw: String): SaveSyncStatus = when (raw) {
+    SaveSyncEntity.STATUS_SYNCED -> SaveSyncStatus.SYNCED
+    SaveSyncEntity.STATUS_LOCAL_NEWER -> SaveSyncStatus.LOCAL_NEWER
+    SaveSyncEntity.STATUS_SERVER_NEWER -> SaveSyncStatus.SERVER_NEWER
+    SaveSyncEntity.STATUS_PENDING_UPLOAD -> SaveSyncStatus.PENDING_UPLOAD
+    SaveSyncEntity.STATUS_NEEDS_HARDCORE_RESOLUTION -> SaveSyncStatus.NEEDS_RESOLUTION
+    else -> SaveSyncStatus.NOT_CONFIGURED
+}
+
+data class SaveStatusInfo(
+    val status: SaveSyncStatus,
+    val channelName: String?,
+    val activeSaveTimestamp: Long?,
+    val lastSyncTime: Instant?
+) {
+    fun displayLabel(context: Context): String = when {
+        channelName != null -> channelName
+        activeSaveTimestamp != null -> formatClockDateTime(context, activeSaveTimestamp)
+        else -> context.getString(R.string.gamedetail_save_status_latest_label)
+    }
+
+    val effectiveStatus: SaveSyncStatus
+        get() = status
+
+    fun displayTime(context: Context): String? = when {
+        activeSaveTimestamp != null -> formatRelativeTimeVerbose(context, Instant.ofEpochMilli(activeSaveTimestamp))
+        lastSyncTime != null -> formatRelativeTimeVerbose(context, lastSyncTime)
+        else -> null
+    }
+}
+
+data class SaveStatusEvent(
+    val channelName: String?,
+    val timestamp: Long?
+) {
+    val isLocalOnly: Boolean get() = timestamp != null
+}
+
+@Composable
+fun SaveStatusRow(
+    status: SaveStatusInfo,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
+    ) {
+        Icon(
+            imageVector = status.effectiveStatus.icon,
+            contentDescription = null,
+            tint = status.effectiveStatus.color(),
+            modifier = Modifier.size(Dimens.spacingMd)
+        )
+
+        androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = status.displayLabel(context),
+                style = MaterialTheme.typography.bodySmall,
+                color = LocalLauncherTheme.current.semanticColors.warning,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Dimens.spacingXs)
+            ) {
+                Text(
+                    text = stringResource(status.effectiveStatus.displayNameRes),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+                    color = status.effectiveStatus.textColor()
+                )
+
+                status.displayTime(context)?.let { time ->
+                    Text(
+                        text = stringResource(R.string.gamedetail_save_status_time, time),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+internal val SaveSyncStatus.icon: ImageVector
+    get() = when (this) {
+        SaveSyncStatus.SYNCED -> Icons.Default.Check
+        SaveSyncStatus.LOCAL_NEWER -> Icons.Default.CloudUpload
+        SaveSyncStatus.SERVER_NEWER -> Icons.Default.CloudDownload
+        SaveSyncStatus.LOCAL_ONLY -> Icons.Default.Save
+        SaveSyncStatus.PENDING_UPLOAD -> Icons.Default.Sync
+        SaveSyncStatus.NEEDS_RESOLUTION -> Icons.Default.PriorityHigh
+        SaveSyncStatus.NO_SAVE -> Icons.Default.CloudOff
+        SaveSyncStatus.NOT_CONFIGURED -> Icons.Default.Error
+    }
+
+@Composable
+private fun SaveSyncStatus.color() = when (this) {
+    SaveSyncStatus.SYNCED -> MaterialTheme.colorScheme.primary
+    SaveSyncStatus.LOCAL_NEWER -> LocalLauncherTheme.current.semanticColors.warning
+    SaveSyncStatus.SERVER_NEWER -> LocalLauncherTheme.current.semanticColors.warning
+    SaveSyncStatus.LOCAL_ONLY -> MaterialTheme.colorScheme.onSurfaceVariant
+    SaveSyncStatus.PENDING_UPLOAD -> MaterialTheme.colorScheme.secondary
+    SaveSyncStatus.NEEDS_RESOLUTION -> MaterialTheme.colorScheme.error
+    SaveSyncStatus.NO_SAVE -> MaterialTheme.colorScheme.onSurfaceVariant
+    SaveSyncStatus.NOT_CONFIGURED -> MaterialTheme.colorScheme.error
+}
+
+@Composable
+private fun SaveSyncStatus.textColor() = when (this) {
+    SaveSyncStatus.SYNCED -> MaterialTheme.colorScheme.onSurfaceVariant
+    SaveSyncStatus.LOCAL_NEWER -> LocalLauncherTheme.current.semanticColors.info
+    SaveSyncStatus.SERVER_NEWER -> LocalLauncherTheme.current.semanticColors.info
+    SaveSyncStatus.LOCAL_ONLY -> LocalLauncherTheme.current.semanticColors.info
+    SaveSyncStatus.PENDING_UPLOAD -> LocalLauncherTheme.current.semanticColors.info
+    SaveSyncStatus.NEEDS_RESOLUTION -> MaterialTheme.colorScheme.error
+    SaveSyncStatus.NO_SAVE -> MaterialTheme.colorScheme.onSurfaceVariant
+    SaveSyncStatus.NOT_CONFIGURED -> MaterialTheme.colorScheme.error
+}
+
+@get:StringRes
+private val SaveSyncStatus.displayNameRes: Int
+    get() = when (this) {
+        SaveSyncStatus.SYNCED -> R.string.gamedetail_save_status_synced
+        SaveSyncStatus.LOCAL_NEWER -> R.string.gamedetail_save_status_local_newer
+        SaveSyncStatus.SERVER_NEWER -> R.string.gamedetail_save_status_server_newer
+        SaveSyncStatus.LOCAL_ONLY -> R.string.gamedetail_save_status_local_only
+        SaveSyncStatus.PENDING_UPLOAD -> R.string.gamedetail_save_status_pending_upload
+        SaveSyncStatus.NEEDS_RESOLUTION -> R.string.gamedetail_save_status_needs_resolution
+        SaveSyncStatus.NO_SAVE -> R.string.gamedetail_save_status_no_save
+        SaveSyncStatus.NOT_CONFIGURED -> R.string.gamedetail_save_status_not_configured
+    }
+

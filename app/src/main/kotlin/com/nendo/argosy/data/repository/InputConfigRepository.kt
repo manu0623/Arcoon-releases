@@ -1,0 +1,774 @@
+package com.nendo.argosy.data.repository
+
+import android.view.InputDevice
+import android.view.KeyEvent
+import com.nendo.argosy.data.local.dao.ControllerMappingDao
+import com.nendo.argosy.data.local.dao.ControllerOrderDao
+import com.nendo.argosy.data.local.dao.GameControllerMappingDao
+import com.nendo.argosy.data.local.dao.HotkeyDao
+import com.nendo.argosy.data.local.entity.ControllerMappingEntity
+import com.nendo.argosy.data.local.entity.GameControllerMappingEntity
+import com.nendo.argosy.data.local.entity.ControllerOrderEntity
+import com.nendo.argosy.data.local.entity.CoreInputMode
+import com.nendo.argosy.data.local.entity.HotkeyAction
+import com.nendo.argosy.data.local.entity.HotkeyEntity
+import com.nendo.argosy.data.local.entity.HotkeyScopeType
+import com.nendo.argosy.libretro.HotkeyManager
+import com.nendo.argosy.core.input.ConnectedControllerTracker
+import com.nendo.argosy.core.input.ControllerDetector
+import com.nendo.argosy.core.input.DetectedLayout
+import com.nendo.argosy.core.input.actsAsGamepad
+import com.nendo.argosy.core.input.controllerIdOf
+import com.nendo.argosy.util.Logger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.Instant
+import javax.inject.Inject
+import javax.inject.Singleton
+
+private const val TAG = "InputConfigRepository"
+private const val MAPPING_FORMAT_VERSION = 2
+
+data class ControllerInfo(
+    val deviceId: Int,
+    val controllerId: String,
+    val name: String,
+    val vendorId: Int,
+    val productId: Int,
+    val detectedLayout: DetectedLayout?
+)
+
+@Singleton
+class InputConfigRepository @Inject constructor(
+    private val controllerOrderDao: ControllerOrderDao,
+    private val controllerMappingDao: ControllerMappingDao,
+    private val gameControllerMappingDao: GameControllerMappingDao,
+    private val hotkeyDao: HotkeyDao,
+    private val controllerTracker: ConnectedControllerTracker
+) {
+    private fun GameControllerMappingEntity.asControllerMapping(): ControllerMappingEntity =
+        ControllerMappingEntity(
+            id = id,
+            controllerId = controllerId,
+            controllerName = controllerName,
+            vendorId = vendorId,
+            productId = productId,
+            platformId = null,
+            mappingJson = mappingJson,
+            presetName = presetName,
+            isAutoDetected = isAutoDetected,
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+    fun observeControllerOrder(): Flow<List<ControllerOrderEntity>> =
+        controllerOrderDao.observeAll()
+
+    suspend fun getControllerOrder(): List<ControllerOrderEntity> =
+        controllerOrderDao.getAll()
+
+    /**
+     * Seats a controller on [port], or unseats it when [port] is null. A controller already on
+     * [port] takes the seat the moved controller left, or no seat if it had none.
+     */
+    suspend fun seatController(controllerId: String, controllerName: String, port: Int?) =
+        withContext(Dispatchers.IO) {
+            val previousPort = controllerOrderDao.getByControllerId(controllerId)?.port
+            if (previousPort == port) return@withContext
+            Logger.info(TAG, "Seating $controllerName on port $port (was $previousPort)")
+            controllerOrderDao.deleteByControllerId(controllerId)
+            if (port == null) return@withContext
+            val displaced = controllerOrderDao.getByPort(port)
+            if (displaced != null) {
+                controllerOrderDao.deleteByPort(port)
+                if (previousPort != null) {
+                    controllerOrderDao.upsert(displaced.copy(port = previousPort, assignedAt = Instant.now()))
+                }
+            }
+            controllerOrderDao.upsert(
+                ControllerOrderEntity(
+                    port = port,
+                    controllerId = controllerId,
+                    controllerName = controllerName,
+                    assignedAt = Instant.now()
+                )
+            )
+        }
+
+    suspend fun clearControllerOrder() = withContext(Dispatchers.IO) {
+        Logger.info(TAG, "Clearing all controller assignments")
+        controllerOrderDao.deleteAll()
+    }
+
+    suspend fun getPortForController(controllerId: String): Int? =
+        controllerOrderDao.getByControllerId(controllerId)?.port
+
+    suspend fun getPortForDevice(device: InputDevice): Int? =
+        getPortForController(controllerIdOf(device))
+
+    fun observeControllerMappings(): Flow<List<ControllerMappingEntity>> =
+        controllerMappingDao.observeAll()
+
+    private suspend fun findMapping(controllerId: String, platformId: String?, gameId: Long? = null): ControllerMappingEntity? {
+        if (gameId != null) {
+            gameControllerMappingDao.getByGameAndController(gameId, controllerId, platformId.orEmpty())
+                ?.let { return it.asControllerMapping() }
+        }
+        if (platformId != null) {
+            controllerMappingDao.getByControllerIdAndPlatform(controllerId, platformId)?.let { return it }
+        }
+        return controllerMappingDao.getByControllerIdGlobal(controllerId)
+    }
+
+    private suspend fun findExactMapping(controllerId: String, platformId: String?): ControllerMappingEntity? {
+        return if (platformId != null) {
+            controllerMappingDao.getByControllerIdAndPlatform(controllerId, platformId)
+        } else {
+            controllerMappingDao.getByControllerIdGlobal(controllerId)
+        }
+    }
+
+    private suspend fun updateOrInsertMapping(
+        controllerId: String,
+        platformId: String?,
+        controllerName: String,
+        vendorId: Int,
+        productId: Int,
+        mappingJson: String,
+        presetName: String?,
+        isAutoDetected: Boolean,
+        gameId: Long? = null
+    ) {
+        if (gameId != null) {
+            val profileKey = platformId.orEmpty()
+            val existingGame = gameControllerMappingDao.getByGameAndController(gameId, controllerId, profileKey)
+            if (existingGame != null) {
+                gameControllerMappingDao.updateMapping(
+                    gameId = gameId,
+                    controllerId = controllerId,
+                    profileKey = profileKey,
+                    mappingJson = mappingJson,
+                    presetName = presetName,
+                    isAutoDetected = isAutoDetected
+                )
+            } else {
+                gameControllerMappingDao.upsert(
+                    GameControllerMappingEntity(
+                        gameId = gameId,
+                        controllerId = controllerId,
+                        profileKey = profileKey,
+                        controllerName = controllerName,
+                        vendorId = vendorId,
+                        productId = productId,
+                        mappingJson = mappingJson,
+                        presetName = presetName,
+                        isAutoDetected = isAutoDetected
+                    )
+                )
+            }
+            return
+        }
+        val existing = findExactMapping(controllerId, platformId)
+        if (existing != null) {
+            if (platformId != null) {
+                controllerMappingDao.updateMappingForPlatform(
+                    controllerId = controllerId,
+                    platformId = platformId,
+                    mappingJson = mappingJson,
+                    presetName = presetName,
+                    isAutoDetected = isAutoDetected,
+                    updatedAt = Instant.now()
+                )
+            } else {
+                controllerMappingDao.updateMappingGlobal(
+                    controllerId = controllerId,
+                    mappingJson = mappingJson,
+                    presetName = presetName,
+                    isAutoDetected = isAutoDetected,
+                    updatedAt = Instant.now()
+                )
+            }
+        } else {
+            controllerMappingDao.upsert(
+                ControllerMappingEntity(
+                    controllerId = controllerId,
+                    controllerName = controllerName,
+                    vendorId = vendorId,
+                    productId = productId,
+                    platformId = platformId,
+                    mappingJson = mappingJson,
+                    presetName = presetName,
+                    isAutoDetected = isAutoDetected,
+                    createdAt = Instant.now(),
+                    updatedAt = Instant.now()
+                )
+            )
+        }
+    }
+
+    suspend fun getMappingForController(controllerId: String, platformId: String? = null): Map<Int, Int>? =
+        withContext(Dispatchers.IO) {
+            val entity = findMapping(controllerId, platformId) ?: return@withContext null
+            parseMappingJson(entity.mappingJson)
+        }
+
+    suspend fun getMappingForDevice(device: InputDevice, platformId: String? = null): Map<Int, Int>? =
+        getMappingForController(controllerIdOf(device), platformId)
+
+    suspend fun getOrCreateMappingForDevice(device: InputDevice, platformId: String? = null): Map<Int, Int> =
+        withContext(Dispatchers.IO) {
+            val controllerId = controllerIdOf(device)
+            val existing = findMapping(controllerId, platformId)
+
+            if (existing != null) {
+                return@withContext parseMappingJson(existing.mappingJson)
+            }
+
+            val detectionResult = ControllerDetector.detectFromDevice(device)
+            val layout = detectionResult.layout ?: DetectedLayout.XBOX
+            val defaultMapping = InputPresets.getDefaultMappingForLayout(layout)
+
+            saveMapping(
+                device = device,
+                mapping = defaultMapping,
+                presetName = layout.name,
+                isAutoDetected = true
+            )
+
+            defaultMapping
+        }
+
+    suspend fun saveMapping(
+        device: InputDevice,
+        mapping: Map<Int, Int>,
+        presetName: String?,
+        isAutoDetected: Boolean,
+        platformId: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val controllerId = controllerIdOf(device)
+        val mappingJson = encodeMappingJson(mapping)
+
+        updateOrInsertMapping(
+            controllerId = controllerId,
+            platformId = platformId,
+            controllerName = device.name ?: "Unknown",
+            vendorId = device.vendorId,
+            productId = device.productId,
+            mappingJson = mappingJson,
+            presetName = presetName,
+            isAutoDetected = isAutoDetected
+        )
+        Logger.info(TAG, "Saved mapping for ${device.name} (platform: $platformId, preset: $presetName)")
+    }
+
+    suspend fun applyPreset(device: InputDevice, presetName: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val preset = InputPresets.getPresetByName(presetName) ?: return@withContext false
+            saveMapping(
+                device = device,
+                mapping = preset.mapping,
+                presetName = presetName,
+                isAutoDetected = false
+            )
+            true
+        }
+
+    suspend fun clearMappingForController(controllerId: String) = withContext(Dispatchers.IO) {
+        controllerMappingDao.deleteByControllerId(controllerId)
+    }
+
+    suspend fun clearAutoDetectedMappings() = withContext(Dispatchers.IO) {
+        controllerMappingDao.deleteAllAutoDetected()
+    }
+
+    suspend fun getExtendedMappingForController(controllerId: String, platformId: String? = null, gameId: Long? = null): Map<InputSource, Int>? =
+        withContext(Dispatchers.IO) {
+            val entity = findMapping(controllerId, platformId, gameId) ?: return@withContext null
+            parseExtendedMappingJson(entity.mappingJson)
+        }
+
+    suspend fun getExtendedMappingForDevice(device: InputDevice, platformId: String? = null, gameId: Long? = null): Map<InputSource, Int>? =
+        getExtendedMappingForController(controllerIdOf(device), platformId, gameId)
+
+    suspend fun getOrCreateExtendedMappingForDevice(device: InputDevice, platformId: String? = null, gameId: Long? = null): Map<InputSource, Int> =
+        withContext(Dispatchers.IO) {
+            val controllerId = controllerIdOf(device)
+            val existing = findMapping(controllerId, platformId, gameId)
+
+            if (existing != null) {
+                return@withContext parseExtendedMappingJson(existing.mappingJson)
+            }
+
+            val layout = ControllerDetector.detectFromDevice(device).layout ?: DetectedLayout.XBOX
+            val extendedMapping = defaultExtendedMapping(layout)
+
+            saveExtendedMapping(
+                device = device,
+                mapping = extendedMapping,
+                presetName = layout.name,
+                isAutoDetected = true
+            )
+
+            extendedMapping
+        }
+
+    /**
+     * What the given scope would resolve to if it held no bindings of its own: the platform row for
+     * a game scope, the global row for a platform scope, the detected layout's defaults for either
+     * when nothing is stored below. Callers compare against this to tell an inherited binding from
+     * one the user set at the scope they are editing.
+     */
+    suspend fun getInheritedExtendedMappingForDevice(
+        device: InputDevice,
+        platformId: String? = null,
+        gameId: Long? = null
+    ): Map<InputSource, Int> = withContext(Dispatchers.IO) {
+        val controllerId = controllerIdOf(device)
+        val lowerScope = when {
+            gameId != null -> findMapping(controllerId, platformId)
+            platformId != null -> controllerMappingDao.getByControllerIdGlobal(controllerId)
+            else -> null
+        }
+        lowerScope?.let { return@withContext parseExtendedMappingJson(it.mappingJson) }
+        defaultExtendedMapping(ControllerDetector.detectFromDevice(device).layout ?: DetectedLayout.XBOX)
+    }
+
+    private fun defaultExtendedMapping(layout: DetectedLayout): Map<InputSource, Int> =
+        InputPresets.getDefaultMappingForLayout(layout)
+            .map { (keyCode, retroButton) -> InputSource.Button(keyCode) as InputSource to retroButton }
+            .toMap()
+
+    suspend fun saveExtendedMapping(
+        device: InputDevice,
+        mapping: Map<InputSource, Int>,
+        presetName: String?,
+        isAutoDetected: Boolean,
+        platformId: String? = null,
+        gameId: Long? = null
+    ) = withContext(Dispatchers.IO) {
+        val controllerId = controllerIdOf(device)
+        val mappingJson = encodeExtendedMappingJson(mapping)
+
+        updateOrInsertMapping(
+            controllerId = controllerId,
+            platformId = platformId,
+            controllerName = device.name ?: "Unknown",
+            vendorId = device.vendorId,
+            productId = device.productId,
+            mappingJson = mappingJson,
+            presetName = presetName,
+            isAutoDetected = isAutoDetected,
+            gameId = gameId
+        )
+        Logger.info(TAG, "Saved extended mapping for ${device.name} (platform: $platformId, game: $gameId, preset: $presetName)")
+    }
+
+    fun groupMappingByRetroButton(mapping: Map<InputSource, Int>): Map<Int, List<InputSource>> {
+        return mapping.entries
+            .groupBy({ it.value }, { it.key })
+    }
+
+    fun observeHotkeys(): Flow<List<HotkeyEntity>> = hotkeyDao.observeAll()
+
+    fun observeEnabledHotkeys(): Flow<List<HotkeyEntity>> = hotkeyDao.observeEnabled()
+
+    suspend fun getHotkeys(): List<HotkeyEntity> = hotkeyDao.getAll()
+
+    suspend fun getEnabledHotkeys(): List<HotkeyEntity> = hotkeyDao.getEnabled()
+
+    suspend fun getHotkeyForAction(action: HotkeyAction): HotkeyEntity? =
+        hotkeyDao.getByAction(action)
+
+    suspend fun setHotkey(
+        action: HotkeyAction,
+        keyCodes: List<Int>,
+        controllerId: String? = null,
+        enabled: Boolean = true,
+        holdMs: Long = 0,
+        scopeType: HotkeyScopeType = HotkeyScopeType.GLOBAL,
+        scopeKey: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val canonicalKeyCodes = HotkeyManager.canonicalizeCombo(keyCodes)
+        val comboJson = encodeComboJson(canonicalKeyCodes)
+
+        val existing = hotkeyDao.getByActionControllerAndScope(action, controllerId, scopeType, scopeKey)
+        if (existing != null) {
+            hotkeyDao.upsert(existing.copy(buttonComboJson = comboJson, isEnabled = enabled))
+        } else {
+            hotkeyDao.upsert(
+                HotkeyEntity(
+                    action = action,
+                    buttonComboJson = comboJson,
+                    controllerId = controllerId,
+                    isEnabled = enabled,
+                    holdMs = holdMs,
+                    scopeType = scopeType,
+                    scopeKey = scopeKey
+                )
+            )
+        }
+        Logger.info(TAG, "Set hotkey for $action ($scopeType/${scopeKey ?: "-"}): ${canonicalKeyCodes.map { KeyEvent.keyCodeToString(it) }}")
+    }
+
+    /**
+     * Clearing a global bind removes it. Clearing a scoped one leaves a disabled row carrying the
+     * combo it inherits, because deleting the override would fall back to that inherited bind
+     * rather than unbinding the action for this scope. With nothing to inherit, deleting is the
+     * unbind.
+     */
+    suspend fun clearScopedHotkey(
+        action: HotkeyAction,
+        scopeType: HotkeyScopeType,
+        scopeKey: String?,
+        controllerId: String? = null
+    ) = withContext(Dispatchers.IO) {
+        hotkeyDao.deleteByActionControllerAndScope(action, controllerId, scopeType, scopeKey)
+        if (scopeType == HotkeyScopeType.GLOBAL) return@withContext
+
+        val inherited = hotkeyDao.getByActionControllerAndScope(
+            action,
+            controllerId,
+            HotkeyScopeType.GLOBAL,
+            null
+        ) ?: return@withContext
+
+        hotkeyDao.upsert(
+            inherited.copy(
+                id = 0,
+                isEnabled = false,
+                scopeType = scopeType,
+                scopeKey = scopeKey
+            )
+        )
+    }
+
+    suspend fun setHotkeyHoldMs(
+        action: HotkeyAction,
+        holdMs: Long,
+        controllerId: String? = null,
+        scopeType: HotkeyScopeType = HotkeyScopeType.GLOBAL,
+        scopeKey: String? = null
+    ) = withContext(Dispatchers.IO) {
+        hotkeyDao.updateHoldMsScoped(action, controllerId, scopeType, scopeKey, holdMs)
+    }
+
+    suspend fun enableHotkey(action: HotkeyAction, enabled: Boolean) = withContext(Dispatchers.IO) {
+        val existing = hotkeyDao.getByAction(action) ?: return@withContext
+        hotkeyDao.updateCombo(
+            action = action,
+            controllerId = existing.controllerId,
+            buttonComboJson = existing.buttonComboJson,
+            isEnabled = enabled
+        )
+    }
+
+    suspend fun deleteHotkey(action: HotkeyAction) = withContext(Dispatchers.IO) {
+        hotkeyDao.deleteByAction(action)
+    }
+
+    suspend fun deleteHotkeyById(id: Long) = withContext(Dispatchers.IO) {
+        hotkeyDao.deleteById(id)
+    }
+
+    suspend fun getCoreScopedHotkeys(coreId: String): List<HotkeyEntity> = withContext(Dispatchers.IO) {
+        (hotkeyDao.getAllByAction(HotkeyAction.CYCLE_CORE_OPTION) +
+            hotkeyDao.getAllByAction(HotkeyAction.SEND_CORE_INPUT))
+            .filter { it.scopeType == HotkeyScopeType.CORE && it.scopeKey == coreId }
+    }
+
+    suspend fun setCoreControlHotkey(
+        id: Long?,
+        keyCodes: List<Int>,
+        retropadId: Int,
+        mode: CoreInputMode,
+        coreId: String,
+        controllerId: String? = null,
+        holdMs: Long = 0,
+        enabled: Boolean = true
+    ): Long = withContext(Dispatchers.IO) {
+        val comboJson = encodeComboJson(HotkeyManager.canonicalizeCombo(keyCodes))
+        hotkeyDao.upsertReturningId(
+            HotkeyEntity(
+                id = id ?: 0,
+                action = HotkeyAction.SEND_CORE_INPUT,
+                buttonComboJson = comboJson,
+                controllerId = controllerId,
+                isEnabled = enabled,
+                holdMs = holdMs,
+                coreInputRetropadId = retropadId,
+                coreInputMode = mode,
+                scopeType = HotkeyScopeType.CORE,
+                scopeKey = coreId
+            )
+        )
+    }
+
+    suspend fun setCoreOptionHotkey(
+        id: Long?,
+        keyCodes: List<Int>,
+        coreOptionKey: String,
+        coreOptionDirection: Int,
+        coreOptionValues: List<String>,
+        coreId: String,
+        scopeType: HotkeyScopeType = HotkeyScopeType.CORE,
+        scopeKey: String? = coreId,
+        controllerId: String? = null,
+        holdMs: Long = 0,
+        enabled: Boolean = true
+    ): Long = withContext(Dispatchers.IO) {
+        val comboJson = encodeComboJson(HotkeyManager.canonicalizeCombo(keyCodes))
+        val valuesJson = if (coreOptionValues.isEmpty()) null else encodeStringListJson(coreOptionValues)
+        hotkeyDao.upsertReturningId(
+            HotkeyEntity(
+                id = id ?: 0,
+                action = HotkeyAction.CYCLE_CORE_OPTION,
+                buttonComboJson = comboJson,
+                controllerId = controllerId,
+                isEnabled = enabled,
+                holdMs = holdMs,
+                coreOptionKey = coreOptionKey,
+                coreOptionDirection = coreOptionDirection,
+                coreOptionValuesJson = valuesJson,
+                scopeType = scopeType,
+                scopeKey = scopeKey
+            )
+        )
+    }
+
+    fun parseCoreOptionValues(entity: HotkeyEntity): List<String> =
+        entity.coreOptionValuesJson?.let { parseStringListJson(it) } ?: emptyList()
+
+    suspend fun clearAllHotkeys() = withContext(Dispatchers.IO) {
+        hotkeyDao.deleteAll()
+    }
+
+    fun parseHotkeyCombo(entity: HotkeyEntity): List<Int> {
+        return parseComboJson(entity.buttonComboJson)
+    }
+
+    suspend fun initializeDefaultHotkeys() = withContext(Dispatchers.IO) {
+        val existingHotkeys = hotkeyDao.getAll()
+        if (existingHotkeys.isNotEmpty()) return@withContext
+
+        Logger.info(TAG, "Initializing default hotkeys")
+
+        setHotkey(
+            action = HotkeyAction.IN_GAME_MENU,
+            keyCodes = listOf(KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_SELECT)
+        )
+
+        setHotkey(
+            action = HotkeyAction.FAST_FORWARD,
+            keyCodes = listOf(KeyEvent.KEYCODE_BUTTON_R2)
+        )
+
+        setHotkey(
+            action = HotkeyAction.REWIND,
+            keyCodes = listOf(KeyEvent.KEYCODE_BUTTON_L2)
+        )
+
+        setHotkey(
+            action = HotkeyAction.RESET_GAME,
+            keyCodes = listOf(KeyEvent.KEYCODE_BUTTON_START, KeyEvent.KEYCODE_BUTTON_SELECT),
+            holdMs = 1000
+        )
+    }
+
+    /**
+     * [getConnectedControllers], re-read on IO whenever a pad connects or disconnects or another
+     * pad becomes the active controller.
+     */
+    fun observeConnectedControllers(): Flow<List<ControllerInfo>> =
+        combine(
+            controllerTracker.connectedControllerIds,
+            controllerTracker.activeController.map { it?.deviceId }.distinctUntilChanged()
+        ) { _, _ -> getConnectedControllers() }
+            .flowOn(Dispatchers.IO)
+
+    fun getConnectedControllers(): List<ControllerInfo> {
+        val controllers = mutableListOf<ControllerInfo>()
+        val deviceIds = InputDevice.getDeviceIds()
+
+        for (deviceId in deviceIds) {
+            val device = InputDevice.getDevice(deviceId) ?: continue
+
+            if (device.actsAsGamepad()) {
+                val detection = ControllerDetector.detectFromDevice(device)
+                controllers.add(
+                    ControllerInfo(
+                        deviceId = deviceId,
+                        controllerId = controllerIdOf(device),
+                        name = device.name ?: "Unknown",
+                        vendorId = device.vendorId,
+                        productId = device.productId,
+                        detectedLayout = detection.layout
+                    )
+                )
+            }
+        }
+
+        return controllers
+    }
+
+    private fun parseMappingJson(jsonStr: String): Map<Int, Int> {
+        return try {
+            val result = mutableMapOf<Int, Int>()
+            val jsonArray = JSONArray(jsonStr)
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val androidKeyCode = obj.getInt("androidKeyCode")
+                val retroButton = obj.getInt("retroButton")
+                result[androidKeyCode] = retroButton
+            }
+            result
+        } catch (e: Exception) {
+            Logger.error(TAG, "Failed to parse mapping JSON: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    private fun encodeMappingJson(mapping: Map<Int, Int>): String {
+        val jsonArray = JSONArray()
+        for ((android, retro) in mapping) {
+            val obj = JSONObject()
+            obj.put("androidKeyCode", android)
+            obj.put("retroButton", retro)
+            jsonArray.put(obj)
+        }
+        return jsonArray.toString()
+    }
+
+    private fun parseComboJson(jsonStr: String): List<Int> {
+        return try {
+            val result = mutableListOf<Int>()
+            val jsonArray = JSONArray(jsonStr)
+            for (i in 0 until jsonArray.length()) {
+                result.add(jsonArray.getInt(i))
+            }
+            result
+        } catch (e: Exception) {
+            Logger.error(TAG, "Failed to parse combo JSON: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun encodeComboJson(keyCodes: List<Int>): String {
+        val jsonArray = JSONArray()
+        for (keyCode in keyCodes) {
+            jsonArray.put(keyCode)
+        }
+        return jsonArray.toString()
+    }
+
+    private fun parseStringListJson(jsonStr: String): List<String> {
+        return try {
+            val result = mutableListOf<String>()
+            val jsonArray = JSONArray(jsonStr)
+            for (i in 0 until jsonArray.length()) {
+                result.add(jsonArray.getString(i))
+            }
+            result
+        } catch (e: Exception) {
+            Logger.error(TAG, "Failed to parse string list JSON: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun encodeStringListJson(values: List<String>): String {
+        val jsonArray = JSONArray()
+        for (value in values) {
+            jsonArray.put(value)
+        }
+        return jsonArray.toString()
+    }
+
+    private fun parseExtendedMappingJson(jsonStr: String): Map<InputSource, Int> {
+        return try {
+            val trimmed = jsonStr.trim()
+            if (trimmed.startsWith("[")) {
+                parseLegacyMappingToExtended(trimmed)
+            } else {
+                parseVersionedMappingJson(trimmed)
+            }
+        } catch (e: Exception) {
+            Logger.error(TAG, "Failed to parse extended mapping JSON: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    private fun parseLegacyMappingToExtended(jsonStr: String): Map<InputSource, Int> {
+        val result = mutableMapOf<InputSource, Int>()
+        val jsonArray = JSONArray(jsonStr)
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.getJSONObject(i)
+            val androidKeyCode = obj.getInt("androidKeyCode")
+            val retroButton = obj.getInt("retroButton")
+            result[InputSource.Button(androidKeyCode)] = retroButton
+        }
+        return result
+    }
+
+    private fun parseVersionedMappingJson(jsonStr: String): Map<InputSource, Int> {
+        val result = mutableMapOf<InputSource, Int>()
+        val root = JSONObject(jsonStr)
+        val mappings = root.getJSONArray("mappings")
+
+        for (i in 0 until mappings.length()) {
+            val obj = mappings.getJSONObject(i)
+            val retroButton = obj.getInt("retroButton")
+            val type = obj.getString("type")
+
+            val source = when (type) {
+                "button" -> InputSource.Button(obj.getInt("keyCode"))
+                "analog" -> InputSource.AnalogDirection(
+                    axis = obj.getInt("axis"),
+                    positive = obj.getBoolean("positive")
+                )
+                else -> continue
+            }
+            result[source] = retroButton
+        }
+        return result
+    }
+
+    private fun encodeExtendedMappingJson(mapping: Map<InputSource, Int>): String {
+        val root = JSONObject()
+        root.put("version", MAPPING_FORMAT_VERSION)
+
+        val mappingsArray = JSONArray()
+        for ((source, retroButton) in mapping) {
+            val obj = JSONObject()
+            obj.put("retroButton", retroButton)
+            when (source) {
+                is InputSource.Button -> {
+                    obj.put("type", "button")
+                    obj.put("keyCode", source.keyCode)
+                }
+                is InputSource.AnalogDirection -> {
+                    obj.put("type", "analog")
+                    obj.put("axis", source.axis)
+                    obj.put("positive", source.positive)
+                }
+            }
+            mappingsArray.put(obj)
+        }
+        root.put("mappings", mappingsArray)
+        return root.toString()
+    }
+
+    fun extendedMappingToLegacy(mapping: Map<InputSource, Int>): Map<Int, Int> {
+        return mapping.entries
+            .filter { it.key is InputSource.Button }
+            .associate { (it.key as InputSource.Button).keyCode to it.value }
+    }
+
+    companion object {
+        const val MAX_PLAYERS = 4
+    }
+}

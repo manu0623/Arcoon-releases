@@ -1,0 +1,272 @@
+package com.nendo.argosy.data.local.entity
+
+import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+import com.nendo.argosy.data.model.FileOrigin
+import com.nendo.argosy.data.model.GameSource
+import com.nendo.argosy.util.SearchNormalizer
+import java.time.Instant
+
+@Entity(
+    tableName = "games",
+    foreignKeys = [
+        ForeignKey(
+            entity = PlatformEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["platformId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index("platformId"),
+        Index("title"),
+        Index("lastPlayed"),
+        Index("source"),
+        Index(value = ["rommId"], unique = true),
+        Index(value = ["steamAppId"], unique = true),
+        Index(value = ["packageName"], unique = true),
+        Index("regions"),
+        Index("gameModes"),
+        Index("franchises"),
+        Index("genres"),
+        Index("collections"),
+        Index("siblingGroupKey")
+    ]
+)
+data class GameEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+
+    val platformId: Long,
+    val platformSlug: String = "",
+    val title: String,
+    val sortTitle: String,
+    val searchTitle: String = SearchNormalizer.normalize(title),
+
+    val localPath: String?,
+    @ColumnInfo(defaultValue = "ADOPTED")
+    val fileOrigin: FileOrigin = FileOrigin.ADOPTED,
+    val rommId: Long?,
+    val rommFileName: String? = null,
+    val igdbId: Long?,
+    val raId: Long? = null,
+    val steamAppId: Long? = null,
+    val steamLauncher: String? = null,
+    val steamInstallDir: String? = null,
+    val packageName: String? = null,
+    val launcherSetManually: Boolean = false,
+    val source: GameSource,
+
+    val developer: String? = null,
+    val publisher: String? = null,
+    val releaseYear: Int? = null,
+    val genre: String? = null,
+    val description: String? = null,
+    val players: String? = null,
+    val rating: Float? = null,
+
+    val regions: String? = null,
+    val languages: String? = null,
+    val gameModes: String? = null,
+    val franchises: String? = null,
+    val genres: String? = null,
+    val collections: String? = null,
+    val alternativeNames: String? = null,
+    val ageRatings: String? = null,
+
+    val mobyId: Long? = null,
+    val sgdbId: Long? = null,
+    val ssId: Long? = null,
+    val launchboxId: Long? = null,
+    val hasheousId: Long? = null,
+    val tgdbId: Long? = null,
+    val hltbId: Long? = null,
+    val timeToBeatMainSec: Int? = null,
+    val timeToBeatExtraSec: Int? = null,
+    val timeToBeatCompletionistSec: Int? = null,
+    val flashpointId: String? = null,
+    val gamelistId: String? = null,
+    val libretroId: String? = null,
+
+    val crcHash: String? = null,
+    val md5Hash: String? = null,
+    val sha1Hash: String? = null,
+    val raHash: String? = null,
+
+    val hasManual: Boolean = false,
+    val manualPath: String? = null,
+    val remoteHasSoundtrack: Boolean = false,
+    val isIdentified: Boolean = true,
+
+    val userRating: Int = 0,
+    val userDifficulty: Int = 0,
+    val completion: Int = 0,
+    val status: String? = null,
+    val backlogged: Boolean = false,
+    val nowPlaying: Boolean = false,
+
+    val isFavorite: Boolean = false,
+    val playCount: Int = 0,
+    val playTimeMinutes: Int = 0,
+    val lastPlayed: Instant? = null,
+    val addedAt: Instant = Instant.now(),
+
+    val isMultiDisc: Boolean = false,
+    val lastPlayedDiscId: Long? = null,
+    val m3uPath: String? = null,
+    val activeVariantFileId: Long? = null,
+    val lastPlayedFileId: Long? = null,
+
+    val achievementCount: Int = 0,
+    val earnedAchievementCount: Int = 0,
+
+    val titleId: String? = null,
+    val titleIdLocked: Boolean = false,
+    val saveTarget: String? = null,
+    val saveTargetLayout: String? = null,
+    val hasFileOnDisk: Boolean = true,
+    val storeEnrichStatus: Int = 0,
+    val titleIdCandidates: String? = null,
+    val saveId: String? = null,
+    val saveFeatures: Int? = null,
+    val youtubeVideoId: String? = null,
+
+    val cheatsFetched: Boolean = false,
+    val cheatsFetchedAt: Long? = null,
+    val cheatsSelectedRegion: String? = null,
+    val cheatsSelectedVersion: String? = null,
+
+    val achievementsFetchedAt: Long? = null,
+
+    val romHash: String? = null,
+
+    val verifiedRaId: Long? = null,
+    val raIdVerified: Boolean = false,
+
+    val fileSizeBytes: Long? = null,
+
+    val perGameSettingsEnabled: Boolean = false,
+    val perGameControlsEnabled: Boolean = false,
+
+    val syncDirty: Boolean = false,
+
+    val siblingGroupKey: String? = null,
+    @ColumnInfo(defaultValue = "0")
+    val isHackVariant: Boolean = false,
+    @ColumnInfo(defaultValue = "0")
+    val isTranslationVariant: Boolean = false,
+    @ColumnInfo(defaultValue = "1")
+    val isGroupVisible: Boolean = true
+) {
+    val effectiveRaId: Long? get() = if (raIdVerified) verifiedRaId else (verifiedRaId ?: raId)
+
+    val isExternallyManaged: Boolean
+        get() = steamLauncher != null && steamLauncher != LAUNCHER_UNSPECIFIED
+
+    val isDownloaded: Boolean
+        get() = localPath != null || isExternallyManaged
+
+    val isRemovedFromRomm: Boolean
+        get() = isServerRemovedRomm(source, rommId)
+
+    companion object {
+        const val STORE_NOT_ATTEMPTED = 0
+        const val STORE_SUCCESS = 1
+        const val STORE_FAILED = 2
+
+        /**
+         * Sentinel for manually-added Steam games where the user did not specify a
+         * launcher at add time. Preserved for legacy rows; new AddManual flows are
+         * per-launcher and write the actual package name.
+         */
+        const val LAUNCHER_UNSPECIFIED = "native"
+    }
+}
+
+/**
+ * [isHidden] is not a column on `games`. Every projection computes it as the existence of a
+ * `user_roms_hidden` row for the owner the query was run for, so it means "hidden for that
+ * account" and nothing more.
+ */
+data class GameListItem(
+    val id: Long,
+    val platformId: Long,
+    val platformSlug: String,
+    val title: String,
+    val sortTitle: String,
+    val localPath: String?,
+    val source: GameSource,
+    val isFavorite: Boolean,
+    val isHidden: Boolean,
+    val isMultiDisc: Boolean,
+    val rommId: Long?,
+    val steamAppId: Long?,
+    val packageName: String?,
+    val steamLauncher: String?,
+    val playCount: Int,
+    val playTimeMinutes: Int,
+    val lastPlayed: Instant?,
+    val genre: String?,
+    val players: String?,
+    val rating: Float?,
+    val userRating: Int,
+    val userDifficulty: Int,
+    val releaseYear: Int?,
+    val addedAt: Instant,
+    val achievementCount: Int,
+    val earnedAchievementCount: Int,
+    val completion: Int,
+    val status: String?,
+    val developer: String?,
+    val igdbId: Long?,
+    val timeToBeatMainSec: Int?
+) {
+    val isExternallyManaged: Boolean
+        get() = steamLauncher != null && steamLauncher != GameEntity.LAUNCHER_UNSPECIFIED
+
+    val isDownloaded: Boolean
+        get() = localPath != null || isExternallyManaged
+
+    val isRemovedFromRomm: Boolean
+        get() = isServerRemovedRomm(source, rommId)
+}
+
+fun isServerRemovedRomm(source: GameSource, rommId: Long?): Boolean =
+    (source == GameSource.ROMM_REMOTE || source == GameSource.ROMM_SYNCED) &&
+        rommId != null && rommId < 0
+
+data class GameCategoryInfo(
+    val id: Long,
+    val genre: String?,
+    val gameModes: String?
+)
+
+data class GameRegionInfo(
+    val id: Long,
+    val regions: String?
+)
+
+data class GameSiblingRow(
+    val id: Long,
+    val siblingGroupKey: String,
+    val isHackVariant: Boolean,
+    val isTranslationVariant: Boolean,
+    val rommFileName: String?,
+    val regions: String?,
+    val localPath: String?,
+    val isGroupVisible: Boolean
+)
+
+data class GameGroupMemberRow(
+    val id: Long,
+    val title: String,
+    val rommFileName: String?,
+    val regions: String?,
+    val localPath: String?,
+    val isHackVariant: Boolean,
+    val isTranslationVariant: Boolean,
+    val isGroupVisible: Boolean
+)

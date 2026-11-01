@@ -1,0 +1,214 @@
+package com.nendo.argosy.data.local.dao
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import com.nendo.argosy.data.local.entity.GameFileEntity
+import kotlinx.coroutines.flow.Flow
+import java.time.Instant
+
+data class GameWithMissingCount(
+    val gameId: Long,
+    val title: String,
+    val coverPath: String?,
+    val platformSlug: String,
+    val updateCount: Int,
+    val dlcCount: Int,
+    val totalSize: Long
+)
+
+data class MissingGameFile(
+    val fileId: Long,
+    val gameId: Long,
+    val fileName: String,
+    val category: String,
+    val gameTitle: String,
+    val rommFileName: String?,
+    val platformSlug: String,
+    val platformId: Long
+)
+
+data class PlatformLocalPath(
+    val platformId: Long,
+    val localPath: String
+)
+
+@Dao
+interface GameFileDao {
+
+    @Query("SELECT * FROM game_files WHERE gameId = :gameId ORDER BY category ASC, fileName ASC")
+    suspend fun getFilesForGame(gameId: Long): List<GameFileEntity>
+
+    @Query("SELECT * FROM game_files WHERE gameId = :gameId ORDER BY category ASC, fileName ASC")
+    fun observeFilesForGame(gameId: Long): Flow<List<GameFileEntity>>
+
+    @Query("SELECT * FROM game_files WHERE gameId = :gameId AND localPath IS NULL ORDER BY category ASC, fileName ASC")
+    suspend fun getMissingFiles(gameId: Long): List<GameFileEntity>
+
+    @Query("SELECT * FROM game_files WHERE gameId = :gameId AND category = :category ORDER BY fileName ASC")
+    suspend fun getFilesByCategory(gameId: Long, category: String): List<GameFileEntity>
+
+    @Query("SELECT * FROM game_files WHERE category = :category AND localPath IS NOT NULL")
+    suspend fun getLocalFilesByCategory(category: String): List<GameFileEntity>
+
+    @Query("SELECT * FROM game_files WHERE rommFileId = :rommFileId")
+    suspend fun getByRommFileId(rommFileId: Long): GameFileEntity?
+
+    @Query("SELECT * FROM game_files WHERE rommFileId IN (:rommFileIds)")
+    suspend fun getByRommFileIds(rommFileIds: List<Long>): List<GameFileEntity>
+
+    @Query("SELECT * FROM game_files WHERE gameId = :gameId AND fileName = :fileName")
+    suspend fun getByGameIdAndFileName(gameId: Long, fileName: String): List<GameFileEntity>
+
+    @Query("SELECT * FROM game_files WHERE localPath IS NOT NULL")
+    suspend fun getAllWithLocalPath(): List<GameFileEntity>
+
+    @Query("""
+        SELECT g.platformId AS platformId, gf.localPath AS localPath
+        FROM game_files gf
+        INNER JOIN games g ON gf.gameId = g.id
+        WHERE gf.localPath IS NOT NULL
+    """)
+    suspend fun getAllLocalPathsWithPlatform(): List<PlatformLocalPath>
+
+    @Query("SELECT * FROM game_files WHERE id = :id")
+    suspend fun getById(id: Long): GameFileEntity?
+
+    @Query("""
+        SELECT
+            g.id AS gameId,
+            g.title AS title,
+            $RESOLVED_ART_SQL AS coverPath,
+            g.platformSlug AS platformSlug,
+            SUM(CASE WHEN gf.category = 'update' THEN 1 ELSE 0 END) AS updateCount,
+            SUM(CASE WHEN gf.category = 'dlc' THEN 1 ELSE 0 END) AS dlcCount,
+            SUM(gf.fileSize) AS totalSize
+        FROM game_files gf
+        INNER JOIN games g ON gf.gameId = g.id
+        LEFT JOIN game_art art ON art.gameId = g.id AND art.slot = 'COVER'
+        WHERE gf.localPath IS NULL
+        GROUP BY gf.gameId
+        ORDER BY g.title ASC
+    """)
+    suspend fun getGamesWithMissingFiles(): List<GameWithMissingCount>
+
+    @Query("SELECT COUNT(*) FROM game_files WHERE localPath IS NULL")
+    suspend fun getTotalMissingCount(): Int
+
+    @Query("""
+        SELECT
+            gf.id AS fileId,
+            gf.gameId AS gameId,
+            gf.fileName AS fileName,
+            gf.category AS category,
+            g.title AS gameTitle,
+            g.rommFileName AS rommFileName,
+            g.platformSlug AS platformSlug,
+            g.platformId AS platformId
+        FROM game_files gf
+        INNER JOIN games g ON gf.gameId = g.id
+        WHERE gf.localPath IS NULL
+          AND (
+            g.localPath IS NOT NULL
+            OR gf.gameId IN (
+                SELECT sibling.gameId FROM game_files sibling
+                WHERE sibling.localPath IS NOT NULL
+            )
+          )
+    """)
+    suspend fun getMissingFilesWithGameInfo(): List<MissingGameFile>
+
+    @Query("SELECT COUNT(*) FROM game_files WHERE gameId = :gameId AND localPath IS NOT NULL")
+    suspend fun getDownloadedCount(gameId: Long): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(file: GameFileEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(files: List<GameFileEntity>)
+
+    @Query("UPDATE game_files SET localPath = :localPath, downloadedAt = :downloadedAt WHERE id = :id")
+    suspend fun updateLocalPath(id: Long, localPath: String?, downloadedAt: Instant?)
+
+    @Query("UPDATE game_files SET romHashPrefix = :hash WHERE id = :id")
+    suspend fun updateRomHashPrefix(id: Long, hash: String?)
+
+    @Query("UPDATE game_files SET localPath = :localPath, downloadedAt = :downloadedAt WHERE rommFileId = :rommFileId")
+    suspend fun updateLocalPathByRommFileId(rommFileId: Long, localPath: String?, downloadedAt: Instant?)
+
+    @Query("""
+        UPDATE game_files SET localPath = NULL, downloadedAt = NULL
+        WHERE gameId = :gameId AND localPath IS NOT NULL AND localPath NOT LIKE :prefix || '%'
+    """)
+    suspend fun clearLocalPathsByGameIdExcludingPrefix(gameId: Long, prefix: String)
+
+    @Query("DELETE FROM game_files WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM game_files WHERE gameId = :gameId")
+    suspend fun deleteByGameId(gameId: Long)
+
+    @Query("DELETE FROM game_files WHERE gameId = :gameId AND rommFileId NOT IN (:validRommFileIds)")
+    suspend fun deleteInvalidFiles(gameId: Long, validRommFileIds: List<Long>)
+
+    @Query(
+        """
+        DELETE FROM game_files
+        WHERE gameId = :gameId AND romId = :romId AND rommFileId NOT IN (:validRommFileIds)
+        """
+    )
+    suspend fun deleteInvalidFilesForRom(gameId: Long, romId: Long, validRommFileIds: List<Long>)
+
+    @Query("""
+        SELECT gf.* FROM game_files gf
+        INNER JOIN games g ON gf.gameId = g.id
+        WHERE g.platformId = :platformId AND gf.localPath IS NOT NULL
+    """)
+    suspend fun getFilesWithLocalPathByPlatform(platformId: Long): List<GameFileEntity>
+
+    @Query("UPDATE game_files SET localPath = NULL, downloadedAt = NULL WHERE id = :fileId")
+    suspend fun clearLocalPath(fileId: Long)
+
+    @Query("UPDATE game_files SET localPath = :newPath WHERE localPath = :oldPath")
+    suspend fun updateLocalPathByOldPath(oldPath: String, newPath: String)
+
+    @Query("""
+        UPDATE game_files SET localPath = :newPrefix || SUBSTR(localPath, LENGTH(:oldPrefix) + 1)
+        WHERE localPath LIKE :oldPrefix || '/%'
+    """)
+    suspend fun rewriteLocalPathPrefix(oldPrefix: String, newPrefix: String)
+
+    @Query("""
+        UPDATE game_files SET localPath = :newPrefix || SUBSTR(localPath, LENGTH(:oldPrefix) + 1)
+        WHERE localPath = :oldPrefix OR SUBSTR(localPath, 1, LENGTH(:oldPrefix) + 1) = :oldPrefix || '/'
+    """)
+    suspend fun relocateLocalPaths(oldPrefix: String, newPrefix: String)
+
+    @Query("""
+        UPDATE game_files SET m3uPath = :newPrefix || SUBSTR(m3uPath, LENGTH(:oldPrefix) + 1)
+        WHERE m3uPath = :oldPrefix OR SUBSTR(m3uPath, 1, LENGTH(:oldPrefix) + 1) = :oldPrefix || '/'
+    """)
+    suspend fun relocateM3uPaths(oldPrefix: String, newPrefix: String)
+
+    @Query("SELECT * FROM game_files WHERE gameId = :gameId AND isLaunchTarget = 1 ORDER BY category ASC, fileName ASC")
+    suspend fun getVariantsForGame(gameId: Long): List<GameFileEntity>
+
+    @Query("SELECT * FROM game_files WHERE gameId = :gameId AND isLaunchTarget = 1 ORDER BY category ASC, fileName ASC")
+    fun observeVariantsForGame(gameId: Long): Flow<List<GameFileEntity>>
+
+    @Query("SELECT * FROM game_files WHERE localPath = :localPath LIMIT 1")
+    suspend fun getByLocalPath(localPath: String): GameFileEntity?
+
+    @Query("SELECT * FROM game_files WHERE versionGroup IS NOT NULL")
+    suspend fun getVersionGroupedFiles(): List<GameFileEntity>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM game_files WHERE versionGroup IS NOT NULL)")
+    suspend fun hasVersionGroupedFiles(): Boolean
+
+    @Query("UPDATE game_files SET versionGroup = NULL WHERE versionGroup IS NOT NULL")
+    suspend fun clearVersionGroups(): Int
+
+    @Query("UPDATE game_files SET isLaunchTarget = 0 WHERE isLaunchTarget = 1 AND category IN (:categories)")
+    suspend fun clearLaunchTargetForCategories(categories: List<String>): Int
+}

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Library sync monitor. Owner: ui/screens/syncmonitor.
+  One row per platform: what the library holds for it, and what a running sync is doing to it.
+-->
+<resources>
+    <!-- Screen title. Noun phrase. -->
+    <string name="syncmonitor_title">Library Sync</string>
+    <!-- Drawer entry for the screen. Noun phrase, same subject as the title. -->
+    <string name="syncmonitor_drawer_title">Library Sync</string>
+
+    <!-- Header after a sync starts, before the server has named the platforms. -->
+    <string name="syncmonitor_progress_starting">Starting</string>
+    <!-- Header when a sync has never run. -->
+    <string name="syncmonitor_never_synced">Never synced</string>
+    <!-- Header giving the age of the last successful sync. -->
+    <string name="syncmonitor_last_synced">Last synced %1$s</string>
+    <!-- Header when the last sync left one or more platforms failed. -->
+    <string name="syncmonitor_finished_with_failures">%1$d platforms failed</string>
+    <!-- Header when there is no server to sync with. The counts below it are still local truth. -->
+    <string name="syncmonitor_not_connected">Not connected to RomM</string>
+    <!-- Header line under the subtitle: what the whole library holds. -->
+    <string name="syncmonitor_library_summary">%1$d platforms · %2$d games · %3$d on device</string>
+
+    <!-- Heading above the platforms excluded from sync. Adjective. -->
+    <string name="syncmonitor_group_disabled">Disabled</string>
+
+    <!-- Row line for an idle platform: what the library holds for it. -->
+    <string name="syncmonitor_row_summary">%1$d games · %2$d on device · %3$d with saves</string>
+    <!-- Row line for a platform excluded from sync. Its games are still on disk. -->
+    <string name="syncmonitor_row_excluded">Excluded · %1$d games · %2$d on device</string>
+
+    <!-- Row status: waiting its turn. Adjective. -->
+    <string name="syncmonitor_state_queued">Queued</string>
+    <!-- Row status while running: games processed of the total this platform reports. -->
+    <string name="syncmonitor_state_syncing">%1$d / %2$d</string>
+    <!-- Row status when a platform failed and the server gave no reason. -->
+    <string name="syncmonitor_state_failed">Failed</string>
+
+    <!-- Row action: sync this platform alone. Verb. -->
+    <string name="syncmonitor_action_sync">Sync</string>
+    <!-- Row action on an excluded platform: include it in future syncs and sync it now.
+         Two verbs sharing one object. -->
+    <string name="syncmonitor_action_enable">Enable &amp; Sync</string>
+
+    <!-- Badge on a finished row: how many games this platform gained. -->
+    <string name="syncmonitor_badge_added">%1$d new</string>
+    <!-- Badge on a finished row: how many existing games changed. -->
+    <string name="syncmonitor_badge_updated">%1$d updated</string>
+    <!-- Badge on a finished row: how many games left the library. -->
+    <string name="syncmonitor_badge_removed">%1$d removed</string>
+
+    <!-- Shown instead of rows when connected with no platforms yet. -->
+    <string name="syncmonitor_empty_idle">Sync to pull your library from RomM</string>
+    <!-- Shown instead of rows when there is no server and nothing local. -->
+    <string name="syncmonitor_empty_disconnected">Connect to RomM to sync your library</string>
+
+    <!-- Footer hint: syncs every enabled platform. Verb. -->
+    <string name="syncmonitor_footer_sync_all">Sync all</string>
+    <!-- Footer hint: leaves the screen. Verb. -->
+    <string name="syncmonitor_footer_back">Back</string>
+</resources>

@@ -1,0 +1,73 @@
+package com.nendo.argosy.data.remote.romm
+
+import com.squareup.moshi.Json
+import com.squareup.moshi.JsonClass
+
+@JsonClass(generateAdapter = true)
+data class RomMSave(
+    @Json(name = "id") val id: Long,
+    @Json(name = "rom_id") val romId: Long,
+    @Json(name = "user_id") val userId: Long,
+    @Json(name = "emulator") val emulator: String? = null,
+    @Json(name = "file_name") val fileName: String,
+    @Json(name = "file_name_no_tags") val fileNameNoTags: String? = null,
+    @Json(name = "file_name_no_ext") val fileNameNoExt: String? = null,
+    @Json(name = "file_extension") val fileExtension: String? = null,
+    @Json(name = "file_path") val filePath: String? = null,
+    @Json(name = "file_size_bytes") val fileSizeBytes: Long = 0,
+    @Json(name = "download_path") val downloadPath: String? = null,
+    @Json(name = "updated_at") val updatedAt: String,
+    @Json(name = "created_at") val createdAt: String? = null,
+    @Json(name = "slot") val slot: String? = null,
+    @Json(name = "device_syncs") val deviceSyncs: List<RomMDeviceSync>? = null,
+    @Json(name = "screenshot") val screenshot: RomMScreenshot? = null,
+    @Json(name = "content_hash") val contentHash: String? = null,
+    @Json(name = "origin_device_id") val originDeviceId: String? = null,
+    @Json(name = "channel_id") val channelId: String? = null
+)
+
+/** Name of the device that created the save, resolved from the per-save sync list; null until the origin device's name is known. */
+fun RomMSave.originDeviceName(): String? =
+    originDeviceId?.let { id -> deviceSyncs?.firstOrNull { it.deviceId == id }?.deviceName }
+
+@JsonClass(generateAdapter = true)
+data class RomMScreenshot(
+    @Json(name = "id") val id: Long? = null,
+    @Json(name = "file_name") val fileName: String? = null,
+    @Json(name = "download_path") val downloadPath: String? = null,
+    @Json(name = "file_size_bytes") val fileSizeBytes: Long = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class RomMSaveListResponse(
+    @Json(name = "items") val items: List<RomMSave>? = null,
+    @Json(name = "total") val total: Int? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class RomMDeleteSavesRequest(
+    @Json(name = "saves") val saves: List<Long>
+)
+
+@JsonClass(generateAdapter = true)
+data class RomMState(
+    @Json(name = "id") val id: Long,
+    @Json(name = "rom_id") val romId: Long,
+    @Json(name = "user_id") val userId: Long,
+    @Json(name = "emulator") val emulator: String? = null,
+    @Json(name = "file_name") val fileName: String,
+    @Json(name = "file_name_no_tags") val fileNameNoTags: String? = null,
+    @Json(name = "file_name_no_ext") val fileNameNoExt: String? = null,
+    @Json(name = "file_extension") val fileExtension: String? = null,
+    @Json(name = "file_path") val filePath: String? = null,
+    @Json(name = "file_size_bytes") val fileSizeBytes: Long = 0,
+    @Json(name = "download_path") val downloadPath: String? = null,
+    @Json(name = "updated_at") val updatedAt: String,
+    @Json(name = "created_at") val createdAt: String? = null,
+    @Json(name = "screenshot") val screenshot: RomMScreenshot? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class RomMDeleteStatesRequest(
+    @Json(name = "states") val states: List<Long>
+)

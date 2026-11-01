@@ -1,0 +1,499 @@
+package com.nendo.argosy.libretro
+
+import android.content.Context
+import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.nendo.argosy.data.local.dao.AchievementDao
+import com.nendo.argosy.data.local.dao.GameDao
+import com.nendo.argosy.data.remote.ra.RAAchievementPatch
+import com.nendo.argosy.data.remote.ra.RAPatchData
+import com.nendo.argosy.data.repository.RA_BADGE_BASE_URL
+import com.nendo.argosy.data.repository.RAAwardResult
+import com.nendo.argosy.data.repository.RAPatchFetchResult
+import com.nendo.argosy.data.repository.RetroAchievementsRepository
+import com.nendo.argosy.data.sync.AchievementSubmissionWorker
+import com.nendo.argosy.domain.usecase.achievement.VerifyRAGameIdUseCase
+import com.nendo.argosy.data.social.SocialRepository
+import com.nendo.argosy.hardware.AmbientLedManager
+import com.nendo.argosy.libretro.ui.AchievementUnlock
+import com.nendo.argosy.libretro.ui.RAConnectionInfo
+import com.nendo.argosy.core.event.AchievementUpdateBus
+import com.swordfish.libretrodroid.GLRetroView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/**
+ * What the session may claim about itself. HARDCORE is reached only after RetroAchievements
+ * accepted a start-session request with h=1; PENDING covers the window between a hardcore
+ * launch and that answer, and CASUAL is every other outcome, including a refused or
+ * unreachable server. The launch-time restrictions are not derived from this value.
+ */
+enum class RASessionMode { PENDING, HARDCORE, CASUAL }
+
+class RetroAchievementsSessionManager(
+    private val gameId: Long,
+    private val romPath: String,
+    private val requestedHardcore: Boolean,
+    private val gameDao: GameDao,
+    private val overlayWriter: com.nendo.argosy.data.repository.GameUserOverlayWriter,
+    private val achievementDao: AchievementDao,
+    private val raRepository: RetroAchievementsRepository,
+    private val verifyRAGameIdUseCase: VerifyRAGameIdUseCase,
+    private val achievementUpdateBus: AchievementUpdateBus,
+    private val ambientLedManager: AmbientLedManager,
+    private val socialRepository: SocialRepository,
+    private val scope: CoroutineScope,
+    private val context: Context,
+    private val achievementRuntime: AchievementRuntime = NativeAchievementRuntime
+) {
+    private val achievementInfo = mutableMapOf<Long, AchievementPatchInfo>()
+    private val achievementUnlockQueue = mutableListOf<AchievementUnlock>()
+
+    var gameRaId: Long? = null
+        private set
+    private var gameIgdbId: Long? = null
+    private var gameTitle: String = ""
+    var raSessionActive: Boolean = false
+        private set
+    var totalAchievements by mutableIntStateOf(0)
+        private set
+    var earnedAchievements by mutableIntStateOf(0)
+        private set
+    var currentAchievementUnlock by mutableStateOf<AchievementUnlock?>(null)
+        private set
+    var raConnectionInfo by mutableStateOf<RAConnectionInfo?>(null)
+        private set
+
+    private val _sessionMode = MutableStateFlow(
+        if (requestedHardcore) RASessionMode.PENDING else RASessionMode.CASUAL
+    )
+    val sessionMode: StateFlow<RASessionMode> = _sessionMode.asStateFlow()
+
+    private val isHardcore: Boolean
+        get() = _sessionMode.value == RASessionMode.HARDCORE
+
+    private var heartbeatJob: Job? = null
+    private var cachedAchievementDefs: Array<com.swordfish.libretrodroid.AchievementDef>? = null
+    private var cachedConsoleId: Int? = null
+    private var cachedRetroView: GLRetroView? = null
+    private var pausedForNetplay: Boolean = false
+
+    private data class AchievementPatchInfo(
+        val title: String,
+        val description: String?,
+        val points: Int,
+        val badgeName: String?
+    )
+
+    fun initialize(retroView: GLRetroView) {
+        cachedRetroView = retroView
+        scope.launch {
+            val isLoggedIn = raRepository.isLoggedIn()
+            Log.d(TAG, "RA login check: isLoggedIn=$isLoggedIn")
+            if (!isLoggedIn) {
+                Log.d(TAG, "Not logged in to RA, skipping session")
+                resolveWithoutHardcore()
+                return@launch
+            }
+
+            val game = gameDao.getById(gameId)
+            if (game == null) {
+                resolveWithoutHardcore()
+                return@launch
+            }
+            gameIgdbId = game.igdbId
+            gameTitle = game.title
+
+            val verification = verifyRAGameIdUseCase.verifyHash(gameId, romPath)
+            gameRaId = verification.raId ?: game.effectiveRaId ?: game.raId
+            Log.d(TAG, "Game loaded: title=${game.title}, resolvedRaId=$gameRaId, raId=${game.raId}, verifiedRaId=${game.verifiedRaId}")
+
+            if (gameRaId == null) {
+                Log.d(TAG, "Game has no RA ID, skipping RA session")
+                resolveWithoutHardcore()
+                return@launch
+            }
+
+            val raId = gameRaId!!
+            Log.d(TAG, "Starting RA session for raId=$raId, hardcore=$requestedHardcore")
+            val verifiedHash = verification.matchedHash?.takeIf { verification.raId == raId }
+            val sessionResult = raRepository.startSession(raId, requestedHardcore && !hardcoreAbandoned, verifiedHash)
+            if (sessionResult.success) {
+                raSessionActive = true
+            } else {
+                Log.w(TAG, "Failed to start RA session; arming from definitions alone")
+            }
+
+            val livePatch = (raRepository.fetchPatchData(raId) as? RAPatchFetchResult.Fetched)?.patchData
+            val patchData = livePatch ?: raRepository.getCachedPatchData(raId)
+            val armedFromCache = livePatch == null && patchData != null
+            val claimsHardcore = requestedHardcore && verifiedHash != null && sessionResult.success &&
+                !armedFromCache && !hardcoreAbandoned
+            val fellBackFromHardcore = requestedHardcore && !claimsHardcore
+            if (claimsHardcore) {
+                _sessionMode.value = RASessionMode.HARDCORE
+            } else {
+                resolveWithoutHardcore()
+            }
+
+            val preUnlocked = if (sessionResult.success) {
+                sessionResult.unlocksFor(claimsHardcore)
+            } else {
+                raRepository.getCachedAchievements(gameId)
+                    .filter { it.isUnlocked }
+                    .map { it.raId }
+                    .toSet()
+            }
+            Log.d(TAG, "RA game $raId: session=${sessionResult.success}, hardcore=$isHardcore, fromCache=$armedFromCache, pre-unlocked=${preUnlocked.size}")
+
+            if (patchData != null) {
+                armAchievements(
+                    retroView = retroView,
+                    patchData = patchData,
+                    preUnlocked = preUnlocked,
+                    recordPreUnlocked = sessionResult.success,
+                    announceConnection = sessionResult.success && !fellBackFromHardcore
+                )
+            }
+
+            if (raSessionActive) {
+                startHeartbeatLoop()
+            }
+        }
+    }
+
+    private suspend fun storeArmedDefinitionsIfMissing(armed: List<RAAchievementPatch>, armedIds: Set<Long>) {
+        if (armed.isEmpty()) return
+        val stored = achievementDao.getByGameId(gameId, raRepository.activeOwnerUserId()).map { it.raId }.toSet()
+        if (armedIds.all { it in stored }) return
+        Log.w(TAG, "Stored achievement list does not match the armed set for raId=$gameRaId; storing the armed definitions")
+        raRepository.syncAchievementsForGame(
+            gameId = gameId,
+            gameRaId = gameRaId,
+            definitions = armed.map { patch ->
+                RetroAchievementsRepository.AchievementDefinition(
+                    raId = patch.id,
+                    title = patch.title,
+                    description = patch.description,
+                    points = patch.points,
+                    type = patch.type,
+                    badgeId = patch.badgeName,
+                    badgeUrl = patch.badgeName?.let { "$RA_BADGE_BASE_URL$it.png" },
+                    badgeUrlLock = patch.badgeName?.let { "$RA_BADGE_BASE_URL${it}_lock.png" }
+                )
+            }
+        )
+    }
+
+    private suspend fun armAchievements(
+        retroView: GLRetroView,
+        patchData: RAPatchData,
+        preUnlocked: Set<Long>,
+        recordPreUnlocked: Boolean,
+        announceConnection: Boolean
+    ) {
+        val validAchievements = patchData.achievements?.filter { ach ->
+            !ach.title.contains("Unknown Emulator", ignoreCase = true) &&
+            !ach.title.contains("Emulator Warning", ignoreCase = true) &&
+            ach.memAddr.isNotBlank()
+        } ?: emptyList()
+
+        validAchievements.forEach { patch ->
+            achievementInfo[patch.id] = AchievementPatchInfo(
+                title = patch.title,
+                description = patch.description,
+                points = patch.points,
+                badgeName = patch.badgeName
+            )
+        }
+
+        totalAchievements = validAchievements.size
+        val validIds = validAchievements.map { a -> a.id }.toSet()
+        earnedAchievements = preUnlocked.count { it in validIds }
+        storeArmedDefinitionsIfMissing(validAchievements, validIds)
+
+        if (recordPreUnlocked) {
+            val now = System.currentTimeMillis()
+            val ownerUserId = raRepository.activeOwnerUserId()
+            for (achId in preUnlocked) {
+                if (achId in validIds) {
+                    if (isHardcore) {
+                        achievementDao.markUnlockedHardcore(gameId, achId, ownerUserId, now)
+                    } else {
+                        achievementDao.markUnlocked(gameId, achId, ownerUserId, now)
+                    }
+                }
+            }
+        }
+        overlayWriter.updateAchievementCount(gameId, totalAchievements, earnedAchievements)
+
+        if (announceConnection) {
+            raConnectionInfo = RAConnectionInfo(
+                isHardcore = isHardcore,
+                earnedCount = earnedAchievements,
+                totalCount = totalAchievements
+            )
+        }
+
+        val toWatch = validAchievements.filter { it.id !in preUnlocked }
+        val consoleId = patchData.consoleId
+        if (toWatch.isNotEmpty() && consoleId != null) {
+            val achievementDefs = toWatch.map { patch ->
+                com.swordfish.libretrodroid.AchievementDef(patch.id, patch.memAddr)
+            }.toTypedArray()
+
+            Log.d(TAG, "Sending ${achievementDefs.size} achievements to native for console $consoleId")
+            achievementRuntime.arm(achievementDefs, consoleId)
+            cachedAchievementDefs = achievementDefs
+            cachedConsoleId = consoleId
+
+            retroView.achievementUnlockListener = { achievementId ->
+                onAchievementUnlocked(achievementId)
+            }
+        } else {
+            Log.d(TAG, "No achievements to watch (all pre-unlocked)")
+        }
+    }
+
+    @Volatile
+    private var hardcoreAbandoned = false
+
+    /**
+     * Ends any hardcore claim for the rest of the session, including one RetroAchievements has
+     * not confirmed yet. Casual unlocks still count.
+     */
+    fun abandonHardcore(reason: String) {
+        hardcoreAbandoned = true
+        if (_sessionMode.value == RASessionMode.CASUAL) return
+        Log.w(TAG, "Hardcore abandoned: $reason")
+        _sessionMode.value = RASessionMode.CASUAL
+    }
+
+    private fun resolveWithoutHardcore() {
+        _sessionMode.value = RASessionMode.CASUAL
+        if (!requestedHardcore) return
+        Log.w(TAG, "Hardcore was requested but RetroAchievements did not confirm it; session is casual")
+        raConnectionInfo = RAConnectionInfo(
+            isHardcore = false,
+            earnedCount = 0,
+            totalCount = 0,
+            connected = false
+        )
+    }
+
+    private fun startHeartbeatLoop() {
+        heartbeatJob = scope.launch {
+            while (isActive && raSessionActive) {
+                delay(240_000L)
+                val raId = gameRaId ?: break
+                raRepository.sendHeartbeat(raId, null)
+                Log.d(TAG, "RA heartbeat sent for game $raId")
+            }
+        }
+    }
+
+    private fun onAchievementUnlocked(achievementId: Long) {
+        val info = achievementInfo[achievementId]
+
+        Log.i(TAG, "=== ACHIEVEMENT UNLOCKED ===")
+        Log.i(TAG, "  ID: $achievementId")
+        Log.i(TAG, "  Title: ${info?.title}")
+        Log.i(TAG, "  Points: ${info?.points}")
+        val hardcoreSession = isHardcore
+        Log.i(TAG, "  Hardcore: $hardcoreSession")
+
+        earnedAchievements++
+
+        scope.launch {
+            Log.d(TAG, "Submitting achievement $achievementId to RA server...")
+            val result = raRepository.awardAchievement(
+                gameId = gameId,
+                achievementRaId = achievementId,
+                forHardcoreMode = hardcoreSession
+            )
+
+            var earnedHardcore = hardcoreSession
+            val awardConfirmed = when (result) {
+                is RAAwardResult.Success -> {
+                    Log.i(TAG, "Achievement $achievementId awarded to RA successfully")
+                    true
+                }
+                is RAAwardResult.AlreadyAwarded -> {
+                    Log.d(TAG, "Achievement $achievementId already awarded on RA")
+                    false
+                }
+                is RAAwardResult.Queued -> {
+                    Log.d(TAG, "Achievement $achievementId queued for later submission")
+                    com.nendo.argosy.data.sync.AchievementSubmissionWorker.schedule(context)
+                    false
+                }
+                is RAAwardResult.Error -> {
+                    Log.e(TAG, "Failed to award achievement to RA: ${result.message}")
+                    if (hardcoreSession) {
+                        earnedHardcore = false
+                        Log.d(TAG, "Hardcore award failed; hardcore cannot be queued (needs live heartbeat), falling back to casual for $achievementId")
+                        when (val casual = raRepository.awardAchievement(gameId, achievementId, forHardcoreMode = false)) {
+                            is RAAwardResult.Success -> true
+                            is RAAwardResult.Queued -> {
+                                com.nendo.argosy.data.sync.AchievementSubmissionWorker.schedule(context)
+                                false
+                            }
+                            is RAAwardResult.Error -> {
+                                Log.e(TAG, "Casual fallback also failed for $achievementId: ${casual.message}")
+                                false
+                            }
+                            is RAAwardResult.AlreadyAwarded -> false
+                        }
+                    } else {
+                        false
+                    }
+                }
+            }
+
+            val now = System.currentTimeMillis()
+            val ownerUserId = raRepository.activeOwnerUserId()
+            if (earnedHardcore) {
+                achievementDao.markUnlockedHardcore(gameId, achievementId, ownerUserId, now)
+                Log.d(TAG, "Marked achievement $achievementId as hardcore unlocked in local DB")
+            } else {
+                achievementDao.markUnlocked(gameId, achievementId, ownerUserId, now)
+                Log.d(TAG, "Marked achievement $achievementId as unlocked in local DB")
+            }
+
+            overlayWriter.incrementEarnedAchievementCount(gameId)
+            Log.d(TAG, "Incremented earned achievement count for game $gameId")
+
+            val totalCount = achievementDao.countByGameId(gameId, ownerUserId)
+            val earnedCount = achievementDao.countUnlockedByGameId(gameId, ownerUserId)
+            achievementUpdateBus.emit(
+                AchievementUpdateBus.AchievementUpdate(
+                    gameId = gameId,
+                    totalCount = totalCount,
+                    earnedCount = earnedCount
+                )
+            )
+            Log.d(TAG, "Emitted achievement update: $earnedCount/$totalCount earned for game $gameId")
+
+            if (awardConfirmed) {
+                val sent = socialRepository.emitAchievementUnlocked(
+                    igdbId = gameIgdbId,
+                    raGameId = gameRaId,
+                    gameTitle = gameTitle,
+                    achievementRaId = achievementId,
+                    achievementName = info?.title ?: "Achievement",
+                    achievementDescription = info?.description,
+                    points = info?.points ?: 0,
+                    badgeName = info?.badgeName,
+                    isHardcore = hardcoreSession,
+                    earnedCount = earnedCount,
+                    totalCount = totalCount,
+                    unlockedAt = now
+                )
+                if (sent) {
+                    achievementDao.markSocialShared(
+                        gameId,
+                        achievementId,
+                        ownerUserId,
+                        System.currentTimeMillis()
+                    )
+                }
+                if (earnedCount == totalCount && totalCount > 0) {
+                    socialRepository.emitPerfectGame(
+                        igdbId = gameIgdbId,
+                        gameTitle = gameTitle,
+                        isHardcore = hardcoreSession,
+                        earnedCount = earnedCount,
+                        totalCount = totalCount
+                    )
+                }
+            }
+        }
+
+        val badgeUrl = info?.badgeName?.let {
+            "https://media.retroachievements.org/Badge/$it.png"
+        }
+
+        val unlock = AchievementUnlock(
+            id = achievementId,
+            title = info?.title ?: "Achievement",
+            description = info?.description,
+            points = info?.points ?: 0,
+            badgeUrl = badgeUrl,
+            isHardcore = hardcoreSession
+        )
+
+        achievementUnlockQueue.add(unlock)
+        ambientLedManager.flashAchievement(hardcoreSession)
+        if (currentAchievementUnlock == null) {
+            showNextUnlock()
+        }
+    }
+
+    fun showNextUnlock() {
+        currentAchievementUnlock = if (achievementUnlockQueue.isNotEmpty()) {
+            achievementUnlockQueue.removeAt(0)
+        } else {
+            null
+        }
+    }
+
+    fun dismissConnectionInfo() {
+        raConnectionInfo = null
+    }
+
+    fun pause() {
+        if (pausedForNetplay) return
+        pausedForNetplay = true
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        achievementRuntime.clear()
+        cachedRetroView?.achievementUnlockListener = null
+        Log.d(TAG, "RA paused for netplay")
+    }
+
+    fun resume() {
+        if (!pausedForNetplay) return
+        pausedForNetplay = false
+        val defs = cachedAchievementDefs
+        val consoleId = cachedConsoleId
+        val view = cachedRetroView
+        if (defs != null && consoleId != null && view != null && gameRaId != null) {
+            achievementRuntime.arm(defs, consoleId)
+            view.achievementUnlockListener = { achievementId ->
+                onAchievementUnlocked(achievementId)
+            }
+            if (raSessionActive) {
+                startHeartbeatLoop()
+            }
+            Log.d(TAG, "RA resumed after netplay")
+        } else {
+            Log.d(TAG, "RA resume is a no-op (nothing cached)")
+        }
+    }
+
+    fun destroy() {
+        heartbeatJob?.cancel()
+        raSessionActive = false
+        pausedForNetplay = false
+        cachedAchievementDefs = null
+        cachedConsoleId = null
+        cachedRetroView = null
+        achievementRuntime.clear()
+        if (gameRaId != null) {
+            AchievementSubmissionWorker.schedule(context)
+        }
+    }
+
+    companion object {
+        private const val TAG = "RASessionManager"
+    }
+}

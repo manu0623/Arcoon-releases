@@ -1,0 +1,1050 @@
+package com.nendo.argosy.ui.screens.settings.delegates
+
+import android.content.Context
+import android.util.Log
+import com.nendo.argosy.R
+import com.nendo.argosy.core.notification.NotificationManager
+import com.nendo.argosy.core.notification.NotificationProgress
+import com.nendo.argosy.core.notification.NotificationText
+import com.nendo.argosy.core.notification.NotificationType
+import com.nendo.argosy.core.notification.showError
+import com.nendo.argosy.core.notification.showSuccess
+import com.nendo.argosy.ui.common.notificationType
+import com.nendo.argosy.ui.common.toNotificationText
+import com.nendo.argosy.data.platform.PlatformFolderResolver
+import com.nendo.argosy.data.platform.platformDownloadDir
+import com.nendo.argosy.data.preferences.UserPreferencesRepository
+import com.nendo.argosy.data.repository.DatabaseAdminRepository
+import com.nendo.argosy.data.repository.HardResetBlocker
+import com.nendo.argosy.data.repository.PlatformRepository
+import com.nendo.argosy.data.repository.GameRepository
+import com.nendo.argosy.domain.usecase.MigratePlatformStorageUseCase
+import com.nendo.argosy.domain.usecase.MigrateStorageUseCase
+import com.nendo.argosy.domain.usecase.PurgePlatformUseCase
+import com.nendo.argosy.domain.usecase.sync.SyncPlatformUseCase
+import com.nendo.argosy.libretro.LibretroCoreRegistry
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.nendo.argosy.ui.screens.settings.PlatformMigrationInfo
+import com.nendo.argosy.ui.screens.settings.PlatformStorageConfig
+import com.nendo.argosy.ui.screens.settings.StorageState
+import com.nendo.argosy.util.Logger
+import com.nendo.argosy.util.StorageAccess
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+private const val TAG = "StorageSettingsDelegate"
+private const val MIGRATE_NOTIFICATION_KEY = "migration"
+private const val PLATFORM_MIGRATE_NOTIFICATION_KEY = "platform-migration"
+private const val PLATFORM_PURGE_NOTIFICATION_KEY = "platform-purge"
+
+class StorageSettingsDelegate @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val preferencesRepository: UserPreferencesRepository,
+    private val gameRepository: GameRepository,
+    private val platformRepository: PlatformRepository,
+    private val migrateStorageUseCase: MigrateStorageUseCase,
+    private val migratePlatformStorageUseCase: MigratePlatformStorageUseCase,
+    private val purgePlatformUseCase: PurgePlatformUseCase,
+    private val syncPlatformUseCase: SyncPlatformUseCase,
+    private val platformSyncQueue: com.nendo.argosy.data.sync.PlatformSyncQueue,
+    private val databaseAdminRepository: DatabaseAdminRepository,
+    private val saveCacheRepository: com.nendo.argosy.data.repository.SaveCacheRepository,
+    private val notificationManager: NotificationManager,
+    private val platformFolderResolver: PlatformFolderResolver
+) {
+    private val _state = MutableStateFlow(StorageState())
+    val state: StateFlow<StorageState> = _state.asStateFlow()
+
+    private val _launchFolderPicker = MutableStateFlow(false)
+    val launchFolderPicker: StateFlow<Boolean> = _launchFolderPicker.asStateFlow()
+
+    private val _launchSavePathPicker = MutableSharedFlow<Long>()
+    val launchSavePathPicker: SharedFlow<Long> = _launchSavePathPicker.asSharedFlow()
+
+    private val _resetSavePathEvent = MutableSharedFlow<Long>()
+    val resetSavePathEvent: SharedFlow<Long> = _resetSavePathEvent.asSharedFlow()
+
+    private val _launchStatePathPicker = MutableSharedFlow<Long>()
+    val launchStatePathPicker: SharedFlow<Long> = _launchStatePathPicker.asSharedFlow()
+
+    private val _resetStatePathEvent = MutableSharedFlow<Long>()
+    val resetStatePathEvent: SharedFlow<Long> = _resetStatePathEvent.asSharedFlow()
+
+    private val _showMigrationDialog = MutableStateFlow(false)
+    val showMigrationDialog: StateFlow<Boolean> = _showMigrationDialog.asStateFlow()
+
+    private val _pendingStoragePath = MutableStateFlow<String?>(null)
+    val pendingStoragePath: StateFlow<String?> = _pendingStoragePath.asStateFlow()
+
+    private val _isMigrating = MutableStateFlow(false)
+    val isMigrating: StateFlow<Boolean> = _isMigrating.asStateFlow()
+
+    private val _requestStoragePermissionEvent = MutableSharedFlow<Unit>()
+    val requestStoragePermissionEvent: SharedFlow<Unit> = _requestStoragePermissionEvent.asSharedFlow()
+
+    private val _hardResetCompletedEvent = MutableSharedFlow<Unit>()
+    val hardResetCompletedEvent: SharedFlow<Unit> = _hardResetCompletedEvent.asSharedFlow()
+
+    fun updateState(newState: StorageState) {
+        _state.value = newState
+    }
+
+    fun checkAllFilesAccess() {
+        _state.update { it.copy(hasAllFilesAccess = StorageAccess.isGranted(context)) }
+    }
+
+    fun requestAllFilesAccess(scope: CoroutineScope) {
+        scope.launch {
+            _requestStoragePermissionEvent.emit(Unit)
+        }
+    }
+
+    fun cycleMaxConcurrentDownloads(scope: CoroutineScope) {
+        scope.launch {
+            val current = _state.value.maxConcurrentDownloads
+            val next = if (current >= 5) 1 else current + 1
+            preferencesRepository.setMaxConcurrentDownloads(next)
+            _state.update { it.copy(maxConcurrentDownloads = next) }
+        }
+    }
+
+    fun adjustMaxConcurrentDownloads(scope: CoroutineScope, delta: Int) {
+        scope.launch {
+            val current = _state.value.maxConcurrentDownloads
+            val next = (current + delta).coerceIn(1, 5)
+            if (next != current) {
+                preferencesRepository.setMaxConcurrentDownloads(next)
+                _state.update { it.copy(maxConcurrentDownloads = next) }
+            }
+        }
+    }
+
+    fun toggleAllowRemoteInstalls(scope: CoroutineScope) {
+        scope.launch {
+            val next = !_state.value.allowRemoteInstalls
+            preferencesRepository.setAllowRemoteInstalls(next)
+            _state.update { it.copy(allowRemoteInstalls = next) }
+        }
+    }
+
+    fun toggleAutoStartDownloads(scope: CoroutineScope) {
+        scope.launch {
+            val next = !_state.value.autoStartDownloads
+            preferencesRepository.setAutoStartDownloads(next)
+            _state.update { it.copy(autoStartDownloads = next) }
+        }
+    }
+
+    fun toggleStageDownloadsInternally(scope: CoroutineScope) {
+        scope.launch {
+            val next = !_state.value.stageDownloadsInternally
+            preferencesRepository.setStageDownloadsInternally(next)
+            _state.update { it.copy(stageDownloadsInternally = next) }
+        }
+    }
+
+    fun toggleFolderNameFromRom(scope: CoroutineScope) {
+        scope.launch {
+            val next = !_state.value.folderNameFromRom
+            preferencesRepository.setFolderNameFromRom(next)
+            _state.update { it.copy(folderNameFromRom = next) }
+        }
+    }
+
+    fun cycleInstantDownloadThreshold(scope: CoroutineScope, direction: Int = 1) {
+        scope.launch {
+            val thresholds = listOf(50, 100, 250, 500)
+            val next = cycleInList(_state.value.instantDownloadThresholdMb, thresholds, direction)
+            preferencesRepository.setInstantDownloadThresholdMb(next)
+            _state.update { it.copy(instantDownloadThresholdMb = next) }
+        }
+    }
+
+    fun openFolderPicker() {
+        _launchFolderPicker.value = true
+    }
+
+    fun clearFolderPickerFlag() {
+        _launchFolderPicker.value = false
+    }
+
+    fun setStoragePath(scope: CoroutineScope, uriString: String) {
+        if (rejectIfPrivateAppPath(uriString)) return
+        val currentState = _state.value
+        if (currentState.downloadedGamesCount > 0 && currentState.romStoragePath.isNotBlank()) {
+            _showMigrationDialog.value = true
+            _pendingStoragePath.value = uriString
+        } else {
+            applyStoragePath(uriString, scope)
+        }
+    }
+
+    private val privateAppPathRoots: List<String> by lazy {
+        listOfNotNull(
+            context.filesDir,
+            context.cacheDir,
+            context.getExternalFilesDir(null),
+            context.externalCacheDir
+        ).map { it.canonicalPath } + listOfNotNull(
+            runCatching { context.dataDir.canonicalPath }.getOrNull()
+        )
+    }
+
+    private fun rejectIfPrivateAppPath(path: String): Boolean {
+        val canonical = runCatching { File(path).canonicalPath }.getOrNull() ?: path
+        val isPrivate = privateAppPathRoots.any { root ->
+            canonical == root || canonical.startsWith("$root/")
+        }
+        if (isPrivate) {
+            Log.w(TAG, "Rejected private app path for ROM storage: $path")
+            notificationManager.showError(
+                NotificationText.Res(R.string.notif_storage_private_path_error)
+            )
+        }
+        return isPrivate
+    }
+
+    fun confirmMigration(scope: CoroutineScope) {
+        val pendingPath = _pendingStoragePath.value ?: return
+        _showMigrationDialog.value = false
+        migrateDownloads(scope, pendingPath)
+    }
+
+    fun cancelMigration() {
+        _showMigrationDialog.value = false
+        _pendingStoragePath.value = null
+    }
+
+    fun skipMigration(scope: CoroutineScope) {
+        val pendingPath = _pendingStoragePath.value ?: return
+        _showMigrationDialog.value = false
+        applyStoragePath(pendingPath, scope)
+    }
+
+    private fun applyStoragePath(uriString: String, scope: CoroutineScope) {
+        scope.launch {
+            preferencesRepository.setRomStoragePath(uriString)
+            val availableSpace = gameRepository.getAvailableStorageBytes()
+            _state.update {
+                it.copy(
+                    romStoragePath = uriString,
+                    availableSpace = availableSpace
+                )
+            }
+            _pendingStoragePath.value = null
+            rediscoverAllPlatforms()
+        }
+    }
+
+    /**
+     * The global folder is the other half of the per-platform one: pointing Argosy at a library
+     * that is already on disk has to look at it, or every game keeps offering Download until an
+     * unrelated trigger happens to fire.
+     *
+     * Fill-null-only, so it can add links but never move or drop one.
+     */
+    private suspend fun rediscoverAllPlatforms() {
+        runCatching { gameRepository.discoverLocalFiles() }
+            .onFailure { Logger.warn(TAG, "rediscoverAllPlatforms failed", it) }
+    }
+
+    private fun migrateDownloads(scope: CoroutineScope, newPath: String) {
+        scope.launch {
+            val oldPath = _state.value.romStoragePath
+            _isMigrating.value = true
+            _pendingStoragePath.value = null
+
+            try {
+                val result = migrateStorageUseCase(oldPath, newPath) { current, total, gameTitle ->
+                    if (current == 0) {
+                        notificationManager.showPersistent(
+                            key = MIGRATE_NOTIFICATION_KEY,
+                            title = NotificationText.Res(R.string.notif_storage_migrate_persistent_title),
+                            subtitle = NotificationText.Res(
+                                R.string.notif_storage_migrate_persistent_subtitle_initial,
+                                listOf(total)
+                            ),
+                            progress = NotificationProgress(0, total)
+                        )
+                    } else {
+                        notificationManager.updatePersistent(
+                            key = MIGRATE_NOTIFICATION_KEY,
+                            subtitle = NotificationText.Res(
+                                R.string.notif_storage_migrate_persistent_subtitle_progress,
+                                listOf(current, total, gameTitle)
+                            ),
+                            progress = NotificationProgress(current - 1, total)
+                        )
+                    }
+                }
+
+                notificationManager.completePersistent(
+                    key = MIGRATE_NOTIFICATION_KEY,
+                    title = NotificationText.Res(R.string.notif_storage_migrate_complete_title),
+                    subtitle = result.toNotificationText(R.string.notif_storage_migrate_complete_subtitle),
+                    type = result.notificationType()
+                )
+
+                _state.update { it.copy(romStoragePath = newPath) }
+            } catch (e: Exception) {
+                Logger.warn(TAG, "migrateDownloads failed", e)
+                notificationManager.completePersistent(
+                    key = MIGRATE_NOTIFICATION_KEY,
+                    title = NotificationText.Res(R.string.notif_storage_migrate_failed_title),
+                    subtitle = e.message?.let { NotificationText.Raw(it) },
+                    type = NotificationType.ERROR
+                )
+            } finally {
+                _isMigrating.value = false
+            }
+            rediscoverAllPlatforms()
+            refreshCollectionStats(scope)
+        }
+    }
+
+    fun refreshCollectionStats(scope: CoroutineScope) {
+        scope.launch {
+            val downloadedSize = gameRepository.getDownloadedGamesSize()
+            val downloadedCount = gameRepository.getDownloadedGamesCount()
+            val adoptedCount = gameRepository.getAdoptedGamesCount()
+            _state.update {
+                it.copy(
+                    downloadedGamesSize = downloadedSize,
+                    downloadedGamesCount = downloadedCount,
+                    adoptedGamesCount = adoptedCount
+                )
+            }
+        }
+    }
+
+    fun setRomStoragePath(scope: CoroutineScope, path: String) {
+        scope.launch {
+            preferencesRepository.setRomStoragePath(path)
+            _state.update { it.copy(romStoragePath = path) }
+        }
+    }
+
+    private val _launchPlatformFolderPicker = MutableSharedFlow<Long>()
+    val launchPlatformFolderPicker: SharedFlow<Long> = _launchPlatformFolderPicker.asSharedFlow()
+
+    private var pendingPlatformId: Long? = null
+
+    private var pendingEmulatorInfo: Map<Long, PlatformEmulatorInfo>? = null
+
+    fun loadPlatformConfigs(scope: CoroutineScope) {
+        scope.launch {
+            val storageBase = platformFolderResolver.storageBase()
+            val platforms = platformRepository.observeConfigurablePlatforms().first()
+            val emulatorInfo = pendingEmulatorInfo
+
+            val configs = platforms.map { platform ->
+                val effectivePath = platformDownloadDir(platform, platform.slug, storageBase).absolutePath
+                val downloadedCount = gameRepository.countDownloadedByPlatform(platform.id)
+                val info = emulatorInfo?.get(platform.id)
+                PlatformStorageConfig(
+                    platformId = platform.id,
+                    platformName = platform.name,
+                    platformSlug = platform.slug,
+                    gameCount = platform.gameCount,
+                    downloadedCount = downloadedCount,
+                    syncEnabled = platform.syncEnabled,
+                    combineContent = platform.combineContent,
+                    skipFullSync = platform.skipFullSync,
+                    customRomPath = platform.customRomPath,
+                    effectivePath = effectivePath,
+                    supportsStatePath = info?.supportsStatePath ?: false,
+                    emulatorId = info?.emulatorId,
+                    effectiveSavePath = info?.effectiveSavePath,
+                    isUserSavePathOverride = info?.isUserSavePathOverride ?: false,
+                    isEvaluatedSavePath = info?.isEvaluatedSavePath ?: false,
+                    isFallbackSavePath = info?.isFallbackSavePath ?: false,
+                    effectiveStatePath = info?.effectiveStatePath,
+                    isUserStatePathOverride = info?.isUserStatePathOverride ?: false,
+                    folderMemcardCount = info?.folderMemcardCount ?: -1,
+                    onlyMemcardPath = info?.onlyMemcardPath,
+                    selectedMemcardPath = info?.selectedMemcardPath
+                )
+            }
+
+            _state.update { it.copy(platformConfigs = configs) }
+        }
+    }
+
+    fun setPendingEmulatorInfo(infoMap: Map<Long, PlatformEmulatorInfo>) {
+        pendingEmulatorInfo = infoMap
+    }
+
+    fun updatePlatformSavePath(
+        platformId: Long,
+        savePath: String?,
+        isUserOverride: Boolean,
+        isEvaluatedDefault: Boolean = false,
+        isFallbackDefault: Boolean = false
+    ) {
+        _state.update { current ->
+            current.copy(
+                platformConfigs = current.platformConfigs.map { config ->
+                    if (config.platformId == platformId) {
+                        config.copy(
+                            effectiveSavePath = savePath,
+                            isUserSavePathOverride = isUserOverride,
+                            isEvaluatedSavePath = isEvaluatedDefault,
+                            isFallbackSavePath = isFallbackDefault
+                        )
+                    } else config
+                },
+                platformSettingsButtonIndex = if (!isUserOverride) 0 else current.platformSettingsButtonIndex
+            )
+        }
+    }
+
+    fun updatePlatformStatePath(platformId: Long, statePath: String?, isUserOverride: Boolean) {
+        _state.update { current ->
+            current.copy(
+                platformConfigs = current.platformConfigs.map { config ->
+                    if (config.platformId == platformId) {
+                        config.copy(
+                            effectiveStatePath = statePath,
+                            isUserStatePathOverride = isUserOverride
+                        )
+                    } else config
+                },
+                platformSettingsButtonIndex = if (!isUserOverride) 0 else current.platformSettingsButtonIndex
+            )
+        }
+    }
+
+    fun togglePlatformSync(scope: CoroutineScope, platformId: Long, enabled: Boolean) {
+        scope.launch {
+            platformRepository.updateSyncEnabled(platformId, enabled)
+            updatePlatformConfigInState(platformId) { it.copy(syncEnabled = enabled) }
+            if (!enabled) offerPurgeAfterDisable(platformId, saveCacheRepository.pendingUploadsOnPlatform(platformId))
+        }
+    }
+
+    fun togglePlatformCombineContent(scope: CoroutineScope, platformId: Long, enabled: Boolean) {
+        scope.launch {
+            platformRepository.updateCombineContent(platformId, enabled)
+            updatePlatformConfigInState(platformId) { it.copy(combineContent = enabled) }
+        }
+    }
+
+    fun togglePlatformSkipFullSync(scope: CoroutineScope, platformId: Long, skip: Boolean) {
+        scope.launch {
+            platformRepository.updateSkipFullSync(platformId, skip)
+            updatePlatformConfigInState(platformId) { it.copy(skipFullSync = skip) }
+        }
+    }
+
+    private fun updatePlatformConfigInState(
+        platformId: Long,
+        update: (PlatformStorageConfig) -> PlatformStorageConfig
+    ) {
+        _state.update { current ->
+            current.copy(
+                platformConfigs = current.platformConfigs.map { config ->
+                    if (config.platformId == platformId) update(config) else config
+                }
+            )
+        }
+    }
+
+    fun openPlatformFolderPicker(scope: CoroutineScope, platformId: Long) {
+        pendingPlatformId = platformId
+        scope.launch {
+            _launchPlatformFolderPicker.emit(platformId)
+        }
+    }
+
+    fun setPlatformPath(scope: CoroutineScope, platformId: Long, newPath: String) {
+        if (rejectIfPrivateAppPath(newPath)) return
+        scope.launch {
+            val platform = platformRepository.getById(platformId) ?: return@launch
+            val oldPath = platformDownloadDir(platform, platform.slug, platformFolderResolver.storageBase())
+                .absolutePath
+
+            val gamesWithPaths = gameRepository.getGamesWithLocalPathsForPlatform(platformId)
+            if (gamesWithPaths.isNotEmpty()) {
+                _state.update {
+                    it.copy(
+                        showMigratePlatformConfirm = PlatformMigrationInfo(
+                            platformId = platformId,
+                            platformName = platform.name,
+                            oldPath = oldPath,
+                            newPath = newPath,
+                            isResetToGlobal = false
+                        )
+                    )
+                }
+            } else {
+                platformRepository.updateCustomRomPath(platformId, newPath)
+                updatePlatformConfigInState(platformId) {
+                    it.copy(customRomPath = newPath, effectivePath = newPath)
+                }
+                rediscoverPlatform(platformId)
+            }
+        }
+        pendingPlatformId = null
+    }
+
+    /**
+     * A platform's folder is only worth pointing at because roms are already in it, so a path
+     * change has to look. Without this the library keeps offering Download for content sitting
+     * in the directory the user just chose, until some unrelated trigger happens to fire.
+     *
+     * Fill-null-only, so it can add links but never move or drop one.
+     */
+    private suspend fun rediscoverPlatform(platformId: Long) {
+        runCatching { gameRepository.discoverLocalFilesForPlatform(platformId) }
+            .onFailure { Logger.warn(TAG, "rediscoverPlatform failed | platformId=$platformId", it) }
+    }
+
+    fun resetPlatformToGlobal(scope: CoroutineScope, platformId: Long) {
+        scope.launch {
+            val platform = platformRepository.getById(platformId) ?: return@launch
+            val customPath = platform.customRomPath ?: return@launch
+            val newPath = platformDownloadDir(
+                platform.copy(customRomPath = null), platform.slug, platformFolderResolver.storageBase()
+            ).absolutePath
+
+            val gamesWithPaths = gameRepository.getGamesWithLocalPathsForPlatform(platformId)
+            if (gamesWithPaths.isNotEmpty()) {
+                _state.update {
+                    it.copy(
+                        showMigratePlatformConfirm = PlatformMigrationInfo(
+                            platformId = platformId,
+                            platformName = platform.name,
+                            oldPath = customPath,
+                            newPath = newPath,
+                            isResetToGlobal = true
+                        )
+                    )
+                }
+            } else {
+                platformRepository.updateCustomRomPath(platformId, null)
+                updatePlatformConfigInState(platformId) {
+                    it.copy(customRomPath = null, effectivePath = newPath)
+                }
+                rediscoverPlatform(platformId)
+            }
+        }
+    }
+
+    fun confirmPlatformMigration(scope: CoroutineScope) {
+        val info = _state.value.showMigratePlatformConfirm ?: return
+        _state.update { it.copy(showMigratePlatformConfirm = null) }
+
+        scope.launch {
+            try {
+                val result = migratePlatformStorageUseCase(
+                    platformId = info.platformId,
+                    oldPath = info.oldPath,
+                    newPath = info.newPath,
+                    isResetToGlobal = info.isResetToGlobal
+                ) { current, total, gameTitle ->
+                    if (current == 0) {
+                        notificationManager.showPersistent(
+                            key = PLATFORM_MIGRATE_NOTIFICATION_KEY,
+                            title = NotificationText.Res(
+                                R.string.notif_storage_migrate_platform_persistent_title,
+                                listOf(info.platformName)
+                            ),
+                            subtitle = NotificationText.Res(
+                                R.string.notif_storage_migrate_platform_persistent_subtitle_initial,
+                                listOf(total)
+                            ),
+                            progress = NotificationProgress(0, total)
+                        )
+                    } else {
+                        notificationManager.updatePersistent(
+                            key = PLATFORM_MIGRATE_NOTIFICATION_KEY,
+                            subtitle = NotificationText.Res(
+                                R.string.notif_storage_migrate_platform_persistent_subtitle_progress,
+                                listOf(current, total, gameTitle)
+                            ),
+                            progress = NotificationProgress(current - 1, total)
+                        )
+                    }
+                }
+
+                notificationManager.completePersistent(
+                    key = PLATFORM_MIGRATE_NOTIFICATION_KEY,
+                    title = NotificationText.Res(
+                        R.string.notif_storage_migrate_platform_complete_title,
+                        listOf(info.platformName)
+                    ),
+                    subtitle = result.toNotificationText(
+                        R.string.notif_storage_migrate_platform_complete_subtitle
+                    ),
+                    type = result.notificationType()
+                )
+            } catch (e: Exception) {
+                Logger.warn(TAG, "confirmPlatformMigration failed", e)
+                notificationManager.completePersistent(
+                    key = PLATFORM_MIGRATE_NOTIFICATION_KEY,
+                    title = NotificationText.Res(
+                        R.string.notif_storage_migrate_platform_failed_title,
+                        listOf(info.platformName)
+                    ),
+                    subtitle = e.message?.let { NotificationText.Raw(it) },
+                    type = NotificationType.ERROR
+                )
+            }
+
+            rediscoverPlatform(info.platformId)
+            loadPlatformConfigs(scope)
+            refreshCollectionStats(scope)
+        }
+    }
+
+    fun cancelPlatformMigration() {
+        _state.update { it.copy(showMigratePlatformConfirm = null) }
+    }
+
+    fun skipPlatformMigration(scope: CoroutineScope) {
+        val info = _state.value.showMigratePlatformConfirm ?: return
+        _state.update { it.copy(showMigratePlatformConfirm = null) }
+
+        scope.launch {
+            if (info.isResetToGlobal) {
+                platformRepository.updateCustomRomPath(info.platformId, null)
+                updatePlatformConfigInState(info.platformId) {
+                    it.copy(customRomPath = null, effectivePath = info.newPath)
+                }
+            } else {
+                platformRepository.updateCustomRomPath(info.platformId, info.newPath)
+                updatePlatformConfigInState(info.platformId) {
+                    it.copy(customRomPath = info.newPath, effectivePath = info.newPath)
+                }
+            }
+            rediscoverPlatform(info.platformId)
+        }
+    }
+
+    fun requestPurgePlatform(scope: CoroutineScope, platformId: Long) {
+        scope.launch {
+            val pendingUploads = saveCacheRepository.pendingUploadsOnPlatform(platformId)
+            _state.update {
+                it.copy(
+                    showPurgePlatformConfirm = platformId,
+                    purgeOfferedAfterDisable = false,
+                    purgePlatformPendingUploads = pendingUploads
+                )
+            }
+        }
+    }
+
+    private fun offerPurgeAfterDisable(platformId: Long, pendingUploads: Int) {
+        _state.update { state ->
+            val hasGames = state.platformConfigs.any { it.platformId == platformId && it.gameCount > 0 }
+            if (!hasGames || state.showPurgePlatformConfirm != null) state
+            else state.copy(
+                showPurgePlatformConfirm = platformId,
+                purgeOfferedAfterDisable = true,
+                purgePlatformPendingUploads = pendingUploads
+            )
+        }
+    }
+
+    fun confirmPurgePlatform(scope: CoroutineScope) {
+        val platformId = _state.value.showPurgePlatformConfirm ?: return
+        _state.update { it.copy(showPurgePlatformConfirm = null, purgeOfferedAfterDisable = false) }
+        val platformName = _state.value.platformConfigs
+            .firstOrNull { it.platformId == platformId }?.platformName
+            ?: platformId.toString()
+
+        scope.launch {
+            try {
+                val result = purgePlatformUseCase(platformId, deleteLocalFiles = true) { current, total, gameTitle ->
+                    if (current == 0) {
+                        notificationManager.showPersistent(
+                            key = PLATFORM_PURGE_NOTIFICATION_KEY,
+                            title = NotificationText.Res(
+                                R.string.notif_storage_purge_persistent_title,
+                                listOf(platformName)
+                            ),
+                            subtitle = NotificationText.Res(
+                                R.string.notif_storage_purge_persistent_subtitle_preparing
+                            ),
+                            progress = NotificationProgress(0, total.coerceAtLeast(1))
+                        )
+                    } else {
+                        notificationManager.updatePersistent(
+                            key = PLATFORM_PURGE_NOTIFICATION_KEY,
+                            subtitle = NotificationText.Res(
+                                R.string.notif_storage_purge_persistent_subtitle_progress,
+                                listOf(current, total, gameTitle)
+                            ),
+                            progress = NotificationProgress(current - 1, total)
+                        )
+                    }
+                }
+
+                notificationManager.completePersistent(
+                    key = PLATFORM_PURGE_NOTIFICATION_KEY,
+                    title = NotificationText.Res(
+                        R.string.notif_storage_purge_complete_title,
+                        listOf(platformName)
+                    ),
+                    subtitle = result.toNotificationText(R.string.notif_storage_purge_complete_subtitle),
+                    type = NotificationType.SUCCESS
+                )
+            } catch (e: Exception) {
+                Logger.warn(TAG, "confirmPurgePlatform failed", e)
+                notificationManager.completePersistent(
+                    key = PLATFORM_PURGE_NOTIFICATION_KEY,
+                    title = NotificationText.Res(
+                        R.string.notif_storage_purge_failed_title,
+                        listOf(platformName)
+                    ),
+                    subtitle = e.message?.let { NotificationText.Raw(it) },
+                    type = NotificationType.ERROR
+                )
+            }
+
+            loadPlatformConfigs(scope)
+            refreshCollectionStats(scope)
+        }
+    }
+
+    fun cancelPurgePlatform() {
+        _state.update { it.copy(showPurgePlatformConfirm = null, purgeOfferedAfterDisable = false) }
+    }
+
+    fun openPlatformSettingsModal(platformId: Long) {
+        _state.update {
+            it.copy(
+                platformSettingsModalId = platformId,
+                platformSettingsFocusIndex = 0
+            )
+        }
+    }
+
+    fun closePlatformSettingsModal() {
+        _state.update {
+            it.copy(
+                platformSettingsModalId = null,
+                platformSettingsFocusIndex = 0
+            )
+        }
+    }
+
+    fun movePlatformSettingsFocus(delta: Int) {
+        _state.update { state ->
+            val config = state.platformConfigs.find { it.platformId == state.platformSettingsModalId }
+            val maxIndex = calculatePlatformSettingsMaxIndex(config)
+            val newIndex = (state.platformSettingsFocusIndex + delta).coerceIn(0, maxIndex)
+            state.copy(platformSettingsFocusIndex = newIndex, platformSettingsButtonIndex = 0)
+        }
+    }
+
+    private fun calculatePlatformSettingsMaxIndex(config: PlatformStorageConfig?): Int {
+        if (config == null) return 4
+        var nextIndex = 3
+        if (config.supportsStatePath) nextIndex++
+        if (LibretroCoreRegistry.isPlatformSupported(config.platformSlug)) nextIndex++
+        return nextIndex + 1
+    }
+
+    fun selectPlatformSettingsOption(scope: CoroutineScope) {
+        val platformId = _state.value.platformSettingsModalId ?: return
+        val config = getCurrentModalConfig() ?: return
+        val focusIndex = _state.value.platformSettingsFocusIndex
+        val buttonIndex = _state.value.platformSettingsButtonIndex
+
+        var nextIndex = 3
+        val statePathIndex = if (config.supportsStatePath) nextIndex++ else -1
+        val libretroSettingsIndex = if (LibretroCoreRegistry.isPlatformSupported(config.platformSlug)) nextIndex++ else -1
+        val resyncIndex = nextIndex++
+        val purgeIndex = nextIndex
+
+        when (focusIndex) {
+            0 -> togglePlatformSync(scope, platformId, !config.syncEnabled)
+            1 -> {
+                if (buttonIndex == 0) {
+                    openPlatformFolderPicker(scope, platformId)
+                } else if (buttonIndex == 1 && config.customRomPath != null) {
+                    resetPlatformToGlobal(scope, platformId)
+                }
+            }
+            2 -> {
+                if (buttonIndex == 0) {
+                    openPlatformSavePathPicker(scope, platformId)
+                } else if (buttonIndex == 1 && config.canResetSavePath) {
+                    resetPlatformSavePath(scope, platformId)
+                }
+            }
+            statePathIndex -> {
+                if (buttonIndex == 0) {
+                    emitStatePathPicker(scope, platformId)
+                } else if (buttonIndex == 1 && config.isUserStatePathOverride) {
+                    resetPlatformStatePath(scope, platformId)
+                }
+            }
+            libretroSettingsIndex -> {
+            }
+            resyncIndex -> {
+                closePlatformSettingsModal()
+                syncPlatform(scope, platformId, config.platformName)
+            }
+            purgeIndex -> {
+                closePlatformSettingsModal()
+                requestPurgePlatform(scope, platformId)
+            }
+        }
+    }
+
+    private fun openPlatformSavePathPicker(scope: CoroutineScope, platformId: Long) {
+        scope.launch { _launchSavePathPicker.emit(platformId) }
+    }
+
+    fun emitSavePathPicker(scope: CoroutineScope, platformId: Long) {
+        scope.launch { _launchSavePathPicker.emit(platformId) }
+    }
+
+    private fun resetPlatformSavePath(scope: CoroutineScope, platformId: Long) {
+        scope.launch { _resetSavePathEvent.emit(platformId) }
+    }
+
+    fun emitStatePathPicker(scope: CoroutineScope, platformId: Long) {
+        scope.launch { _launchStatePathPicker.emit(platformId) }
+    }
+
+    private fun resetPlatformStatePath(scope: CoroutineScope, platformId: Long) {
+        scope.launch { _resetStatePathEvent.emit(platformId) }
+    }
+
+    private fun getCurrentModalConfig(): PlatformStorageConfig? {
+        val platformId = _state.value.platformSettingsModalId ?: return null
+        return _state.value.platformConfigs.find { it.platformId == platformId }
+    }
+
+    fun syncPlatform(scope: CoroutineScope, platformId: Long, platformName: String) {
+        if (!platformSyncQueue.enqueuePlatform(platformId, platformName)) return
+        scope.launch {
+            platformSyncQueue.busyPlatformIds.first { platformId !in it }
+            loadPlatformConfigs(scope)
+            refreshCollectionStats(scope)
+        }
+    }
+
+    fun togglePlatformsExpanded() {
+        _state.update { it.copy(platformsExpanded = !it.platformsExpanded) }
+    }
+
+    data class PlatformEmulatorInfo(
+        val supportsStatePath: Boolean,
+        val emulatorId: String?,
+        val effectiveSavePath: String? = null,
+        val isUserSavePathOverride: Boolean = false,
+        val isEvaluatedSavePath: Boolean = false,
+        val isFallbackSavePath: Boolean = false,
+        val effectiveStatePath: String? = null,
+        val isUserStatePathOverride: Boolean = false,
+        val folderMemcardCount: Int = -1,
+        val onlyMemcardPath: String? = null,
+        val selectedMemcardPath: String? = null
+    )
+
+    fun updatePlatformEmulatorInfo(platformInfoMap: Map<Long, PlatformEmulatorInfo>) {
+        _state.update { current ->
+            current.copy(
+                platformConfigs = current.platformConfigs.map { config ->
+                    val info = platformInfoMap[config.platformId]
+                    config.copy(
+                        supportsStatePath = info?.supportsStatePath ?: false,
+                        emulatorId = info?.emulatorId
+                    )
+                }
+            )
+        }
+    }
+
+    fun movePlatformSettingsButtonFocus(delta: Int) {
+        _state.update { state ->
+            val config = state.platformConfigs.find { it.platformId == state.platformSettingsModalId }
+            val focusIndex = state.platformSettingsFocusIndex
+            val statePathIndex = if (config?.supportsStatePath == true) 3 else -1
+            val hasReset = when (focusIndex) {
+                1 -> config?.customRomPath != null
+                2 -> config?.canResetSavePath == true
+                statePathIndex -> config?.isUserStatePathOverride == true
+                else -> false
+            }
+            val maxIndex = if (hasReset) 1 else 0
+            val newIndex = (state.platformSettingsButtonIndex + delta).coerceIn(0, maxIndex)
+            state.copy(platformSettingsButtonIndex = newIndex)
+        }
+    }
+
+    fun toggleWeeklyIntegrityCheck(scope: CoroutineScope, enabled: Boolean) {
+        scope.launch {
+            preferencesRepository.setWeeklyIntegrityCheckEnabled(enabled)
+            _state.update { it.copy(weeklyIntegrityCheckEnabled = enabled) }
+        }
+    }
+
+    fun toggleScreenDimmer(scope: CoroutineScope) {
+        scope.launch {
+            val current = _state.value.screenDimmerEnabled
+            val next = !current
+            preferencesRepository.setScreenDimmerEnabled(next)
+            _state.update { it.copy(screenDimmerEnabled = next) }
+        }
+    }
+
+    fun cycleScreenDimmerTimeout(scope: CoroutineScope) {
+        scope.launch {
+            val current = _state.value.screenDimmerTimeoutMinutes
+            val next = if (current >= 5) 1 else current + 1
+            preferencesRepository.setScreenDimmerTimeoutMinutes(next)
+            _state.update { it.copy(screenDimmerTimeoutMinutes = next) }
+        }
+    }
+
+    fun cycleScreenDimmerLevel(scope: CoroutineScope) {
+        scope.launch {
+            val levels = listOf(40, 50, 60, 70)
+            val next = cycleInList(_state.value.screenDimmerLevel, levels)
+            preferencesRepository.setScreenDimmerLevel(next)
+            _state.update { it.copy(screenDimmerLevel = next) }
+        }
+    }
+
+    fun adjustScreenDimmerTimeout(scope: CoroutineScope, delta: Int) {
+        scope.launch {
+            val current = _state.value.screenDimmerTimeoutMinutes
+            val next = (current + delta).coerceIn(1, 5)
+            if (next != current) {
+                preferencesRepository.setScreenDimmerTimeoutMinutes(next)
+                _state.update { it.copy(screenDimmerTimeoutMinutes = next) }
+            }
+        }
+    }
+
+    fun adjustScreenDimmerLevel(scope: CoroutineScope, delta: Int) {
+        scope.launch {
+            val current = _state.value.screenDimmerLevel
+            val next = (current + delta * 10).coerceIn(40, 70)
+            if (next != current) {
+                preferencesRepository.setScreenDimmerLevel(next)
+                _state.update { it.copy(screenDimmerLevel = next) }
+            }
+        }
+    }
+
+    fun requestPurgeAll(scope: CoroutineScope) {
+        scope.launch {
+            val pendingUploads = saveCacheRepository.getPendingSyncCounts().pendingUploads
+            _state.update {
+                it.copy(showPurgeAllConfirm = true, purgeAllPendingUploads = pendingUploads)
+            }
+        }
+    }
+
+    fun cancelPurgeAll() {
+        _state.update { it.copy(showPurgeAllConfirm = false) }
+    }
+
+    fun confirmPurgeAll(scope: CoroutineScope) {
+        _state.update { it.copy(showPurgeAllConfirm = false, isPurgingAll = true) }
+        scope.launch {
+            databaseAdminRepository.purgeAllLibrary()
+            _state.update { it.copy(isPurgingAll = false, platformConfigs = emptyList()) }
+            refreshCollectionStats(scope)
+        }
+    }
+
+    fun requestHardReset(scope: CoroutineScope) {
+        if (_state.value.isHardResetting || _state.value.isPurgingAll) return
+        scope.launch {
+            val pendingUploads = saveCacheRepository.getPendingSyncCounts().pendingUploads
+            val preview = databaseAdminRepository.previewHardReset()
+            _state.update {
+                it.copy(
+                    showHardResetModal = true,
+                    hardResetPendingUploads = pendingUploads,
+                    hardResetPreview = preview
+                )
+            }
+        }
+    }
+
+    fun cancelHardReset() {
+        if (_state.value.isHardResetting) return
+        _state.update { it.copy(showHardResetModal = false) }
+    }
+
+    fun confirmHardReset(scope: CoroutineScope) {
+        if (_state.value.isHardResetting) return
+        _state.update { it.copy(isHardResetting = true) }
+        scope.launch {
+            try {
+                val blocker = databaseAdminRepository.hardReset()
+                if (blocker != null) {
+                    _state.update { it.copy(isHardResetting = false, showHardResetModal = false) }
+                    notificationManager.showError(hardResetBlockerMessage(blocker))
+                    return@launch
+                }
+                _state.update {
+                    it.copy(
+                        isHardResetting = false,
+                        showHardResetModal = false,
+                        platformConfigs = emptyList()
+                    )
+                }
+                refreshCollectionStats(scope)
+                notificationManager.showSuccess(NotificationText.Res(R.string.notif_storage_hardreset_success))
+                _hardResetCompletedEvent.emit(Unit)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(isHardResetting = false, showHardResetModal = false) }
+                val detail = e.message ?: context.getString(R.string.notif_storage_hardreset_failed_default_detail)
+                notificationManager.showError(
+                    NotificationText.Res(R.string.notif_storage_hardreset_failed, listOf(detail))
+                )
+            }
+        }
+    }
+
+    private fun hardResetBlockerMessage(blocker: HardResetBlocker): NotificationText = when (blocker) {
+        HardResetBlocker.ActiveSession ->
+            NotificationText.Res(R.string.notif_storage_hardreset_blocked_active_session)
+        is HardResetBlocker.PendingUploads -> pendingUploadsMessage(blocker)
+        HardResetBlocker.ActiveDownloads ->
+            NotificationText.Res(R.string.notif_storage_hardreset_blocked_active_downloads)
+        HardResetBlocker.EmulatorDownload ->
+            NotificationText.Res(R.string.notif_storage_hardreset_blocked_emulator_download)
+        HardResetBlocker.MediaDownload ->
+            NotificationText.Res(R.string.notif_storage_hardreset_blocked_media_download)
+    }
+
+    private fun pendingUploadsMessage(blocker: HardResetBlocker.PendingUploads): NotificationText {
+        val named = blocker.accounts.mapNotNull { it.username }
+        return when {
+            named.isEmpty() -> NotificationText.Res(R.string.notif_storage_hardreset_pending_uploads_none)
+            named.size == 1 -> NotificationText.Res(
+                R.string.notif_storage_hardreset_pending_uploads_one,
+                listOf(named.first())
+            )
+            else -> NotificationText.Res(
+                R.string.notif_storage_hardreset_pending_uploads_many,
+                listOf(named.joinToString(", "))
+            )
+        }
+    }
+}

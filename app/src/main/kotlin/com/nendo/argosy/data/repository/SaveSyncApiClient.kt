@@ -1,0 +1,754 @@
+package com.nendo.argosy.data.repository
+
+import android.os.StatFs
+import com.nendo.argosy.data.emulator.BuiltinCoreResolver
+import com.nendo.argosy.data.emulator.EmulatorRegistry
+import com.nendo.argosy.data.emulator.EmulatorResolver
+import com.nendo.argosy.data.emulator.SavePathConfig
+import com.nendo.argosy.data.local.dao.EmulatorConfigDao
+import com.nendo.argosy.data.local.dao.GameDao
+import com.nendo.argosy.data.local.dao.SaveSyncDao
+import com.nendo.argosy.data.local.dao.getByIdsChunked
+import com.nendo.argosy.data.local.entity.GameEntity
+import com.nendo.argosy.data.local.entity.SaveSyncEntity
+import com.nendo.argosy.data.remote.romm.AccountApi
+import com.nendo.argosy.data.remote.romm.RomMApi
+import com.nendo.argosy.data.remote.romm.RomMCapabilities
+import com.nendo.argosy.data.remote.romm.RomMDeleteSavesRequest
+import com.nendo.argosy.data.remote.romm.RomMSave
+import com.nendo.argosy.data.storage.FileAccessLayer
+import com.nendo.argosy.data.sync.SavePathResolver
+import com.nendo.argosy.data.sync.platform.FolderSaveHandler
+import com.nendo.argosy.data.sync.platform.GciSaveHandler
+import com.nendo.argosy.data.sync.platform.PlatformSaveHandler
+import com.nendo.argosy.data.sync.platform.PlatformSaveHandlerRegistry
+import com.nendo.argosy.data.sync.platform.SaveContext
+import com.nendo.argosy.data.sync.platform.SigilSaveHandler
+import com.nendo.argosy.data.sync.platform.SwitchSaveHandler
+import com.nendo.argosy.data.preferences.UserPreferencesRepository
+import com.nendo.argosy.util.Logger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
+import java.text.Normalizer
+import java.time.Instant
+import javax.inject.Inject
+import javax.inject.Singleton
+
+class SaveInventoryUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+@Singleton
+class SaveSyncApiClient @Inject constructor(
+    private val saveSyncDao: SaveSyncDao,
+    private val emulatorConfigDao: EmulatorConfigDao,
+    private val emulatorResolver: EmulatorResolver,
+    private val builtinCoreResolver: BuiltinCoreResolver,
+    private val gameDao: GameDao,
+    private val savePathResolver: SavePathResolver,
+    private val userPreferencesRepository: UserPreferencesRepository,
+    private val fal: FileAccessLayer,
+    private val switchSaveHandler: SwitchSaveHandler,
+    private val gciSaveHandler: GciSaveHandler,
+    private val saveHandlerRegistry: PlatformSaveHandlerRegistry,
+    private val conflictDetector: ConflictDetector,
+    private val saveUploader: dagger.Lazy<SaveUploader>,
+    private val saveDownloader: dagger.Lazy<SaveDownloader>,
+    private val syncPreferencesRepository: com.nendo.argosy.data.preferences.SyncPreferencesRepository,
+    private val snapshotRouter: dagger.Lazy<com.nendo.argosy.data.sync.snapshot.SnapshotSyncRouter>
+) {
+    private var api: RomMApi? = null
+    private var deviceId: String? = null
+    private var capabilities: RomMCapabilities = RomMCapabilities.NONE
+
+    fun setApi(api: RomMApi?) {
+        this.api = api
+    }
+
+    fun getApi(): RomMApi? = api
+
+    fun setDeviceId(id: String?) {
+        deviceId = id
+    }
+
+    fun getDeviceId(): String? = deviceId
+
+    fun setCapabilities(caps: RomMCapabilities) {
+        capabilities = caps
+    }
+
+    fun getCapabilities(): RomMCapabilities = capabilities
+
+    internal fun getHandler(
+        config: SavePathConfig?,
+        platformSlug: String,
+        emulatorId: String
+    ): PlatformSaveHandler = saveHandlerRegistry.getHandler(config, platformSlug, emulatorId)
+
+    internal suspend fun isSigilRoutedFor(
+        gameId: Long,
+        config: SavePathConfig?,
+        platformSlug: String,
+        emulatorId: String
+    ): Boolean = saveHandlerRegistry.isSigilRoutedFor(gameId, config, platformSlug, emulatorId)
+
+    suspend fun resolveEmulatorForGame(game: GameEntity): String? {
+        val launchPackage = emulatorResolver.getEmulatorPackageForGame(game.id, game.platformId, game.platformSlug)
+        if (launchPackage != null) {
+            val resolved = emulatorResolver.resolveEmulatorId(launchPackage)
+            if (resolved != null) {
+                Logger.verbose(TAG) { "[SaveSync] DISCOVER gameId=${game.id} | Resolved emulator from launch resolution | package=$launchPackage, emulatorId=$resolved" }
+                return resolved
+            }
+            Logger.verbose(TAG) { "[SaveSync] DISCOVER gameId=${game.id} | Launch package is ad-hoc, falling back to preferred | package=$launchPackage" }
+        }
+
+        val preferred = emulatorResolver.getPreferredEmulatorId(game.platformSlug)
+        if (preferred != null) {
+            Logger.verbose(TAG) { "[SaveSync] DISCOVER gameId=${game.id} | Using preferred emulator for platform=${game.platformSlug} | emulatorId=$preferred" }
+            return preferred
+        }
+
+        Logger.warn(TAG, "[SaveSync] DISCOVER gameId=${game.id} | Cannot resolve emulator | platform=${game.platformSlug}, no config and no installed emulators")
+        return null
+    }
+
+    internal suspend fun resolveCoreForGame(game: GameEntity, emulatorId: String? = null): String? {
+        val resolvedEmulator = emulatorId ?: resolveEmulatorForGame(game)
+        if (resolvedEmulator == EmulatorRegistry.BUILTIN_ID) {
+            return builtinCoreResolver.resolveCoreId(game.id, game.platformId, game.platformSlug)
+        }
+        val gameConfig = emulatorConfigDao.getByGameId(game.id)
+        if (gameConfig?.coreName != null) return gameConfig.coreName
+        val platformConfig = emulatorConfigDao.getDefaultForPlatform(game.platformId)
+        return platformConfig?.coreName
+    }
+
+    suspend fun resolveCoreForGame(gameId: Long): String? {
+        val game = gameDao.getById(gameId) ?: return null
+        return resolveCoreForGame(game)
+    }
+
+    suspend fun rekeySaveSyncToLocalEmulators(): Int = withContext(Dispatchers.IO) {
+        val ownerUserId = syncPreferencesRepository.getRommUserId()
+        val gameIds = saveSyncDao.getAllGameIds()
+        var rewritten = 0
+        for (gameId in gameIds) {
+            val game = gameDao.getById(gameId) ?: continue
+            val localEmulator = resolveEmulatorForGame(game) ?: continue
+
+            val rows = saveSyncDao.getByGame(gameId, ownerUserId)
+            val liveChannels = rows.filter { it.emulatorId == localEmulator }.map { it.channelName }.toSet()
+            rows.filter { it.emulatorId != localEmulator && it.channelName in liveChannels }
+                .forEach { stale ->
+                    Logger.debug(TAG, "[SaveSync] REKEY gameId=$gameId | dropping stale row for emulatorId=${stale.emulatorId} channel=${stale.channelName}, a row already exists for $localEmulator")
+                    saveSyncDao.deleteById(stale.id)
+                }
+
+            val updated = saveSyncDao.rekeyEmulatorForGame(gameId, ownerUserId, localEmulator)
+            if (updated > 0) {
+                rewritten += updated
+                Logger.debug(TAG, "[SaveSync] REKEY gameId=$gameId | rewrote $updated rows to emulatorId=$localEmulator")
+            }
+        }
+        if (rewritten > 0) Logger.info(TAG, "[SaveSync] REKEY | Rewrote $rewritten save_sync rows to local emulator")
+        saveSyncDao.deleteDuplicateRows()
+        rewritten
+    }
+
+    suspend fun deleteServerSaves(saveIds: List<Long>): Boolean = withContext(Dispatchers.IO) {
+        if (saveIds.isEmpty()) return@withContext true
+        val api = this@SaveSyncApiClient.api ?: return@withContext false
+        try {
+            val response = api.deleteSaves(RomMDeleteSavesRequest(saveIds))
+            response.isSuccessful
+        } catch (e: Exception) {
+            Logger.error(TAG, "deleteServerSaves: failed for $saveIds", e)
+            false
+        }
+    }
+
+    /**
+     * Whether the server positively denies knowing this rom. Only a 404 answers yes: an
+     * unreachable server, a timeout or any other status leaves the question open, and a
+     * caller acting on this removes local state, so "could not ask" must never read as gone.
+     */
+    suspend fun romIsMissing(rommId: Long): Boolean = withContext(Dispatchers.IO) {
+        val api = this@SaveSyncApiClient.api ?: return@withContext false
+        try {
+            val response = api.getRom(rommId)
+            val missing = response.code() == 404
+            if (!missing && !response.isSuccessful) {
+                Logger.warn(TAG, "[SaveSync] rom check inconclusive | rommId=$rommId, status=${response.code()}")
+            }
+            missing
+        } catch (e: Exception) {
+            Logger.warn(TAG, "[SaveSync] rom check failed, treating rom as present | rommId=$rommId: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun checkSavesForGame(gameId: Long, rommId: Long): List<RomMSave> =
+        fetchSavesForGame(gameId, rommId, api, deviceId, syncPreferencesRepository.getRommUserId())
+
+    /**
+     * Server saves as seen by a specific account. Save negotiation is evaluated per device and
+     * per user, so a deferred upload owned by another account must read the inventory through
+     * that account's client rather than the live connection.
+     */
+    suspend fun checkSavesForGame(gameId: Long, rommId: Long, account: AccountApi): List<RomMSave> =
+        fetchSavesForGame(gameId, rommId, account.api, account.deviceId, account.rommUserId)
+
+    private suspend fun fetchSavesForGame(
+        gameId: Long,
+        rommId: Long,
+        api: RomMApi?,
+        deviceId: String?,
+        ownerUserId: Long?
+    ): List<RomMSave> = withContext(Dispatchers.IO) {
+        if (api == null) throw SaveInventoryUnavailableException("not connected")
+
+        val response = try {
+            if (deviceId != null) api.getSavesByRomWithDevice(rommId, deviceId) else api.getSavesByRom(rommId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] UPLOAD | getSavesByRom failed | gameId=$gameId, rommId=$rommId", e)
+            throw SaveInventoryUnavailableException(e.message ?: "request failed", e)
+        }
+
+        if (!response.isSuccessful) {
+            Logger.warn(TAG, "[SaveSync] UPLOAD | getSavesByRom HTTP error | gameId=$gameId, rommId=$rommId, status=${response.code()}")
+            if (response.code() in SAVE_INVENTORY_EMPTY_STATUSES) return@withContext emptyList()
+            throw SaveInventoryUnavailableException("HTTP ${response.code()}")
+        }
+
+        val saves = response.body() ?: emptyList()
+        adoptServerHashes(gameId, saves, ownerUserId)
+        saves
+    }
+
+    private suspend fun adoptServerHashes(gameId: Long, serverSaves: List<RomMSave>, ownerUserId: Long?) {
+        if (serverSaves.isEmpty() || !capabilities.trustsServerHash) return
+        val hashByServerId = serverSaves.associate { it.id to it.contentHash }
+        saveSyncDao.getByGame(gameId, ownerUserId).forEach { row ->
+            val hash = row.rommSaveId?.let { hashByServerId[it] } ?: return@forEach
+            if (row.lastUploadedHash != hash) {
+                saveSyncDao.updateLastUploadedHash(row.id, hash)
+            }
+        }
+    }
+
+    suspend fun checkForServerUpdates(platformId: Long): List<SaveSyncEntity> = withContext(Dispatchers.IO) {
+        val api = this@SaveSyncApiClient.api ?: return@withContext emptyList()
+
+        val response = try {
+            api.getSavesByPlatform(platformId)
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] WORKER | getSavesByPlatform failed | platformId=$platformId", e)
+            return@withContext emptyList()
+        }
+
+        if (!response.isSuccessful) {
+            Logger.warn(TAG, "[SaveSync] WORKER | getSavesByPlatform HTTP error | platformId=$platformId, status=${response.code()}")
+            return@withContext emptyList()
+        }
+
+        val serverSaves = response.body() ?: return@withContext emptyList()
+        val updatedEntities = mutableListOf<SaveSyncEntity>()
+        val ownerUserId = syncPreferencesRepository.getRommUserId()
+
+        val downloadedGames = gameDao.getByIdsChunked(gameDao.getDownloadedRommGameIds())
+
+        for (serverSave in serverSaves) {
+            if (isStateShapedSave(serverSave)) continue
+            val game = downloadedGames.find { it.rommId == serverSave.romId } ?: continue
+            val emulatorId = resolveEmulatorForGame(game)
+            if (emulatorId == null) {
+                Logger.warn(TAG, "[SaveSync] WORKER gameId=${game.id} | Skipping save - cannot resolve emulator | serverSaveId=${serverSave.id}, fileName=${serverSave.fileName}")
+                continue
+            }
+            val romBaseName = game.localPath?.let { File(it).nameWithoutExtension }
+            val channelName = resolveServerChannelName(serverSave, romBaseName)
+
+            if (channelName == null) continue
+
+            val existing = saveSyncDao.getByGameEmulatorAndChannel(game.id, emulatorId, syncKeyOf(channelName), ownerUserId)
+
+            val serverTime = parseTimestamp(serverSave.updatedAt)
+
+            val knownServerTime = existing?.serverUpdatedAt
+            if (knownServerTime == null || serverTime.isAfter(knownServerTime)) {
+                val uploaderDeviceSync = serverSave.deviceSyncs
+                    ?.filter { !it.isCurrent }
+                    ?.maxByOrNull { it.lastSyncedAt ?: "" }
+                val entity = SaveSyncEntity(
+                    id = existing?.id ?: 0,
+                    gameId = game.id,
+                    rommId = game.rommId!!,
+                    emulatorId = emulatorId,
+                    channelName = syncKeyOf(channelName),
+                    rommSaveId = serverSave.id,
+                    localSavePath = existing?.localSavePath,
+                    localUpdatedAt = existing?.localUpdatedAt,
+                    serverUpdatedAt = serverTime,
+                    lastSyncedAt = existing?.lastSyncedAt,
+                    syncStatus = conflictDetector.determineSyncStatus(existing?.localUpdatedAt, serverTime),
+                    lastUploadedHash = existing?.lastUploadedHash,
+                    localContentHash = existing?.localContentHash,
+                    lastSyncDeviceId = uploaderDeviceSync?.deviceId ?: existing?.lastSyncDeviceId,
+                    lastSyncDeviceName = uploaderDeviceSync?.deviceName ?: existing?.lastSyncDeviceName,
+                    ownerUserId = existing?.ownerUserId ?: ownerUserId
+                )
+                saveSyncDao.upsert(entity)
+                if (entity.syncStatus == SaveSyncEntity.STATUS_SERVER_NEWER) {
+                    updatedEntities.add(entity)
+                }
+            }
+        }
+
+        updatedEntities
+    }
+
+    suspend fun checkForAllServerUpdates(): List<SaveSyncEntity> = withContext(Dispatchers.IO) {
+        if (api == null) return@withContext emptyList()
+        val downloadedGames = gameDao.getByIdsChunked(gameDao.getDownloadedRommGameIds())
+        val platformIds = downloadedGames.map { it.platformId }.distinct()
+
+        val allUpdates = mutableListOf<SaveSyncEntity>()
+        for (platformId in platformIds) {
+            allUpdates.addAll(checkForServerUpdates(platformId))
+        }
+        allUpdates
+    }
+
+    suspend fun uploadSave(
+        gameId: Long,
+        emulatorId: String,
+        channelName: String? = null,
+        forceOverwrite: Boolean = false,
+        isHardcore: Boolean = false,
+        uploadedCacheId: Long? = null
+    ): SaveSyncResult = snapshotRouter.get().upload(gameId, emulatorId, channelName, forceOverwrite, isHardcore)
+        ?: saveUploader.get().uploadSave(gameId, emulatorId, channelName, forceOverwrite, isHardcore, uploadedCacheId)
+
+    suspend fun uploadCacheEntry(
+        gameId: Long,
+        rommId: Long,
+        emulatorId: String,
+        channelName: String,
+        cacheFile: File,
+        contentHash: String?,
+        overwrite: Boolean = false,
+        uploadedCacheId: Long? = null,
+        ownerApi: AccountApi? = null,
+        approveHardcoreDowngrade: Boolean = false
+    ): SaveSyncResult = snapshotRouter.get().takeIf { ownerApi == null }
+        ?.uploadCached(
+            gameId, emulatorId, channelName, cacheFile,
+            onTopOfCurrent = overwrite,
+            cacheId = uploadedCacheId,
+            approveHardcoreDowngrade = approveHardcoreDowngrade
+        )
+        ?: saveUploader.get()
+            .uploadCacheEntry(gameId, rommId, emulatorId, channelName, cacheFile, contentHash, overwrite, uploadedCacheId, ownerApi)
+
+    suspend fun downloadSave(
+        gameId: Long,
+        emulatorId: String,
+        channelName: String? = null,
+        skipBackup: Boolean = false,
+        knownServerSaveId: Long? = null
+    ): SaveSyncResult = snapshotRouter.get().download(gameId, emulatorId, channelName)
+        ?: saveDownloader.get().downloadSave(gameId, emulatorId, channelName, skipBackup, knownServerSaveId)
+
+    suspend fun downloadToCache(
+        serverSaveId: Long,
+        gameId: Long,
+        channelName: String?
+    ): Long? = saveDownloader.get().downloadToCache(serverSaveId, gameId, channelName, activate = false)
+
+    suspend fun downloadSaveAsChannel(
+        gameId: Long,
+        serverSaveId: Long,
+        channelName: String,
+        emulatorId: String?,
+        skipDeviceId: Boolean = false
+    ): Boolean = saveDownloader.get().downloadSaveAsChannel(gameId, serverSaveId, channelName, emulatorId, skipDeviceId)
+
+    suspend fun downloadAndCacheSave(
+        serverSaveId: Long,
+        gameId: Long,
+        channelName: String?,
+        activate: Boolean
+    ): Boolean = saveDownloader.get().downloadAndCacheSave(serverSaveId, gameId, channelName, activate)
+
+    suspend fun confirmOrQueueDeviceSync(gameId: Long, saveId: Long) =
+        saveDownloader.get().confirmOrQueueDeviceSync(gameId, saveId)
+
+    suspend fun flushPendingDeviceSync(gameId: Long) = saveDownloader.get().flushPendingDeviceSync(gameId)
+
+    suspend fun clearSaveAtPath(targetPath: String): Boolean = withContext(Dispatchers.IO) {
+        if (!fal.exists(targetPath)) return@withContext true
+        if (SigilSaveHandler.isProtectedSavePath(targetPath)) {
+            Logger.warn(TAG, "clearSaveAtPath: leaving $targetPath in place; it holds other games' saves and Sigil writes this game's itself")
+            return@withContext true
+        }
+        val deleted = if (fal.isDirectory(targetPath)) {
+            fal.deleteRecursively(targetPath)
+        } else {
+            fal.delete(targetPath)
+        }
+        if (!deleted || fal.exists(targetPath)) {
+            Logger.error(TAG, "clearSaveAtPath: Failed to delete $targetPath")
+            return@withContext false
+        }
+        true
+    }
+
+    /**
+     * Prefix-aware variant of [clearSaveAtPath]. For platforms whose disc id maps to multiple
+     * sibling folders under a parent (PSP), enumerates and deletes every match. Falls back to
+     * single-path delete when the handler doesn't expose a multi-folder layout.
+     */
+    suspend fun clearSavesForTitle(
+        targetPath: String,
+        platformSlug: String,
+        titleId: String?
+    ): Boolean = clearMatchedSaves(targetPath, platformSlug, titleId) { { matches -> matches } }
+
+    /**
+     * The clear that precedes a restore. Unlike [clearSavesForTitle] it removes only what the
+     * incoming archive replaces: a layout whose components map to distinct archive roots keeps
+     * every component absent from [archiveRoots], and defers the clear to placement when the
+     * archive has not been read yet (null). Prefix layouts clear every match, as before.
+     */
+    suspend fun clearSavesBeforeRestore(
+        targetPath: String,
+        platformSlug: String,
+        titleId: String?,
+        archiveRoots: Set<String>?
+    ): Boolean = clearMatchedSaves(targetPath, platformSlug, titleId) { handler ->
+        { matches -> handler.pathsClearedBeforeRestore(matches, archiveRoots) }
+    }
+
+    private suspend fun clearMatchedSaves(
+        targetPath: String,
+        platformSlug: String,
+        titleId: String?,
+        selectFor: (FolderSaveHandler) -> (List<String>) -> List<String>
+    ): Boolean = withContext(Dispatchers.IO) {
+        val handler = saveHandlerRegistry.getFolderHandler(platformSlug)
+        if (handler == null) {
+            return@withContext clearSaveAtPath(targetPath)
+        }
+        if (titleId.isNullOrBlank()) {
+            Logger.warn(TAG, "clearSavesForTitle: refusing to clear $targetPath -- folder-based platform=$platformSlug requires a titleId to scope the delete")
+            return@withContext false
+        }
+
+        val matchesAtTarget = handler.findAllSaveFoldersBySaveId(targetPath, titleId)
+        val (parentPath, matches) = if (matchesAtTarget.isNotEmpty()) {
+            targetPath to matchesAtTarget
+        } else {
+            val p = File(targetPath).parent ?: return@withContext true
+            p to handler.findAllSaveFoldersBySaveId(p, titleId)
+        }
+        if (matches.isEmpty()) {
+            Logger.debug(TAG, "clearSavesForTitle: no prefix matches for titleId=$titleId at parent=$parentPath, nothing to clear")
+            return@withContext true
+        }
+
+        val selected = selectFor(handler)(matches)
+        if (selected.size != matches.size) {
+            Logger.debug(TAG, "clearSavesForTitle: keeping ${matches.size - selected.size} component(s) the incoming archive does not carry | titleId=$titleId, kept=${matches - selected.toSet()}")
+        }
+        if (selected.isEmpty()) return@withContext true
+
+        Logger.debug(TAG, "clearSavesForTitle: deleting ${selected.size} folder(s) | titleId=$titleId, parent=$parentPath")
+        var allOk = true
+        for (path in selected) {
+            if (!clearSaveAtPath(path)) allOk = false
+        }
+        allOk
+    }
+
+    suspend fun discoverSavePathChecked(
+        emulatorId: String,
+        gameTitle: String,
+        platformSlug: String,
+        romPath: String? = null,
+        cachedSaveId: String? = null,
+        coreName: String? = null,
+        emulatorPackage: String? = null,
+        gameId: Long? = null
+    ): com.nendo.argosy.data.sync.SaveLookup = savePathResolver.discoverSavePathChecked(
+        emulatorId = emulatorId,
+        gameTitle = gameTitle,
+        platformSlug = platformSlug,
+        romPath = romPath,
+        cachedSaveId = cachedSaveId,
+        coreName = coreName,
+        emulatorPackage = emulatorPackage,
+        gameId = gameId
+    )
+
+    suspend fun discoverSavePath(
+        emulatorId: String,
+        gameTitle: String,
+        platformSlug: String,
+        romPath: String? = null,
+        cachedSaveId: String? = null,
+        coreName: String? = null,
+        emulatorPackage: String? = null,
+        gameId: Long? = null
+    ): String? = savePathResolver.discoverSavePath(
+        emulatorId = emulatorId,
+        gameTitle = gameTitle,
+        platformSlug = platformSlug,
+        romPath = romPath,
+        cachedSaveId = cachedSaveId,
+        coreName = coreName,
+        emulatorPackage = emulatorPackage,
+        gameId = gameId
+    )
+
+    suspend fun constructSavePath(
+        emulatorId: String,
+        gameTitle: String,
+        platformSlug: String,
+        romPath: String?,
+        coreName: String? = null,
+        cachedSaveId: String? = null,
+        gameId: Long? = null,
+        folderShaped: Boolean? = null,
+        emulatorPackage: String? = null
+    ): String? = savePathResolver.constructSavePath(
+        emulatorId, gameTitle, platformSlug, romPath, coreName, cachedSaveId, gameId, folderShaped, emulatorPackage
+    )
+
+    suspend fun predictFolderSavePath(
+        emulatorId: String,
+        platformSlug: String,
+        romPath: String?,
+        gameId: Long,
+        gameTitle: String,
+        cachedSaveId: String? = null,
+        emulatorPackage: String? = null
+    ): String? = savePathResolver.constructFolderSavePathWithOverride(
+        emulatorId, platformSlug, romPath, gameId, gameTitle, cachedSaveId, emulatorPackage
+    )
+
+    internal suspend fun <T> withRetry(
+        maxAttempts: Int = 3,
+        initialDelayMs: Long = 500,
+        tag: String = "",
+        block: suspend () -> T
+    ): T {
+        var lastException: Exception? = null
+        repeat(maxAttempts) { attempt ->
+            try {
+                return block()
+            } catch (e: IOException) {
+                lastException = e
+                if (attempt < maxAttempts - 1) {
+                    val delayMs = initialDelayMs * (1 shl attempt)
+                    Logger.debug(TAG, "$tag retry ${attempt + 1}/$maxAttempts after ${delayMs}ms: ${e.message}")
+                    delay(delayMs)
+                }
+            }
+        }
+        throw lastException ?: IOException("Retry failed")
+    }
+
+    internal fun hasEnoughDiskSpace(targetPath: String, requiredBytes: Long): Boolean {
+        if (requiredBytes <= 0) return true
+        return try {
+            val parentDir = File(targetPath).parentFile ?: File(targetPath)
+            val existingDir = generateSequence(parentDir) { it.parentFile }
+                .firstOrNull { it.exists() } ?: return true
+            val stat = StatFs(existingDir.absolutePath)
+            val availableBytes = stat.availableBytes
+            val hasSpace = availableBytes > requiredBytes * 2
+            if (!hasSpace) {
+                Logger.warn(TAG, "Insufficient disk space: available=${availableBytes}bytes, required=${requiredBytes * 2}bytes")
+            }
+            hasSpace
+        } catch (e: Exception) {
+            Logger.warn(TAG, "Failed to check disk space", e)
+            true
+        }
+    }
+
+    internal fun determineSyncStatus(localTime: Instant?, serverTime: Instant): String =
+        conflictDetector.determineSyncStatus(localTime, serverTime)
+
+    companion object {
+        private const val TAG = "SaveSyncApiClient"
+        const val DEFAULT_SAVE_NAME = "argosy-latest"
+        const val AUTOSAVE_SLOT_NAME = "autosave"
+        internal const val MIN_VALID_SAVE_SIZE_BYTES = 100L
+        internal const val AUTOCLEANUP_LIMIT = 10
+        private val SAVE_INVENTORY_EMPTY_STATUSES = setOf(403, 404)
+
+        /**
+         * The autosave channel is stored as either null or the literal "autosave" (a restore sets
+         * the string form); recognize both so callers do not each re-inline the check.
+         */
+        fun isAutosaveChannel(channelName: String?): Boolean =
+            channelName == null || channelName.equals(AUTOSAVE_SLOT_NAME, ignoreCase = true)
+
+        fun isLatestBucket(channelName: String?, romBaseName: String?): Boolean =
+            syncKeyOf(channelName) == AUTOSAVE_SLOT_NAME ||
+                romBaseName != null && channelName.equals(romBaseName, ignoreCase = true)
+
+        fun syncKeyOf(channelName: String?): String = when {
+            channelName == null -> AUTOSAVE_SLOT_NAME
+            channelName.equals(AUTOSAVE_SLOT_NAME, ignoreCase = true) -> AUTOSAVE_SLOT_NAME
+            channelName.equals(DEFAULT_SAVE_NAME, ignoreCase = true) -> AUTOSAVE_SLOT_NAME
+            else -> channelName
+        }
+
+        /**
+         * The named channel this coordinate refers to, or null for the autosave/latest bucket -- so
+         * callers deciding "named channel vs latest" share one place for the [isAutosaveChannel]
+         * invariant instead of re-inlining `!= null && !isAutosaveChannel(...)`.
+         */
+        fun namedChannelOrNull(channelName: String?): String? =
+            channelName?.takeUnless { isAutosaveChannel(it) }
+
+        fun computeUploadFileName(localSavePath: String?, channelName: String?, romBaseName: String?): String {
+            val baseName = when {
+                isAutosaveChannel(channelName) -> romBaseName ?: DEFAULT_SAVE_NAME
+                else -> channelName ?: DEFAULT_SAVE_NAME
+            }
+            val ext = localSavePath?.let { java.io.File(it) }?.let { file ->
+                when {
+                    file.isDirectory -> "zip"
+                    else -> file.extension
+                }
+            } ?: "zip"
+            return if (ext.isNotEmpty()) "$baseName.$ext" else baseName
+        }
+        internal val TIMESTAMP_ONLY_PATTERN = Regex("""^\d{4}-\d{2}-\d{2}[_-]\d{2}[_-]\d{2}[_-]\d{2}$""")
+        internal val ROMM_TIMESTAMP_TAG = Regex("""^\[\d{4}-\d{2}-\d{2}[ _]\d{2}-\d{2}-\d{2}(-\d+)?\]$""")
+        internal val SWITCH_EMULATOR_IDS = setOf(
+            "yuzu", "ryujinx", "citron", "strato", "eden", "eden_duo", "lemon", "sudachi", "skyline"
+        )
+
+        private val DIACRITICS_PATTERN = Regex("\\p{InCombiningDiacriticalMarks}+")
+
+        internal fun stripAccents(s: String): String =
+            DIACRITICS_PATTERN.replace(Normalizer.normalize(s, Normalizer.Form.NFD), "")
+
+        internal fun equalsNormalized(a: String, b: String): Boolean =
+            stripAccents(a).equals(stripAccents(b), ignoreCase = true)
+
+        internal fun startsWithNormalized(text: String, prefix: String): Boolean =
+            stripAccents(text).startsWith(stripAccents(prefix), ignoreCase = true)
+
+        internal fun dropPrefixNormalized(text: String, prefix: String): String {
+            val stripped = stripAccents(text)
+            val strippedPrefix = stripAccents(prefix)
+            return if (stripped.startsWith(strippedPrefix, ignoreCase = true)) {
+                text.drop(prefix.length)
+            } else text
+        }
+
+        internal fun parseTimestamp(timestamp: String): Instant =
+            parseTimestampOrNull(timestamp) ?: run {
+                Logger.warn(TAG, "Failed to parse timestamp: $timestamp, using current time")
+                Instant.now()
+            }
+
+        internal fun parseTimestampOrNull(timestamp: String): Instant? =
+            runCatching { Instant.parse(timestamp) }.getOrNull()
+                ?: runCatching { java.time.OffsetDateTime.parse(timestamp).toInstant() }.getOrNull()
+                ?: runCatching { java.time.ZonedDateTime.parse(timestamp).toInstant() }.getOrNull()
+                ?: com.nendo.argosy.util.parseTimestamp(timestamp)?.let(Instant::ofEpochMilli)
+
+        /**
+         * The channel a server save belongs to, or null for the game's latest save. The explicit
+         * [RomMSave.slot] decides when the server sent one; the file name is read only when it did
+         * not, because a latest save is usually named after the rom and parsing it invents a named
+         * slot the user never made. Every site that files a server save under a channel uses this.
+         */
+        internal fun resolveServerChannelName(save: RomMSave, romBaseName: String?): String? {
+            if (isLatestSlot(save, romBaseName)) return null
+            return save.slot ?: parseServerChannelNameForSync(save.fileName, romBaseName)
+        }
+
+        internal fun selectLatestServerSave(
+            serverSaves: List<RomMSave>,
+            channelName: String?,
+            romBaseName: String?,
+            preferGciZipBundle: Boolean
+        ): RomMSave? {
+            if (channelName != null) {
+                return serverSaves
+                    .filter { it.slot != null && equalsNormalized(it.slot, channelName) }
+                    .maxByOrNull { parseTimestamp(it.updatedAt) }
+                    ?: serverSaves.find {
+                        equalsNormalized(it.fileNameNoExt ?: File(it.fileName).nameWithoutExtension, channelName)
+                    }
+            }
+            val candidates = serverSaves.filter {
+                isLatestSaveFileName(it.fileName, romBaseName) ||
+                    (it.slot != null && romBaseName != null && equalsNormalized(it.slot, romBaseName))
+            }
+            val newest = candidates.maxByOrNull { parseTimestamp(it.updatedAt) }
+            val picked = if (preferGciZipBundle && candidates.size > 1) {
+                candidates.filter { it.fileName.endsWith(".zip", ignoreCase = true) }
+                    .maxByOrNull { parseTimestamp(it.updatedAt) } ?: newest
+            } else {
+                newest
+            }
+            return picked ?: serverSaves.singleOrNull()?.also { lone ->
+                Logger.warn(TAG, "[SaveSync] No filename match for romBaseName='$romBaseName'; accepting lone server save fileName='${lone.fileName}'")
+            }
+        }
+
+        internal fun isLatestSlot(save: RomMSave, romBaseName: String?): Boolean {
+            val slot = save.slot
+            if (slot != null) return isLatestSaveFileName(slot, romBaseName)
+            return isLatestSaveFileName(save.fileName, romBaseName)
+        }
+
+        internal fun parseServerChannelNameForSync(fileName: String, romBaseName: String?): String? {
+            val baseName = File(fileName).nameWithoutExtension
+            if (isTimestampSaveName(baseName)) return null
+            if (isLatestSaveFileName(fileName, romBaseName)) return null
+            return baseName
+        }
+
+        internal fun isLatestSaveFileName(fileName: String, romBaseName: String?): Boolean {
+            val baseName = File(fileName).nameWithoutExtension
+            if (baseName.equals(DEFAULT_SAVE_NAME, ignoreCase = true)) return true
+            if (baseName.equals(AUTOSAVE_SLOT_NAME, ignoreCase = true)) return true
+            if (romBaseName == null) return false
+            if (equalsNormalized(baseName, romBaseName)) return true
+            if (startsWithNormalized(baseName, romBaseName)) {
+                val suffix = dropPrefixNormalized(baseName, romBaseName).trim()
+                if (suffix.isEmpty()) return true
+                if (ROMM_TIMESTAMP_TAG.matches(suffix)) return true
+            }
+            return false
+        }
+
+        internal fun isTimestampSaveName(baseName: String): Boolean {
+            return TIMESTAMP_ONLY_PATTERN.matches(baseName)
+        }
+
+        private val STATE_SLOT_PATTERN = Regex("""^state_""", RegexOption.IGNORE_CASE)
+        private val STATE_FILE_PATTERN = Regex("""\.state\d*(\.zip)?$""", RegexOption.IGNORE_CASE)
+
+        internal fun isStateShapedSave(save: RomMSave): Boolean {
+            val slot = save.slot
+            if (slot != null && STATE_SLOT_PATTERN.containsMatchIn(slot)) return true
+            return STATE_FILE_PATTERN.containsMatchIn(save.fileName)
+        }
+    }
+}

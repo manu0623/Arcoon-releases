@@ -1,0 +1,1290 @@
+package com.nendo.argosy.ui.screens.settings
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.lifecycle.viewModelScope
+import com.nendo.argosy.data.local.entity.PlatformLibretroSettingsEntity
+import com.nendo.argosy.libretro.LibretroBuildbot
+import com.nendo.argosy.data.platform.PlatformWeightRegistry
+import com.nendo.argosy.libretro.ControllerTypeSelection
+import com.nendo.argosy.libretro.CorePortDeviceCatalog
+import com.nendo.argosy.libretro.LibretroCoreRegistry
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.ui.input.stepOption
+import com.nendo.argosy.libretro.shader.ShaderChainConfig
+import com.nendo.argosy.libretro.shader.ShaderChainManager
+import com.nendo.argosy.libretro.shader.ShaderPreviewRenderer
+import com.nendo.argosy.core.notification.NotificationText
+import com.nendo.argosy.core.notification.NotificationType
+import com.nendo.argosy.core.notification.showError
+import com.nendo.argosy.core.emulator.LibretroSettingDef
+import com.nendo.argosy.R
+import com.nendo.argosy.ui.screens.settings.sections.BuiltinEmulatorItem
+import com.nendo.argosy.util.AppPaths
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+internal fun routeSetBuiltinShader(vm: SettingsViewModel, value: String) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(shader = value)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinShader(value)
+    }
+}
+
+internal fun routeSetBuiltinFramesEnabled(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(framesEnabled = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinFramesEnabled(enabled)
+    }
+}
+
+internal val ARCHITECTURE_OPTIONS: List<String>
+    get() = buildList {
+        add("Universal")
+        if (LibretroBuildbot.processIs64Bit) add("ARMv8 (64-bit)")
+        else add("ARMv7 (32-bit)")
+    }
+
+private fun architectureDisplayToAbi(display: String): String? = when (display) {
+    "ARMv7 (32-bit)" -> "armeabi-v7a"
+    "ARMv8 (64-bit)" -> "arm64-v8a"
+    else -> null
+}
+
+internal fun architectureAbiToDisplay(abi: String?): String = when (abi) {
+    "armeabi-v7a" -> "ARMv7 (32-bit)"
+    "arm64-v8a" -> "ARMv8 (64-bit)"
+    else -> "Universal"
+}
+
+internal fun routeSetBuiltinArchitecture(vm: SettingsViewModel, value: String) {
+    vm._uiState.update {
+        it.copy(emulators = it.emulators.copy(architectureDisplay = value))
+    }
+    val override = architectureDisplayToAbi(value)
+    LibretroBuildbot.abiOverride = override
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setArchitectureOverride(override)
+        vm.coreManager.migrateAbiIfNeeded()
+    }
+}
+
+internal fun routeSetBuiltinLibretroEnabled(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { state ->
+        state.copy(
+            emulators = state.emulators.copy(builtinLibretroEnabled = enabled),
+            focusedIndex = BuiltinEmulatorItem.ENABLE.focusIndex
+        )
+    }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinLibretroEnabled(enabled)
+        if (!enabled) {
+            vm.configureEmulatorUseCase.clearBuiltinSelections()
+        }
+        vm.loadSettings()
+    }
+}
+
+internal fun routeSetIngameMenuTwoColumn(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(emulators = it.emulators.copy(ingameMenuTwoColumn = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setIngameMenuTwoColumn(enabled)
+    }
+}
+
+internal fun routeSetHudEnabled(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(emulators = it.emulators.copy(hudEnabled = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setHudEnabled(enabled) }
+}
+
+internal fun routeSetHudCorner(vm: SettingsViewModel, corner: String) {
+    vm._uiState.update { it.copy(emulators = it.emulators.copy(hudCorner = corner)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setHudCorner(corner) }
+}
+
+internal fun routeSetHudShowBattery(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(emulators = it.emulators.copy(hudShowBattery = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setHudShowBattery(enabled) }
+}
+
+internal fun routeSetHudShowClock(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(emulators = it.emulators.copy(hudShowClock = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setHudShowClock(enabled) }
+}
+
+internal fun routeSetHudShowPlaytime(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(emulators = it.emulators.copy(hudShowPlaytime = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setHudShowPlaytime(enabled) }
+}
+
+internal fun routeSetHudShowFps(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(emulators = it.emulators.copy(hudShowFps = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setHudShowFps(enabled) }
+}
+
+internal fun routeSetHudShowLastSave(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(emulators = it.emulators.copy(hudShowLastSave = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setHudShowLastSave(enabled) }
+}
+
+internal fun routeSetBuiltinFilter(vm: SettingsViewModel, value: String) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(filter = value)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinFilter(value)
+    }
+}
+
+internal fun routeSetBuiltinAspectRatio(vm: SettingsViewModel, value: String) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(aspectRatio = value)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinAspectRatio(value)
+    }
+}
+
+internal fun routeSetBuiltinPortraitPosition(vm: SettingsViewModel, value: String) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(portraitPosition = value)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinPortraitPosition(value)
+    }
+}
+
+internal fun routeSetBuiltinSkipDuplicateFrames(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update {
+        it.copy(builtinVideo = it.builtinVideo.copy(
+            skipDuplicateFrames = enabled,
+            blackFrameInsertion = if (enabled) false else it.builtinVideo.blackFrameInsertion
+        ))
+    }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinSkipDuplicateFrames(enabled)
+        if (enabled) vm.libretroSettingsRepo.setBuiltinBlackFrameInsertion(false)
+    }
+}
+
+internal fun routeSetBuiltinLowLatencyAudio(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update {
+        it.copy(builtinVideo = it.builtinVideo.copy(
+            lowLatencyAudio = enabled,
+            blackFrameInsertion = if (enabled) false else it.builtinVideo.blackFrameInsertion
+        ))
+    }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinLowLatencyAudio(enabled)
+        if (enabled) vm.libretroSettingsRepo.setBuiltinBlackFrameInsertion(false)
+    }
+}
+
+internal fun routeSetBuiltinVSync(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update {
+        it.copy(builtinVideo = it.builtinVideo.copy(vsync = enabled))
+    }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinForceSoftwareTiming(!enabled)
+    }
+}
+
+internal fun routeSetBuiltinFastForwardEnabled(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(fastForwardEnabled = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinFastForwardEnabled(enabled)
+    }
+}
+
+internal fun routeSetBuiltinRewindEnabled(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(rewindEnabled = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinRewindEnabled(enabled)
+    }
+}
+
+internal fun routeSetBuiltinAutoSaveState(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(autoSaveState = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinAutoSaveState(enabled)
+    }
+}
+
+internal fun routeSetBuiltinAutoRestoreState(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(autoRestoreState = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinAutoRestoreState(enabled)
+        vm.libretroSettingsRepo.setBuiltinAutoRestoreStateMode(if (enabled) "restore" else "off")
+    }
+}
+
+internal fun routeSetBuiltinPreferNewerServerSave(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(preferNewerServerSave = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinPreferNewerServerSave(enabled)
+    }
+}
+
+internal fun routeSetBuiltinHwCoreSaveStates(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(hwCoreSaveStatesEnabled = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinHwCoreSaveStates(enabled)
+    }
+}
+
+internal fun routeSetBuiltinDefaultToHardcore(vm: SettingsViewModel, mode: String) {
+    vm.raDelegate.setDefaultToHardcore(vm.viewModelScope, mode)
+}
+
+internal fun routeSetBuiltinSavePath(vm: SettingsViewModel, newPath: String) {
+    val oldPath = vm._uiState.value.builtinVideo.savePath
+    initiateBuiltinPathMigration(vm, BuiltinPathType.SAVE, oldPath, newPath)
+}
+
+internal fun routeResetBuiltinSavePath(vm: SettingsViewModel) {
+    val oldPath = vm._uiState.value.builtinVideo.savePath
+    val defaultPath = AppPaths.libretroSavesDir(vm.context.filesDir).absolutePath
+    if (oldPath == defaultPath) return
+    initiateBuiltinPathMigration(vm, BuiltinPathType.SAVE, oldPath, defaultPath)
+}
+
+internal fun routeSetBuiltinStatePath(vm: SettingsViewModel, newPath: String) {
+    val oldPath = vm._uiState.value.builtinVideo.statePath
+    initiateBuiltinPathMigration(vm, BuiltinPathType.STATE, oldPath, newPath)
+}
+
+internal fun routeResetBuiltinStatePath(vm: SettingsViewModel) {
+    val oldPath = vm._uiState.value.builtinVideo.statePath
+    val defaultPath = AppPaths.libretroStatesDir(vm.context.filesDir).absolutePath
+    if (oldPath == defaultPath) return
+    initiateBuiltinPathMigration(vm, BuiltinPathType.STATE, oldPath, defaultPath)
+}
+
+private fun initiateBuiltinPathMigration(
+    vm: SettingsViewModel,
+    pathType: BuiltinPathType,
+    oldPath: String,
+    newPath: String
+) {
+    val source = java.io.File(oldPath)
+    val destination = java.io.File(newPath)
+    val existingFiles = destination.walkTopDown().filter { it.isFile }.count()
+
+    if (source.exists() && existingFiles > 0) {
+        vm._uiState.update {
+            it.copy(
+                showBuiltinPathMigrationDialog = true,
+                pendingBuiltinPathMigration = BuiltinPathMigration(
+                    pathType = pathType,
+                    oldPath = oldPath,
+                    newPath = newPath,
+                    existingFileCount = existingFiles
+                )
+            )
+        }
+    } else {
+        commitBuiltinPathChange(vm, pathType, oldPath, newPath, migrate = source.exists())
+    }
+}
+
+internal fun routeConfirmBuiltinPathMigration(vm: SettingsViewModel) {
+    val pending = vm._uiState.value.pendingBuiltinPathMigration ?: return
+    vm._uiState.update { it.copy(showBuiltinPathMigrationDialog = false, pendingBuiltinPathMigration = null) }
+    commitBuiltinPathChange(vm, pending.pathType, pending.oldPath, pending.newPath, migrate = true)
+}
+
+internal fun routeSkipBuiltinPathMigration(vm: SettingsViewModel) {
+    val pending = vm._uiState.value.pendingBuiltinPathMigration ?: return
+    vm._uiState.update { it.copy(showBuiltinPathMigrationDialog = false, pendingBuiltinPathMigration = null) }
+    commitBuiltinPathChange(vm, pending.pathType, pending.oldPath, pending.newPath, migrate = false)
+}
+
+internal fun routeCancelBuiltinPathMigration(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(showBuiltinPathMigrationDialog = false, pendingBuiltinPathMigration = null) }
+}
+
+private fun commitBuiltinPathChange(
+    vm: SettingsViewModel,
+    pathType: BuiltinPathType,
+    oldPath: String,
+    newPath: String,
+    migrate: Boolean
+) {
+    vm.viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        if (migrate) {
+            migrateFiles(java.io.File(oldPath), java.io.File(newPath))
+        }
+        val isCustom = when (pathType) {
+            BuiltinPathType.SAVE -> {
+                val defaultPath = AppPaths.libretroSavesDir(vm.context.filesDir).absolutePath
+                val custom = newPath != defaultPath
+                if (custom) vm.libretroSettingsRepo.setBuiltinCustomSavePath(newPath)
+                else vm.libretroSettingsRepo.setBuiltinCustomSavePath(null)
+                custom
+            }
+            BuiltinPathType.STATE -> {
+                val defaultPath = AppPaths.libretroStatesDir(vm.context.filesDir).absolutePath
+                val custom = newPath != defaultPath
+                if (custom) vm.libretroSettingsRepo.setBuiltinCustomStatePath(newPath)
+                else vm.libretroSettingsRepo.setBuiltinCustomStatePath(null)
+                custom
+            }
+        }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            vm._uiState.update {
+                it.copy(builtinVideo = when (pathType) {
+                    BuiltinPathType.SAVE -> it.builtinVideo.copy(savePath = newPath, isCustomSavePath = isCustom)
+                    BuiltinPathType.STATE -> it.builtinVideo.copy(statePath = newPath, isCustomStatePath = isCustom)
+                })
+            }
+        }
+    }
+}
+
+internal fun routeSetPlatformBuiltinSavePath(vm: SettingsViewModel, platformId: Long, newPath: String) {
+    vm.viewModelScope.launch {
+        val current = vm.libretroSettingsRepo.getByPlatformId(platformId)
+            ?: PlatformLibretroSettingsEntity(platformId = platformId)
+        vm.libretroSettingsRepo.upsert(current.copy(savePath = newPath))
+    }
+}
+
+internal fun routeResetPlatformBuiltinSavePath(vm: SettingsViewModel, platformId: Long) {
+    vm.viewModelScope.launch {
+        val current = vm.libretroSettingsRepo.getByPlatformId(platformId) ?: return@launch
+        val updated = current.copy(savePath = null)
+        if (updated.hasAnyOverrides()) {
+            vm.libretroSettingsRepo.upsert(updated)
+        } else {
+            vm.libretroSettingsRepo.deleteByPlatformId(platformId)
+        }
+    }
+}
+
+internal fun routeSetPlatformBuiltinStatePath(vm: SettingsViewModel, platformId: Long, newPath: String) {
+    vm.viewModelScope.launch {
+        val current = vm.libretroSettingsRepo.getByPlatformId(platformId)
+            ?: PlatformLibretroSettingsEntity(platformId = platformId)
+        vm.libretroSettingsRepo.upsert(current.copy(statePath = newPath))
+    }
+}
+
+internal fun routeResetPlatformBuiltinStatePath(vm: SettingsViewModel, platformId: Long) {
+    vm.viewModelScope.launch {
+        val current = vm.libretroSettingsRepo.getByPlatformId(platformId) ?: return@launch
+        val updated = current.copy(statePath = null)
+        if (updated.hasAnyOverrides()) {
+            vm.libretroSettingsRepo.upsert(updated)
+        } else {
+            vm.libretroSettingsRepo.deleteByPlatformId(platformId)
+        }
+    }
+}
+
+private fun migrateFiles(source: java.io.File, destination: java.io.File) {
+    if (!source.exists() || source.absolutePath == destination.absolutePath) return
+    destination.mkdirs()
+    val files = source.listFiles() ?: return
+    for (file in files) {
+        val target = java.io.File(destination, file.name)
+        try {
+            if (file.isDirectory) {
+                migrateFiles(file, target)
+            } else {
+                if (!file.renameTo(target)) {
+                    file.copyTo(target, overwrite = true)
+                    file.delete()
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BuiltinPathMigration", "Failed to migrate ${file.name}: ${e.message}")
+        }
+    }
+    if (source.listFiles()?.isEmpty() == true) source.delete()
+}
+
+internal fun routeSetBuiltinRumbleEnabled(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(rumbleEnabled = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinRumbleEnabled(enabled)
+    }
+}
+
+internal fun routeSetBuiltinMotionEnabled(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(motionEnabled = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinMotionEnabled(enabled)
+    }
+}
+
+internal fun routeSetBuiltinLimitHotkeysToPlayer1(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(limitHotkeysToPlayer1 = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinLimitHotkeysToPlayer1(enabled)
+    }
+}
+
+internal fun routeSetSpeedrunStartOnReset(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(speedrunStartOnReset = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setSpeedrunStartOnReset(enabled)
+    }
+}
+
+internal fun routeSetSpeedrunPanelSide(vm: SettingsViewModel, side: String) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(speedrunPanelSide = side)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setSpeedrunPanelSide(side)
+    }
+}
+
+internal fun routeAdjustSpeedrunPanelWidth(vm: SettingsViewModel, delta: Int) {
+    val current = vm._uiState.value.builtinControls.speedrunPanelWidthPercent
+    val next = 20 + (current - 20 + delta).mod(25)
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(speedrunPanelWidthPercent = next)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setSpeedrunPanelWidthPercent(next)
+    }
+}
+
+internal fun routeSetBuiltinFastForwardMode(vm: SettingsViewModel, mode: com.nendo.argosy.data.local.entity.FastForwardMode) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(fastForwardMode = mode)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinFastForwardMode(mode)
+    }
+}
+
+internal fun routeSetBuiltinSelectAsBack(vm: SettingsViewModel, mode: com.nendo.argosy.data.local.entity.SelectAsBackMode) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(selectAsBack = mode)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinSelectAsBack(mode)
+    }
+}
+
+internal fun routeSetBuiltinFastForwardPreservePitch(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(fastForwardPreservePitch = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinFastForwardPreservePitch(enabled)
+    }
+}
+
+internal fun routeSetBuiltinAnalogAsDpad(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(analogAsDpad = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinAnalogAsDpad(enabled)
+    }
+}
+
+internal fun routeSetBuiltinDpadAsAnalog(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(dpadAsAnalog = enabled)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinDpadAsAnalog(enabled)
+    }
+}
+
+internal fun routeShowControllerOrderModal(vm: SettingsViewModel) {
+    vm.controllerSeats.open()
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(showControllerOrderModal = true)) }
+}
+
+internal fun routeHideControllerOrderModal(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(showControllerOrderModal = false)) }
+}
+
+internal fun routeObserveControllerOrder(vm: SettingsViewModel) {
+    vm.viewModelScope.launch {
+        vm.inputConfigRepository.observeControllerOrder().collect { order ->
+            vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(controllerOrderCount = order.size)) }
+        }
+    }
+}
+
+internal fun routeShowInputMappingModal(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(showInputMappingModal = true)) }
+}
+
+internal fun routeHideInputMappingModal(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(showInputMappingModal = false)) }
+}
+
+internal fun routeSetTouchEnabled(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchEnabled = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsShowWhenNoGamepad(enabled) }
+}
+
+internal fun routeSetTouchOpacityLandscape(vm: SettingsViewModel, value: Float) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchOpacityLandscape = value)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsOpacityLandscape(value) }
+}
+
+internal fun routeSetTouchOpacityPortrait(vm: SettingsViewModel, value: Float) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchOpacityPortrait = value)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsOpacityPortrait(value) }
+}
+
+internal fun routeSetTouchSizeScale(vm: SettingsViewModel, value: Float) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchSizeScale = value)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsSizeScale(value) }
+}
+
+internal fun routeSetTouchHaptic(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchHaptic = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsHaptic(enabled) }
+}
+
+internal fun routeSetTouchFadeOnIdle(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchFadeOnIdle = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsFadeOnIdle(enabled) }
+}
+
+internal fun routeSetTouchSwapHanded(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchSwapHanded = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsSwapHanded(enabled) }
+}
+
+internal fun routeSetTouchLockOrientation(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchLockOrientation = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsLockOrientation(enabled) }
+}
+
+internal fun routeSetTouchMirror180(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchMirror180 = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsMirror180(enabled) }
+}
+
+internal fun routeSetTouchColouredFaceButtons(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchColouredFaceButtons = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsColouredFaceButtons(enabled) }
+}
+
+internal fun routeSetTouchGenesis6Button(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(touchGenesis6Button = enabled)) }
+    vm.viewModelScope.launch { vm.libretroSettingsRepo.setTouchControlsGenesis6Button(enabled) }
+}
+
+internal fun routeShowTouchLayoutEditor(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(showTouchLayoutEditorModal = true)) }
+}
+
+internal fun routeHideTouchLayoutEditor(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(showTouchLayoutEditorModal = false)) }
+}
+
+internal fun routeShowHotkeysModal(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(showHotkeysModal = true)) }
+}
+
+internal fun routeHideHotkeysModal(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(showHotkeysModal = false)) }
+}
+
+internal fun routeSetBuiltinBlackFrameInsertion(vm: SettingsViewModel, enabled: Boolean) {
+    vm._uiState.update {
+        it.copy(builtinVideo = it.builtinVideo.copy(
+            blackFrameInsertion = enabled,
+            skipDuplicateFrames = if (enabled) false else it.builtinVideo.skipDuplicateFrames,
+            lowLatencyAudio = if (enabled) false else it.builtinVideo.lowLatencyAudio
+        ))
+    }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinBlackFrameInsertion(enabled)
+        if (enabled) {
+            vm.libretroSettingsRepo.setBuiltinSkipDuplicateFrames(false)
+            vm.libretroSettingsRepo.setBuiltinLowLatencyAudio(false)
+        }
+    }
+}
+
+internal fun routeCycleBuiltinShader(vm: SettingsViewModel, direction: Int) {
+    val options = listOf("None", "Sharp", "CUT", "CUT2", "CUT3", "CRT", "LCD", "Custom")
+    val current = vm._uiState.value.builtinVideo.shader
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    vm.setBuiltinShader(options[nextIndex])
+}
+
+internal fun routeCycleBuiltinFilter(vm: SettingsViewModel, direction: Int) {
+    val options = listOf("Auto", "Nearest", "Bilinear")
+    val current = vm._uiState.value.builtinVideo.filter
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    vm.setBuiltinFilter(options[nextIndex])
+}
+
+internal fun routeCycleBuiltinAspectRatio(vm: SettingsViewModel, direction: Int) {
+    val options = listOf("Core Provided", "4:3", "3:2", "16:9", "Integer", "Stretch")
+    val current = vm._uiState.value.builtinVideo.aspectRatio
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    vm.setBuiltinAspectRatio(options[nextIndex])
+}
+
+internal fun routeCycleBuiltinPortraitPosition(vm: SettingsViewModel, direction: Int) {
+    val options = listOf("Auto", "Top", "Center", "Bottom")
+    val current = vm._uiState.value.builtinVideo.portraitPosition
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    vm.setBuiltinPortraitPosition(options[nextIndex])
+}
+
+internal fun routeCycleBuiltinFastForwardSpeed(vm: SettingsViewModel, direction: Int) {
+    val options = listOf(2, 4, 8)
+    val currentDisplay = vm._uiState.value.builtinVideo.fastForwardSpeed
+    val current = currentDisplay.removeSuffix("x").toIntOrNull() ?: 4
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    routeSetBuiltinFastForwardSpeed(vm, options[nextIndex])
+}
+
+internal fun routeCycleBuiltinRotation(vm: SettingsViewModel, direction: Int) {
+    val options = listOf(-1, 0, 90, 180, 270)
+    val currentDisplay = vm._uiState.value.builtinVideo.rotation
+    val current = when (currentDisplay) {
+        "Auto" -> -1
+        "0\u00B0" -> 0
+        "90\u00B0" -> 90
+        "180\u00B0" -> 180
+        "270\u00B0" -> 270
+        else -> -1
+    }
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    routeSetBuiltinRotation(vm, options[nextIndex])
+}
+
+internal fun routeCycleBuiltinOverscanCrop(vm: SettingsViewModel, direction: Int) {
+    val options = listOf(0, 4, 8, 12, 16)
+    val currentDisplay = vm._uiState.value.builtinVideo.overscanCrop
+    val current = when (currentDisplay) {
+        "Off" -> 0
+        else -> currentDisplay.removeSuffix("px").toIntOrNull() ?: 0
+    }
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    routeSetBuiltinOverscanCrop(vm, options[nextIndex])
+}
+
+private fun routeSetBuiltinFastForwardSpeed(vm: SettingsViewModel, speed: Int) {
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(fastForwardSpeed = "${speed}x")) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinFastForwardSpeed(speed)
+    }
+}
+
+internal fun routeCycleBuiltinAudioVolume(vm: SettingsViewModel, direction: Int) {
+    val options = listOf(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200)
+    val currentDisplay = vm._uiState.value.builtinVideo.audioVolume
+    val current = currentDisplay.removeSuffix("%").toIntOrNull() ?: 100
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    val next = options[nextIndex]
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(audioVolume = "${next}%")) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinAudioVolume(next)
+    }
+}
+
+internal fun routeCycleBuiltinRewindSpeed(vm: SettingsViewModel, direction: Int) {
+    val options = listOf(1, 2, 4)
+    val currentDisplay = vm._uiState.value.builtinVideo.rewindSpeed
+    val current = currentDisplay.removeSuffix("x").toIntOrNull() ?: 1
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    val next = options[nextIndex]
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(rewindSpeed = "${next}x")) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinRewindSpeed(next)
+    }
+}
+
+internal fun routeCycleBuiltinRewindBufferDuration(vm: SettingsViewModel, direction: Int) {
+    val options = listOf(5, 15, 30, 60)
+    val currentDisplay = vm._uiState.value.builtinVideo.rewindBufferDuration
+    val current = currentDisplay.removeSuffix("s").toIntOrNull() ?: 15
+    val currentIndex = options.indexOf(current).coerceAtLeast(0)
+    val nextIndex = (currentIndex + direction + options.size) % options.size
+    val next = options[nextIndex]
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(rewindBufferDuration = "${next}s")) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinRewindBufferDuration(next)
+    }
+}
+
+private fun routeSetBuiltinRotation(vm: SettingsViewModel, rotation: Int) {
+    val display = when (rotation) {
+        -1 -> "Auto"
+        0 -> "0\u00B0"
+        90 -> "90\u00B0"
+        180 -> "180\u00B0"
+        270 -> "270\u00B0"
+        else -> "Auto"
+    }
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(rotation = display)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinRotation(rotation)
+    }
+}
+
+private fun routeSetBuiltinOverscanCrop(vm: SettingsViewModel, crop: Int) {
+    val display = if (crop == 0) "Off" else "${crop}px"
+    vm._uiState.update { it.copy(builtinVideo = it.builtinVideo.copy(overscanCrop = display)) }
+    vm.viewModelScope.launch {
+        vm.libretroSettingsRepo.setBuiltinOverscanCrop(crop)
+    }
+}
+
+internal fun routeUpdatePlatformLibretroSetting(vm: SettingsViewModel, setting: LibretroSettingDef, value: String?) {
+    val platformContext = vm._uiState.value.builtinVideo.currentPlatformContext ?: return
+    vm.viewModelScope.launch {
+        val current = vm.libretroSettingsRepo.getByPlatformId(platformContext.platformId)
+            ?: PlatformLibretroSettingsEntity(platformId = platformContext.platformId)
+
+        val updated = when (setting) {
+            LibretroSettingDef.Shader -> current.copy(
+                shader = value,
+                shaderChain = if (value == null) null else current.shaderChain
+            )
+            LibretroSettingDef.Filter -> current.copy(filter = value)
+            LibretroSettingDef.AspectRatio -> current.copy(aspectRatio = value)
+            LibretroSettingDef.PortraitPosition -> current.copy(portraitPosition = value)
+            LibretroSettingDef.Rotation -> current.copy(rotation = routeParseRotationValue(value))
+            LibretroSettingDef.OverscanCrop -> current.copy(overscanCrop = routeParseOverscanValue(value))
+            LibretroSettingDef.Frame -> {
+                if (value != null && value != "none" && !vm._uiState.value.builtinVideo.framesEnabled) {
+                    vm.setBuiltinFramesEnabled(true)
+                }
+                current.copy(frame = value)
+            }
+            LibretroSettingDef.BlackFrameInsertion -> current.copy(blackFrameInsertion = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.FastForwardEnabled -> current.copy(fastForwardEnabled = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.FastForwardSpeed -> current.copy(fastForwardSpeed = routeParseFastForwardValue(value))
+            LibretroSettingDef.RewindEnabled -> current.copy(rewindEnabled = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.SkipDuplicateFrames -> current.copy(skipDuplicateFrames = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.LowLatencyAudio -> current.copy(lowLatencyAudio = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.AudioVolume -> current.copy(audioVolume = value?.removeSuffix("%")?.toIntOrNull())
+            LibretroSettingDef.VSync -> current.copy(vsync = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.RewindSpeed -> current.copy(rewindSpeed = value?.removeSuffix("x")?.toIntOrNull())
+            LibretroSettingDef.RewindBufferDuration -> current.copy(rewindBufferDuration = value?.removeSuffix("s")?.toIntOrNull())
+            LibretroSettingDef.AutoSaveState -> current.copy(autoSaveState = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.AutoRestoreState -> current.copy(autoRestoreState = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.PreferNewerServerSave -> current.copy(preferNewerServerSave = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.HwCoreSaveStates -> current.copy(hwCoreSaveStates = value?.toBooleanStrictOrNull())
+        }
+
+        if (updated.hasAnyOverrides()) {
+            vm.libretroSettingsRepo.upsert(updated)
+        } else {
+            vm.libretroSettingsRepo.deleteByPlatformId(platformContext.platformId)
+        }
+    }
+}
+
+internal fun routeResetAllPlatformLibretroSettings(vm: SettingsViewModel) {
+    val platformContext = vm._uiState.value.builtinVideo.currentPlatformContext ?: return
+    vm.viewModelScope.launch {
+        val current = vm.libretroSettingsRepo.getByPlatformId(platformContext.platformId) ?: return@launch
+        val updated = current.copy(
+            shader = null, shaderChain = null, filter = null, aspectRatio = null, portraitPosition = null, rotation = null,
+            overscanCrop = null, frame = null, blackFrameInsertion = null, fastForwardEnabled = null, fastForwardSpeed = null,
+            rewindEnabled = null, rewindSpeed = null, rewindBufferDuration = null,
+            skipDuplicateFrames = null, lowLatencyAudio = null, audioVolume = null, vsync = null,
+            graphicsApi = null, gpuDriver = null
+        )
+        if (updated.hasAnyOverrides()) {
+            vm.libretroSettingsRepo.upsert(updated)
+        } else {
+            vm.libretroSettingsRepo.deleteByPlatformId(platformContext.platformId)
+        }
+        routeRefreshBuiltinGraphics(vm)
+    }
+}
+
+internal fun routeUpdatePlatformControlSetting(vm: SettingsViewModel, field: String, value: Boolean?) {
+    val platformContext = vm._uiState.value.builtinVideo.currentPlatformContext ?: return
+    vm.viewModelScope.launch {
+        val current = vm.libretroSettingsRepo.getByPlatformId(platformContext.platformId)
+            ?: PlatformLibretroSettingsEntity(platformId = platformContext.platformId)
+        val updated = when (field) {
+            "analogAsDpad" -> current.copy(analogAsDpad = value)
+            "dpadAsAnalog" -> current.copy(dpadAsAnalog = value)
+            "rumbleEnabled" -> current.copy(rumbleEnabled = value)
+            "motionEnabled" -> current.copy(motionEnabled = value)
+            else -> return@launch
+        }
+        if (updated.hasAnyOverrides()) {
+            vm.libretroSettingsRepo.upsert(updated)
+        } else {
+            vm.libretroSettingsRepo.deleteByPlatformId(platformContext.platformId)
+        }
+    }
+}
+
+internal fun routeResetAllPlatformControlSettings(vm: SettingsViewModel) {
+    val platformContext = vm._uiState.value.builtinVideo.currentPlatformContext ?: return
+    vm.viewModelScope.launch {
+        val current = vm.libretroSettingsRepo.getByPlatformId(platformContext.platformId) ?: return@launch
+        val updated = current.copy(
+            analogAsDpad = null,
+            dpadAsAnalog = null,
+            rumbleEnabled = null,
+            motionEnabled = null
+        )
+        if (updated.hasAnyOverrides()) {
+            vm.libretroSettingsRepo.upsert(updated)
+        } else {
+            vm.libretroSettingsRepo.deleteByPlatformId(platformContext.platformId)
+        }
+    }
+}
+
+private fun routeParseRotationValue(value: String?): Int? {
+    if (value == null) return null
+    return when (value) {
+        "Auto" -> -1
+        "0\u00B0" -> 0
+        "90\u00B0" -> 90
+        "180\u00B0" -> 180
+        "270\u00B0" -> 270
+        else -> value.removeSuffix("\u00B0").toIntOrNull() ?: -1
+    }
+}
+
+private fun routeParseOverscanValue(value: String?): Int? {
+    if (value == null) return null
+    return when (value) {
+        "Off" -> 0
+        else -> value.removeSuffix("px").toIntOrNull() ?: 0
+    }
+}
+
+private fun routeParseFastForwardValue(value: String?): Int? {
+    if (value == null) return null
+    return value.removeSuffix("x").toIntOrNull()
+}
+
+internal fun routeDownloadCoreWithNotification(vm: SettingsViewModel, coreId: String) {
+    if (vm._uiState.value.coreOptions.isDownloading) return
+    vm.viewModelScope.launch {
+        val coreInfo = LibretroCoreRegistry.getCoreById(coreId) ?: return@launch
+        vm._uiState.update {
+            it.copy(
+                coreManagement = it.coreManagement.copy(isDownloading = true, downloadingCoreId = coreId),
+                coreOptions = it.coreOptions.copy(isDownloading = true, downloadingCoreId = coreId)
+            )
+        }
+
+        val notificationKey = "core_download_$coreId"
+        vm.notificationManager.showPersistent(
+            title = NotificationText.Res(
+                R.string.settings_shell_router_core_downloading_title, listOf(coreInfo.displayName)
+            ),
+            subtitle = NotificationText.Res(R.string.settings_shell_router_core_downloading_subtitle),
+            key = notificationKey
+        )
+
+        val result = vm.coreManager.downloadCoreById(coreId)
+
+        result.fold(
+            onSuccess = {
+                vm.notificationManager.completePersistent(
+                    key = notificationKey,
+                    title = NotificationText.Res(
+                        R.string.settings_shell_router_core_downloaded_title, listOf(coreInfo.displayName)
+                    ),
+                    subtitle = NotificationText.Res(R.string.settings_shell_router_core_downloaded_subtitle),
+                    type = NotificationType.SUCCESS
+                )
+                vm.emulatorDelegate.updateCoreCounts()
+                vm.loadCoreManagementState(preserveFocus = true)
+                refreshCoreOptionsInstallState(vm)
+            },
+            onFailure = { error ->
+                vm.notificationManager.completePersistent(
+                    key = notificationKey,
+                    title = NotificationText.Res(R.string.settings_shell_router_core_download_failed_title),
+                    subtitle = error.message?.let { NotificationText.Raw(it) }
+                        ?: NotificationText.Res(R.string.settings_shell_router_core_download_failed_fallback),
+                    type = NotificationType.ERROR
+                )
+            }
+        )
+
+        vm._uiState.update {
+            it.copy(
+                coreManagement = it.coreManagement.copy(isDownloading = false, downloadingCoreId = null),
+                coreOptions = it.coreOptions.copy(isDownloading = false, downloadingCoreId = null)
+            )
+        }
+    }
+}
+
+internal fun routeOpenShaderChainConfig(vm: SettingsViewModel) {
+    vm.loadPreviewGames()
+    vm.navigateToSection(SettingsSection.SHADER_STACK)
+}
+
+internal fun routeOpenFrameConfig(vm: SettingsViewModel) {
+    vm.navigateToSection(SettingsSection.FRAME_PICKER)
+}
+
+internal fun routeDownloadAndSelectFrame(vm: SettingsViewModel, frameId: String) {
+    if (vm._uiState.value.frameDownloadingId != null) return
+    val frame = vm.frameRegistry.findById(frameId) ?: return
+    vm._uiState.update { it.copy(frameDownloadingId = frameId) }
+    vm.viewModelScope.launch {
+        val success = com.nendo.argosy.libretro.frame.FrameDownloader(vm.frameRegistry)
+            .downloadFrame(frame)
+            .onFailure {
+                android.util.Log.e("SettingsViewModel", "Failed to download frame: ${frame.id}", it)
+            }
+            .isSuccess
+        if (success) {
+            vm.frameRegistry.invalidateInstalledCache()
+            if (!vm._uiState.value.builtinVideo.framesEnabled) {
+                vm.setBuiltinFramesEnabled(true)
+            }
+            vm.updatePlatformLibretroSetting(LibretroSettingDef.Frame, frame.id)
+        }
+        vm._uiState.update {
+            it.copy(
+                frameDownloadingId = null,
+                frameInstalledRefresh = if (success) it.frameInstalledRefresh + 1 else it.frameInstalledRefresh
+            )
+        }
+    }
+}
+
+internal fun routeImportCustomFrame(vm: SettingsViewModel, path: String) {
+    vm.viewModelScope.launch {
+        val imported = withContext(Dispatchers.IO) { vm.frameRegistry.importCustomFrame(path) }
+        imported
+            .onFailure {
+                android.util.Log.e("SettingsViewModel", "Failed to import frame: $path", it)
+                vm.notificationManager.showError(
+                    NotificationText.Res(R.string.settings_shell_router_frame_import_failed)
+                )
+            }
+            .onSuccess { frame ->
+                if (!vm._uiState.value.builtinVideo.framesEnabled) {
+                    vm.setBuiltinFramesEnabled(true)
+                }
+                vm.updatePlatformLibretroSetting(LibretroSettingDef.Frame, frame.id)
+            }
+        vm._uiState.update { it.copy(frameInstalledRefresh = it.frameInstalledRefresh + 1) }
+    }
+}
+
+internal fun routeRequestCustomFrameRemoval(vm: SettingsViewModel, frameId: String) {
+    val frame = vm.frameRegistry.findById(frameId) ?: return
+    if (frame.source != com.nendo.argosy.libretro.frame.FrameRegistry.Source.CUSTOM) return
+    vm._uiState.update { it.copy(pendingCustomFrameRemovalId = frame.id) }
+}
+
+internal fun routeCancelCustomFrameRemoval(vm: SettingsViewModel) {
+    vm._uiState.update { it.copy(pendingCustomFrameRemovalId = null) }
+}
+
+internal fun routeConfirmCustomFrameRemoval(vm: SettingsViewModel) {
+    val id = vm._uiState.value.pendingCustomFrameRemovalId ?: return
+    vm.viewModelScope.launch {
+        val removed = withContext(Dispatchers.IO) { vm.frameRegistry.deleteCustomFrame(id) }
+        if (removed) {
+            vm.libretroSettingsRepo.observeAll().first()
+                .filter { it.frame == id }
+                .forEach { vm.libretroSettingsRepo.upsert(it.copy(frame = null)) }
+        }
+        val maxIndex = com.nendo.argosy.ui.screens.settings.sections
+            .framePickerMaxFocusIndex(vm.frameRegistry)
+        vm._uiState.update {
+            it.copy(
+                pendingCustomFrameRemovalId = null,
+                focusedIndex = it.focusedIndex.coerceAtMost(maxIndex),
+                frameInstalledRefresh = if (removed) {
+                    it.frameInstalledRefresh + 1
+                } else {
+                    it.frameInstalledRefresh
+                }
+            )
+        }
+    }
+}
+
+internal fun routePersistShaderChain(vm: SettingsViewModel, config: ShaderChainConfig) {
+    val json = config.toJson()
+    val shaderMode = if (config.entries.isNotEmpty()) "Custom" else "None"
+    val settingsScope = routeResolveShaderChainSettingsScope(vm._uiState.value)
+    val platformId = settingsScope.platformId
+
+    if (platformId == null) {
+        vm._uiState.update {
+            it.copy(
+                builtinVideo = it.builtinVideo.copy(
+                    shader = shaderMode,
+                    shaderChainJson = json
+                )
+            )
+        }
+        routeScheduleShaderChainWrite(vm) {
+            vm.libretroSettingsRepo.setBuiltinShader(shaderMode)
+            vm.libretroSettingsRepo.setBuiltinShaderChain(json)
+        }
+    } else {
+        vm._uiState.update { state ->
+            val current = state.platformLibretro.platformSettings[platformId]
+                ?: PlatformLibretroSettingsEntity(platformId = platformId)
+            state.copy(
+                platformLibretro = state.platformLibretro.copy(
+                    platformSettings = state.platformLibretro.platformSettings +
+                        (platformId to current.copy(shader = shaderMode, shaderChain = json))
+                )
+            )
+        }
+        routeScheduleShaderChainWrite(vm) {
+            vm.libretroSettingsRepo.setPlatformShaderChain(platformId, shaderMode, json)
+        }
+    }
+}
+
+private const val SHADER_CHAIN_PERSIST_DEBOUNCE_MS = 150L
+
+private fun routeScheduleShaderChainWrite(vm: SettingsViewModel, write: suspend () -> Unit) {
+    vm.shaderChainPersistJob?.cancel()
+    vm.shaderChainPersistJob = vm.viewModelScope.launch {
+        delay(SHADER_CHAIN_PERSIST_DEBOUNCE_MS)
+        write()
+        vm.shaderChainPersistJob = null
+    }
+}
+
+internal fun routeFlushShaderChain(vm: SettingsViewModel) {
+    val pending = vm.shaderChainPersistJob ?: return
+    if (!pending.isActive) return
+    pending.cancel()
+    vm.shaderChainPersistJob = null
+
+    val state = vm._uiState.value
+    val platformId = routeResolveShaderChainSettingsScope(state).platformId
+    vm.viewModelScope.launch {
+        if (platformId == null) {
+            vm.libretroSettingsRepo.setBuiltinShader(state.builtinVideo.shader)
+            vm.libretroSettingsRepo.setBuiltinShaderChain(state.builtinVideo.shaderChainJson)
+        } else {
+            val current = state.platformLibretro.platformSettings[platformId] ?: return@launch
+            vm.libretroSettingsRepo.setPlatformShaderChain(
+                platformId,
+                current.shader ?: "None",
+                current.shaderChain ?: ShaderChainConfig().toJson()
+            )
+        }
+    }
+}
+
+internal data class ShaderChainSettingsScope(
+    val platformId: Long?,
+    val chainJson: String
+)
+
+internal fun routeResolveShaderChainSettingsScope(state: SettingsUiState): ShaderChainSettingsScope {
+    val platformId = state.builtinVideo.currentPlatformContext?.platformId
+    val platformChain = platformId?.let { state.platformLibretro.platformSettings[it]?.shaderChain }
+    return ShaderChainSettingsScope(
+        platformId = platformId,
+        chainJson = platformChain ?: state.builtinVideo.shaderChainJson
+    )
+}
+
+internal suspend fun routeResolvePreviewBitmap(vm: SettingsViewModel): Bitmap? {
+    val game = vm._uiState.value.previewGame ?: return null
+    val imagePath = routeResolvePreviewImage(vm, game) ?: return null
+    return BitmapFactory.decodeFile(imagePath)
+}
+
+private suspend fun routeResolvePreviewImage(
+    vm: SettingsViewModel,
+    game: SettingsPreviewGame
+): String? {
+    val cached = vm.displayDelegate.getFirstCachedScreenshot(game.id)
+    if (cached != null) return cached
+
+    val remoteUrls = vm.displayDelegate.getScreenshotUrls(game.id)
+    if (remoteUrls.isNotEmpty()) {
+        val targetIndex = if (remoteUrls.size > 1) 1 else 0
+        val path = vm.imageCacheManager.cacheSingleScreenshot(
+            game.id, remoteUrls[targetIndex], targetIndex
+        )
+        if (path != null) return path
+    }
+
+    return game.coverPath
+}
+
+internal fun routeLoadPreviewGames(vm: SettingsViewModel) {
+    vm.viewModelScope.launch {
+        val supportedPlatforms = LibretroCoreRegistry.getSupportedPlatforms()
+        val games = vm.displayDelegate.loadPreviewGames(supportedPlatforms)
+        vm._uiState.update {
+            it.copy(
+                previewGames = games,
+                previewGameIndex = 0,
+                previewGame = games.firstOrNull() ?: it.previewGame
+            )
+        }
+        if (games.isNotEmpty()) {
+            vm.extractGradientForPreview()
+            if (vm._uiState.value.currentSection == SettingsSection.SHADER_STACK) {
+                vm.shaderChainManager.renderPreview()
+            }
+        }
+    }
+}
+
+internal fun routeCyclePrevPreviewGame(vm: SettingsViewModel) {
+    val games = vm._uiState.value.previewGames
+    if (games.isEmpty()) return
+    val currentIndex = vm._uiState.value.previewGameIndex
+    val prevIndex = if (currentIndex <= 0) games.lastIndex else currentIndex - 1
+    vm._uiState.update {
+        it.copy(
+            previewGameIndex = prevIndex,
+            previewGame = games[prevIndex]
+        )
+    }
+    vm.extractGradientForPreview()
+}
+
+internal fun routeCycleNextPreviewGame(vm: SettingsViewModel) {
+    val games = vm._uiState.value.previewGames
+    if (games.isEmpty()) return
+    val currentIndex = vm._uiState.value.previewGameIndex
+    val nextIndex = if (currentIndex >= games.lastIndex) 0 else currentIndex + 1
+    vm._uiState.update {
+        it.copy(
+            previewGameIndex = nextIndex,
+            previewGame = games[nextIndex]
+        )
+    }
+    vm.extractGradientForPreview()
+}
+
+internal fun routeExtractGradientForPreview(vm: SettingsViewModel) {
+    vm.viewModelScope.launch(Dispatchers.IO) {
+        val coverPath = vm._uiState.value.previewGame?.coverPath ?: return@launch
+        val config = vm._uiState.value.gradientConfig
+        val bitmap = BitmapFactory.decodeFile(coverPath) ?: return@launch
+        val result = vm.gradientColorExtractor.extractWithMetrics(bitmap, config)
+        bitmap.recycle()
+        withContext(Dispatchers.Main) {
+            vm._uiState.update { it.copy(gradientExtractionResult = result) }
+        }
+    }
+}
+
+internal fun routeCyclePlatformContext(vm: SettingsViewModel, direction: Int) {
+    val state = vm._uiState.value.builtinVideo
+    val maxIndex = state.availablePlatforms.size
+    val newIndex = (state.platformContextIndex + direction).mod(maxIndex + 1)
+    val isGlobal = newIndex == 0
+    val platform = if (!isGlobal) state.availablePlatforms[newIndex - 1] else null
+    val platformSlug = platform?.platformSlug
+    vm._uiState.update {
+        val hasControlOverrides = platform?.let {
+            it2 -> it.platformLibretro.platformSettings[it2.platformId]?.hasAnyControlOverrides()
+        } == true
+        it.copy(
+            builtinVideo = it.builtinVideo.copy(platformContextIndex = newIndex),
+            builtinControls = it.builtinControls.copy(
+                showStickMappings = !isGlobal,
+                showDpadAsAnalog = !isGlobal && platformSlug != null && PlatformWeightRegistry.hasAnalogStick(platformSlug),
+                showRumble = isGlobal || (platformSlug != null && PlatformWeightRegistry.hasRumble(platformSlug)),
+                showMotion = isGlobal || (platformSlug != null && PlatformWeightRegistry.hasMotion(platformSlug)),
+                showResetAll = !isGlobal && hasControlOverrides
+            ),
+            focusedIndex = 0
+        )
+    }
+    routeLoadControllerPorts(vm)
+    routeRefreshBuiltinGraphics(vm)
+}
+
+internal fun routeLoadControllerPorts(vm: SettingsViewModel) {
+    val platform = vm._uiState.value.builtinVideo.currentPlatformContext
+    val clearPorts = {
+        vm._uiState.update { it.copy(builtinControls = it.builtinControls.copy(controllerPorts = emptyList())) }
+    }
+    if (platform == null) {
+        clearPorts()
+        return
+    }
+    vm.viewModelScope.launch {
+        val coreId = vm.builtinCoreResolver.resolveCoreId(null, platform.platformId, platform.platformSlug)
+        val portDevices = coreId?.let { CorePortDeviceCatalog.portDevices(it, platform.platformSlug) }.orEmpty()
+        if (coreId == null || portDevices.none { it.size > 1 }) {
+            clearPorts()
+            return@launch
+        }
+        val stored = ControllerTypeSelection.decode(
+            vm.configureEmulatorUseCase.getControllerTypesForPlatform(platform.platformId),
+            coreId,
+            ControllerTypeSelection.legacyApplies(platform.platformSlug)
+        )
+        val ports = portDevices.mapIndexedNotNull { port, devices ->
+            if (devices.size < 2) return@mapIndexedNotNull null
+            val deviceIds = devices.map { it.id }
+            ControllerPortChoiceUi(
+                port = port,
+                deviceIds = deviceIds,
+                deviceNames = devices.map { it.name },
+                selectedIndex = CorePortDeviceCatalog.selectedDeviceIndex(deviceIds, stored[port]),
+                autoIndex = CorePortDeviceCatalog.autoDeviceIndex(deviceIds) ?: 0
+            )
+        }
+        vm._uiState.update { state ->
+            if (state.builtinVideo.currentPlatformContext?.platformId != platform.platformId) return@update state
+            state.copy(builtinControls = state.builtinControls.copy(controllerPorts = ports))
+        }
+    }
+}
+
+internal fun routeSelectControllerType(vm: SettingsViewModel, port: Int, index: Int) {
+    val platform = vm._uiState.value.builtinVideo.currentPlatformContext ?: return
+    val choice = vm._uiState.value.builtinControls.controllerPorts.firstOrNull { it.port == port } ?: return
+    val deviceId = choice.deviceIds.getOrNull(index) ?: return
+    vm._uiState.update { state ->
+        state.copy(
+            builtinControls = state.builtinControls.copy(
+                controllerPorts = state.builtinControls.controllerPorts.map {
+                    if (it.port == port) it.copy(selectedIndex = index) else it
+                }
+            )
+        )
+    }
+    vm.viewModelScope.launch {
+        val coreId = vm.builtinCoreResolver.resolveCoreId(null, platform.platformId, platform.platformSlug)
+            ?: return@launch
+        val legacyApplies = ControllerTypeSelection.legacyApplies(platform.platformSlug)
+        val encoded = vm.configureEmulatorUseCase.getControllerTypesForPlatform(platform.platformId)
+        val stored = ControllerTypeSelection.decode(encoded, coreId, legacyApplies)
+        val updated = if (index == choice.autoIndex) stored - port else stored + (port to deviceId)
+        vm.configureEmulatorUseCase.setControllerTypesForPlatform(
+            platform.platformId,
+            ControllerTypeSelection.update(encoded, coreId, legacyApplies, updated)
+        )
+    }
+}
+
+internal fun routeStepControllerType(vm: SettingsViewModel, port: Int, delta: Int): InputResult {
+    val choice = vm._uiState.value.builtinControls.controllerPorts.firstOrNull { it.port == port }
+        ?: return InputResult.UNHANDLED
+    return stepOption(choice.deviceIds.indices.toList(), choice.selectedIndex, delta) { index ->
+        routeSelectControllerType(vm, port, index)
+    }
+}
+
+internal fun routeInitShaderChainManager(vm: SettingsViewModel): ShaderChainManager {
+    return ShaderChainManager(
+        shaderRegistry = vm._shaderRegistry,
+        shaderDownloader = vm._shaderDownloader,
+        previewRenderer = ShaderPreviewRenderer(),
+        scope = vm.viewModelScope,
+        previewInputProvider = { routeResolvePreviewBitmap(vm) },
+        onChainChanged = { config -> routePersistShaderChain(vm, config) }
+    )
+}

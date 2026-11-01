@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="syncmonitor_title">लाइब्रेरी सिंक</string>
+    <string name="syncmonitor_drawer_title">लाइब्रेरी सिंक</string>
+
+    <string name="syncmonitor_progress_starting">शुरू हो रहा है</string>
+    <string name="syncmonitor_never_synced">कभी सिंक नहीं हुआ</string>
+    <string name="syncmonitor_last_synced">अंतिम सिंक %1$s</string>
+    <string name="syncmonitor_finished_with_failures">%1$d प्लेटफ़ॉर्म विफल</string>
+    <string name="syncmonitor_not_connected">RomM से कनेक्ट नहीं है</string>
+    <string name="syncmonitor_library_summary">%1$d प्लेटफ़ॉर्म · %2$d गेम · %3$d डिवाइस पर</string>
+
+    <string name="syncmonitor_group_disabled">बंद किए गए</string>
+
+    <string name="syncmonitor_row_summary">%1$d गेम · %2$d डिवाइस पर · %3$d सेव के साथ</string>
+    <string name="syncmonitor_row_excluded">बाहर रखा गया · %1$d गेम · %2$d डिवाइस पर</string>
+
+    <string name="syncmonitor_state_queued">कतार में</string>
+    <string name="syncmonitor_state_syncing">%1$d / %2$d</string>
+    <string name="syncmonitor_state_failed">विफल</string>
+
+    <string name="syncmonitor_action_sync">सिंक करें</string>
+    <string name="syncmonitor_action_enable">चालू करें और सिंक करें</string>
+
+    <string name="syncmonitor_badge_added">%1$d नए</string>
+    <string name="syncmonitor_badge_updated">%1$d अपडेट</string>
+    <string name="syncmonitor_badge_removed">%1$d हटाए</string>
+
+    <string name="syncmonitor_empty_idle">RomM से अपनी लाइब्रेरी लाने के लिए सिंक करें</string>
+    <string name="syncmonitor_empty_disconnected">अपनी लाइब्रेरी सिंक करने के लिए RomM से कनेक्ट करें</string>
+
+    <string name="syncmonitor_footer_sync_all">सब सिंक करें</string>
+    <string name="syncmonitor_footer_back">वापस</string>
+</resources>

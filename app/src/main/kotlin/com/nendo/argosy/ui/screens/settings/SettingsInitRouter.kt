@@ -1,0 +1,992 @@
+package com.nendo.argosy.ui.screens.settings
+
+import android.content.Context
+import androidx.lifecycle.viewModelScope
+import com.nendo.argosy.core.emulator.EmulatorDownloadState
+import com.nendo.argosy.data.cache.GradientPreset
+import com.nendo.argosy.data.emulator.EmulatorRegistry
+import com.nendo.argosy.data.emulator.RetroArchConfigSource
+import com.nendo.argosy.data.platform.PlatformDefinitions
+import com.nendo.argosy.data.preferences.EmulatorDisplayTarget
+import com.nendo.argosy.data.emulator.SavePathRegistry
+import com.nendo.argosy.data.remote.jellyfin.JellyfinConnectionState
+import com.nendo.argosy.data.remote.romm.ConnectionState
+import com.nendo.argosy.libretro.LibretroCoreRegistry
+import com.nendo.argosy.core.input.DetectedLayout
+import com.nendo.argosy.ui.screens.settings.delegates.StorageSettingsDelegate
+import com.nendo.argosy.ui.screens.settings.sections.steamMaxFocusIndex
+import com.nendo.argosy.util.AppPaths
+import com.nendo.argosy.R
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+internal fun routeObserveDelegateStates(vm: SettingsViewModel) {
+    vm.displayDelegate.state.onEach { display ->
+        vm._uiState.update { current ->
+            val newConfig = if (display.gradientPreset != GradientPreset.CUSTOM &&
+                current.display.gradientPreset != display.gradientPreset) {
+                display.gradientPreset.toConfig()
+            } else {
+                current.gradientConfig
+            }
+            current.copy(
+                display = display,
+                colorFocusIndex = vm.displayDelegate.colorFocusIndex,
+                gradientConfig = newConfig
+            )
+        }
+    }.launchIn(vm.viewModelScope)
+
+    vm.displayDelegate.previewGame.onEach { previewGame ->
+        vm._uiState.update { it.copy(previewGame = previewGame) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.controlsDelegate.state.onEach { controls ->
+        vm._uiState.update { it.copy(controls = controls) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.installerDelegate.state.onEach { installers ->
+        vm._uiState.update { it.copy(managedInstallers = installers) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.soundsDelegate.state.onEach { sounds ->
+        vm._uiState.update { it.copy(sounds = sounds) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.ambientAudioDelegate.state.onEach { ambientAudio ->
+        vm._uiState.update { it.copy(ambientAudio = ambientAudio) }
+    }.launchIn(vm.viewModelScope)
+    vm.ambientAudioDelegate.initFlowCollection(vm.viewModelScope)
+
+    vm.emulatorDelegate.state.onEach { emulators ->
+        vm._uiState.update { it.copy(emulators = emulators) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.emulatorDelegate.observeCoreUpdateCount().onEach { count ->
+        vm.emulatorDelegate.updateCoreUpdatesAvailable(count)
+    }.launchIn(vm.viewModelScope)
+
+    vm.emulatorDelegate.observeAvailableUpdates().onEach { updates ->
+        val versions = updates.associate { it.emulatorId to it.latestVersion }
+        vm.emulatorDelegate.updateEmulatorUpdateVersions(versions)
+    }.launchIn(vm.viewModelScope)
+
+    vm.emulatorDelegate.observeDownloadProgress().onEach { progress ->
+        if (progress != null) {
+            vm.emulatorDelegate.updatePickerDownloadState(progress.emulatorId, progress.state)
+            vm.emulatorDelegate.updateUpdateModalProgress(progress.emulatorId, progress.state)
+        } else {
+            vm.emulatorDelegate.updatePickerDownloadState(null, EmulatorDownloadState.Idle)
+        }
+    }.launchIn(vm.viewModelScope)
+
+    vm.serverDelegate.state.onEach { server ->
+        vm._uiState.update { it.copy(server = server) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.accountsDelegate.state.onEach { accounts ->
+        vm._uiState.update { it.copy(accounts = accounts) }
+    }.launchIn(vm.viewModelScope)
+    vm.accountsDelegate.start(vm.viewModelScope)
+
+    vm.storageDelegate.state.onEach { storage ->
+        vm._uiState.update { it.copy(storage = storage) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.platformSyncQueue.busyPlatformIds.onEach { ids ->
+        vm._uiState.update { it.copy(storage = it.storage.copy(busyPlatformIds = ids)) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.platformSyncQueue.isLibraryBusy.onEach { busy ->
+        vm._uiState.update { it.copy(storage = it.storage.copy(isLibrarySyncing = busy)) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.storageDelegate.launchFolderPicker.onEach { launch ->
+        vm._uiState.update { it.copy(launchFolderPicker = launch) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.storageDelegate.showMigrationDialog.onEach { show ->
+        vm._uiState.update { it.copy(showMigrationDialog = show) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.storageDelegate.pendingStoragePath.onEach { path ->
+        vm._uiState.update { it.copy(pendingStoragePath = path) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.storageDelegate.isMigrating.onEach { migrating ->
+        vm._uiState.update { it.copy(isMigrating = migrating) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.attributionDelegate.state.onEach { attribution ->
+        vm._uiState.update { it.copy(attribution = attribution) }
+    }.launchIn(vm.viewModelScope)
+    vm.attributionDelegate.initFlowCollection(vm.viewModelScope)
+
+    vm.storagePlatformGamesDelegate.state.onEach { storagePlatformGames ->
+        vm._uiState.update { state ->
+            val updated = state.copy(storagePlatformGames = storagePlatformGames)
+            if (state.currentSection == SettingsSection.STORAGE_PLATFORM_GAMES) {
+                val maxIndex = com.nendo.argosy.ui.screens.settings.sections
+                    .storagePlatformGamesMaxFocusIndex(
+                        com.nendo.argosy.ui.screens.settings.sections
+                            .createStoragePlatformGamesLayoutInfo(updated)
+                    )
+                val clampedFocus = state.focusedIndex.coerceAtMost(maxIndex).coerceAtLeast(0)
+                val focusedBuckets = storagePlatformGames.games.getOrNull(clampedFocus)?.buckets?.size ?: 0
+                val clampedCategory = storagePlatformGames.highlightedCategoryIndex
+                    .coerceAtMost((focusedBuckets - 1).coerceAtLeast(0))
+                    .coerceAtLeast(0)
+                updated.copy(
+                    focusedIndex = clampedFocus,
+                    storagePlatformGames = storagePlatformGames.copy(highlightedCategoryIndex = clampedCategory)
+                )
+            } else {
+                updated
+            }
+        }
+    }.launchIn(vm.viewModelScope)
+
+    vm.storageCachesDelegate.state.onEach { storageCaches ->
+        vm._uiState.update { it.copy(storageCaches = storageCaches) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.playTimeDelegate.state.onEach { playTime ->
+        vm._uiState.update { state ->
+            val updated = state.copy(playTime = playTime)
+            if (state.currentSection == SettingsSection.PLAY_TIME ||
+                state.currentSection == SettingsSection.PLAY_TIME_PLATFORMS ||
+                state.currentSection == SettingsSection.PLAY_TIME_DEVICES ||
+                state.currentSection == SettingsSection.PLAY_TIME_GAMES
+            ) {
+                updated.copy(focusedIndex = state.focusedIndex.coerceIn(0, routeMaxFocusIndexOf(vm, updated)))
+            } else {
+                updated
+            }
+        }
+    }.launchIn(vm.viewModelScope)
+
+    vm.syncDelegate.state.onEach { syncSettings ->
+        vm._uiState.update { it.copy(syncSettings = syncSettings) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.steamDelegate.state.onEach { steam ->
+        routeUpdateSteamState(vm, steam)
+    }.launchIn(vm.viewModelScope)
+
+    vm.jellyfinDelegate.state.onEach { jellyfin ->
+        vm._uiState.update { it.copy(jellyfin = jellyfin) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.raDelegate.state.onEach { ra ->
+        vm._uiState.update { it.copy(retroAchievements = ra) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.permissionsDelegate.state.onEach { permissions ->
+        vm._uiState.update { it.copy(permissions = permissions) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.biosDelegate.state.onEach { bios ->
+        vm._uiState.update { it.copy(bios = bios) }
+    }.launchIn(vm.viewModelScope)
+
+    vm.driversDelegate.state.onEach { drivers ->
+        vm._uiState.update { it.copy(drivers = drivers) }
+    }.launchIn(vm.viewModelScope)
+}
+
+internal fun routeUpdateSteamState(vm: SettingsViewModel, steam: SteamSettingsState) {
+    vm._uiState.update { state ->
+        state.copy(
+            steam = steam,
+            focusedIndex = if (state.currentSection == SettingsSection.STEAM_SETTINGS) {
+                state.focusedIndex.coerceIn(0, steamMaxFocusIndex(steam))
+            } else state.focusedIndex
+        )
+    }
+}
+
+internal fun routeObserveDelegateEvents(vm: SettingsViewModel) {
+    merge(
+        vm.syncDelegate.requestStoragePermissionEvent,
+        vm.steamDelegate.requestStoragePermissionEvent,
+        vm.storageDelegate.requestStoragePermissionEvent
+    ).onEach {
+        vm._requestStoragePermissionEvent.emit(Unit)
+    }.launchIn(vm.viewModelScope)
+
+    vm.syncDelegate.requestNotificationPermissionEvent.onEach {
+        vm._requestNotificationPermissionEvent.emit(Unit)
+    }.launchIn(vm.viewModelScope)
+
+    vm.syncDelegate.requestMediaPermissionEvent.onEach {
+        vm._requestMediaPermissionEvent.emit(Unit)
+    }.launchIn(vm.viewModelScope)
+
+    vm.emulatorDelegate.openUrlEvent.onEach { url ->
+        vm._openUrlEvent.emit(url)
+    }.launchIn(vm.viewModelScope)
+
+    vm.jellyfinQuickConnectRequestEvent.onEach { serverUrl ->
+        vm.startJellyfinQuickConnect(serverUrl)
+    }.launchIn(vm.viewModelScope)
+
+    vm.jellyfinPasswordSignInRequestEvent.onEach { request ->
+        vm.startJellyfinPasswordSignIn(request)
+    }.launchIn(vm.viewModelScope)
+
+    vm.steamDelegate.openUrlEvent.onEach { url ->
+        vm._openUrlEvent.emit(url)
+    }.launchIn(vm.viewModelScope)
+
+    vm.steamDelegate.downloadProgress.onEach { progress ->
+        val steamState = vm.steamDelegate.state.value
+        if (progress != null && steamState.downloadingLauncherId == progress.emulatorId) {
+            val dlProgress = when (val state = progress.state) {
+                is EmulatorDownloadState.Downloading -> state.progress
+                is EmulatorDownloadState.WaitingForInstall -> null
+                is EmulatorDownloadState.Installed -> null
+                is EmulatorDownloadState.Failed -> null
+                is EmulatorDownloadState.Idle -> null
+            }
+            val stillDownloading = progress.state is EmulatorDownloadState.Downloading ||
+                progress.state is EmulatorDownloadState.WaitingForInstall
+            vm.steamDelegate.updateState(
+                steamState.copy(
+                    downloadingLauncherId = if (stillDownloading) progress.emulatorId else null,
+                    downloadProgress = dlProgress
+                )
+            )
+            if (progress.state is EmulatorDownloadState.Installed) {
+                vm.steamDelegate.loadSteamSettings(vm.context, vm.viewModelScope)
+            }
+        } else if (progress == null && steamState.downloadingLauncherId != null) {
+            vm.steamDelegate.updateState(
+                steamState.copy(downloadingLauncherId = null, downloadProgress = null)
+            )
+        }
+    }.launchIn(vm.viewModelScope)
+}
+
+internal fun routeObserveConnectionState(vm: SettingsViewModel) {
+    vm.romMRepository.connectionState.onEach { connectionState ->
+        val status = when (connectionState) {
+            is ConnectionState.Connected -> ConnectionStatus.ONLINE
+            else -> {
+                val prefs = vm.preferencesRepository.userPreferences.first()
+                if (prefs.rommBaseUrl.isNullOrBlank()) ConnectionStatus.NOT_CONFIGURED
+                else ConnectionStatus.OFFLINE
+            }
+        }
+        val connected = connectionState as? ConnectionState.Connected
+        val version = connected?.version
+        val capabilities = connected?.capabilities
+        val screenshotUpload = capabilities?.supportsScreenshotUpload == true
+        val musicApi = capabilities?.supportsMusicApi == true
+        val deviceInstall = capabilities?.supportsDeviceInstall == true
+        vm.serverDelegate.updateState(vm._uiState.value.server.copy(
+            connectionStatus = status,
+            rommVersion = version,
+            screenshotUploadSupported = screenshotUpload,
+            musicApiSupported = musicApi,
+            deviceInstallSupported = deviceInstall
+        ))
+        vm.soundsDelegate.setMusicApiSupported(musicApi)
+    }.launchIn(vm.viewModelScope)
+
+    vm.jellyfinConnectionManager.connectionState.onEach { jellyfinState ->
+        val capabilities = (jellyfinState as? JellyfinConnectionState.Connected)?.capabilities
+        vm.jellyfinDelegate.onServerCapabilities(
+            connected = capabilities != null,
+            supportsQuickConnect = capabilities?.supportsQuickConnect == true
+        )
+    }.launchIn(vm.viewModelScope)
+}
+
+internal fun routeObservePlatformLibretroSettings(vm: SettingsViewModel) {
+    vm.libretroSettingsRepo.observeAll().onEach { settingsList ->
+        val settingsMap = settingsList.associateBy { it.platformId }
+        vm._uiState.update { current ->
+            val platformContext = current.builtinVideo.currentPlatformContext
+            val hasControlOverrides = platformContext?.let {
+                settingsMap[it.platformId]?.hasAnyControlOverrides()
+            } == true
+            current.copy(
+                platformLibretro = current.platformLibretro.copy(
+                    platformSettings = settingsMap
+                ),
+                builtinControls = current.builtinControls.copy(
+                    showResetAll = !current.builtinVideo.isGlobalContext && hasControlOverrides
+                )
+            )
+        }
+    }.launchIn(vm.viewModelScope)
+}
+
+internal fun routeObservePlatforms(vm: SettingsViewModel) {
+    vm.syncDelegate.observePlatforms(vm.viewModelScope)
+    vm.viewModelScope.launch {
+        vm.platformRepository.observeAllPlatforms()
+            .map { all ->
+                all.filter { it.syncEnabled && LibretroCoreRegistry.isPlatformSupported(it.slug) }
+                    .distinctBy { it.slug }
+                    .map { PlatformContext(it.id, it.name, it.slug) }
+            }
+            .distinctUntilChanged()
+            .collect { platforms ->
+                vm._uiState.update { state ->
+                    val video = state.builtinVideo
+                    val coreOptions = state.coreOptions
+                    state.copy(
+                        builtinVideo = video.copy(
+                            availablePlatforms = platforms,
+                            platformContextIndex = reindexPlatformContext(
+                                video.availablePlatforms, video.platformContextIndex, platforms, firstIsGlobal = true
+                            )
+                        ),
+                        coreOptions = if (coreOptions.availablePlatforms.isEmpty()) coreOptions else coreOptions.copy(
+                            availablePlatforms = platforms,
+                            platformContextIndex = reindexPlatformContext(
+                                coreOptions.availablePlatforms, coreOptions.platformContextIndex, platforms, firstIsGlobal = false
+                            )
+                        )
+                    )
+                }
+                routeLoadControllerPorts(vm)
+                routeRefreshBuiltinGraphics(vm)
+            }
+    }
+}
+
+internal fun reindexPlatformContext(
+    previous: List<PlatformContext>,
+    previousIndex: Int,
+    current: List<PlatformContext>,
+    firstIsGlobal: Boolean
+): Int {
+    val offset = if (firstIsGlobal) 1 else 0
+    val selectedId = previous.getOrNull(previousIndex - offset)?.platformId ?: return 0
+    val found = current.indexOfFirst { it.platformId == selectedId }
+    return if (found >= 0) found + offset else 0
+}
+
+internal fun routeStartControllerDetectionPolling(vm: SettingsViewModel) {
+    vm.viewModelScope.launch {
+        while (true) {
+            delay(1000)
+            vm.controlsDelegate.refreshDetectedLayout()
+        }
+    }
+}
+
+internal fun routeObserveModalResetSignal(vm: SettingsViewModel) {
+    vm.modalResetSignal.signal.onEach {
+        vm.emulatorDelegate.dismissEmulatorPicker()
+        vm.emulatorDelegate.dismissSavePathModal()
+        vm.storageDelegate.closePlatformSettingsModal()
+        vm.soundsDelegate.dismissSoundPicker()
+        vm.syncDelegate.dismissRegionPicker()
+        vm.syncDelegate.dismissRegionPriority()
+        vm.steamDelegate.dismissAddSteamGameDialog()
+    }.launchIn(vm.viewModelScope)
+}
+
+internal fun routeLoadSettings(vm: SettingsViewModel) {
+    vm.viewModelScope.launch {
+        val prefs = vm.preferencesRepository.preferences.first()
+        val installedEmulators = vm.emulatorDetector.detectEmulators()
+        val platforms = vm.platformRepository.observeAllPlatforms().first()
+
+        val installedPackages = installedEmulators.map { it.def.packageName }.toSet()
+
+        val platformConfigs = platforms
+            .map { platform ->
+            val canonicalSlug = PlatformDefinitions.getCanonicalSlug(platform.slug)
+            val defaultConfig = vm.emulatorConfigRepo.getDefaultForPlatform(platform.id)
+            val available = installedEmulators
+                .filter { canonicalSlug in it.def.supportedPlatforms }
+                .filter { prefs.builtinLibretroEnabled || it.def.packageName != EmulatorRegistry.BUILTIN_PACKAGE }
+            val isUserConfigured = defaultConfig != null
+
+            val recommended = EmulatorRegistry.getRecommendedEmulators()[canonicalSlug] ?: emptyList()
+            val downloadable = recommended
+                .mapNotNull { EmulatorRegistry.getById(it) }
+                .filter { it.packageName !in installedPackages && it.downloadUrl != null }
+
+            val rawSelectedEmulatorDef = defaultConfig?.packageName?.let { vm.emulatorDetector.getByPackage(it) }
+            val selectedEmulatorDef = if (!prefs.builtinLibretroEnabled && rawSelectedEmulatorDef?.id == EmulatorRegistry.BUILTIN_ID) {
+                null
+            } else {
+                rawSelectedEmulatorDef
+            }
+            val adHocConfig = defaultConfig?.takeIf { cfg ->
+                val pkg = cfg.packageName
+                selectedEmulatorDef == null && pkg != null &&
+                    !EmulatorRegistry.isKnownPackage(pkg) && vm.installedAppResolver.isAppInstalled(pkg)
+            }
+            val autoResolvedEmulator = vm.emulatorDetector.getPreferredEmulator(platform.slug, prefs.builtinLibretroEnabled)?.def
+            val effectiveEmulatorDef = selectedEmulatorDef ?: if (adHocConfig != null) null else autoResolvedEmulator
+            val isRetroArch = effectiveEmulatorDef?.launchConfig is com.nendo.argosy.data.emulator.LaunchConfig.RetroArch
+            val hasCoreSelection = effectiveEmulatorDef?.launchConfig?.isCoreSelectable == true
+            val isBuiltInEmulator = effectiveEmulatorDef?.launchConfig is com.nendo.argosy.data.emulator.LaunchConfig.BuiltIn
+            val availableCores = if (hasCoreSelection) {
+                EmulatorRegistry.getSelectableCores(platform.slug, isBuiltInEmulator)
+            } else {
+                emptyList()
+            }
+
+            val storedCore = defaultConfig?.coreName
+            val defaultCore = EmulatorRegistry.getDefaultSelectableCore(platform.slug, isBuiltInEmulator)?.id
+            val selectedCore = when {
+                !hasCoreSelection -> null
+                isBuiltInEmulator -> vm.builtinCoreResolver.resolveCoreId(
+                    gameId = null,
+                    platformId = platform.id,
+                    platformSlug = platform.slug
+                )
+                storedCore != null && availableCores.any { it.id == storedCore } -> storedCore
+                else -> defaultCore ?: availableCores.firstOrNull()?.id
+            }
+
+            val emulatorId = effectiveEmulatorDef?.id
+            val emulatorPackage = effectiveEmulatorDef?.packageName
+            val savePathRequest = com.nendo.argosy.data.emulator.savepath.SavePathRequest(
+                platformSlug = platform.slug,
+                emulatorId = emulatorId,
+                emulatorPackage = emulatorPackage,
+                platformId = platform.id
+            )
+            val savePathConfig = vm.savePathAuthority.configFor(savePathRequest)
+            val showSavePath = savePathConfig != null
+            val effectiveSaveConfigId = savePathConfig?.emulatorId
+
+            val userSaveConfig = effectiveSaveConfigId?.let { vm.emulatorDelegate.getEmulatorSaveConfig(it) }
+            val retroArchSave = if (isRetroArch && emulatorId != null && savePathConfig != null) {
+                vm.retroArchPathResolver.describeSavePath(
+                    com.nendo.argosy.data.emulator.RetroArchPathResolver.Request(
+                        emulatorId = emulatorId,
+                        coreName = selectedCore,
+                        romPath = null,
+                    )
+                )
+            } else null
+            val retroArchConfigSource = retroArchSave?.source
+            val savePathResolution = if (savePathConfig != null && retroArchSave == null) {
+                vm.savePathAuthority.resolve(savePathRequest)
+            } else null
+            val isUserSavePathOverride = if (effectiveSaveConfigId == EmulatorRegistry.BUILTIN_ID) {
+                savePathResolution?.source == com.nendo.argosy.data.emulator.savepath.SavePathSource.USER_OVERRIDE
+            } else {
+                userSaveConfig?.isUserOverride == true
+            }
+            val effectiveSavePath = when {
+                savePathConfig == null -> null
+                retroArchSave != null -> when (val display = retroArchSave.path) {
+                    is com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.ContentDirectory ->
+                        vm.context.getString(R.string.settings_shell_router_content_dir_save2)
+                    is com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.Resolved -> display.path
+                    com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.Unknown -> null
+                }
+                else -> savePathResolution?.basePath
+            }
+
+            val savesBesideRom = savePathConfig != null && retroArchSave == null &&
+                vm.emulatorDelegate.savesBesideRom(savePathConfig, platform.slug)
+
+            val extensionOptions = EmulatorRegistry.getExtensionOptionsForPlatform(platform.slug)
+            val selectedExtension = vm.emulatorDelegate.getPreferredExtension(platform.id)
+
+            PlatformEmulatorConfig(
+                platform = platform,
+                selectedEmulator = defaultConfig?.displayName,
+                selectedEmulatorPackage = defaultConfig?.packageName,
+                selectedCore = selectedCore,
+                isUserConfigured = isUserConfigured,
+                availableEmulators = available,
+                downloadableEmulators = downloadable,
+                availableCores = availableCores,
+                effectiveEmulatorIsRetroArch = isRetroArch,
+                effectiveEmulatorId = emulatorId,
+                effectiveEmulatorPackage = effectiveEmulatorDef?.packageName ?: adHocConfig?.packageName,
+                effectiveEmulatorName = effectiveEmulatorDef?.displayName ?: adHocConfig?.displayName,
+                effectiveSavePath = effectiveSavePath,
+                savesBesideRom = savesBesideRom,
+                isUserSavePathOverride = isUserSavePathOverride,
+                isEvaluatedSavePath = savePathResolution?.isEvaluatedDefault == true,
+                isFallbackSavePath = savePathResolution?.isFallbackDefault == true,
+                isPreferredSavePathReadable = savePathResolution?.preferredReadable != false,
+                showSavePath = showSavePath,
+                retroArchConfigStatus = when (retroArchConfigSource) {
+                    is RetroArchConfigSource.Loaded -> RetroArchConfigStatus.LOADED
+                    is RetroArchConfigSource.Unreadable -> RetroArchConfigStatus.UNREADABLE
+                    else -> RetroArchConfigStatus.MISSING
+                },
+                retroArchConfigPath = when (retroArchConfigSource) {
+                    is RetroArchConfigSource.Loaded -> retroArchConfigSource.path
+                    is RetroArchConfigSource.Unreadable -> retroArchConfigSource.path
+                    else -> null
+                },
+                extensionOptions = extensionOptions,
+                selectedExtension = selectedExtension,
+                useFileUri = defaultConfig?.useFileUri ?: false,
+                displayTarget = EmulatorDisplayTarget.fromString(defaultConfig?.displayTarget),
+                hasSecondaryDisplay = vm.displayAffinityHelper.hasSecondaryDisplay
+            )
+        }
+
+        val connectionState = vm.romMRepository.connectionState.value
+        val connectionStatus = when {
+            prefs.rommBaseUrl.isNullOrBlank() -> ConnectionStatus.NOT_CONFIGURED
+            connectionState is ConnectionState.Connected -> ConnectionStatus.ONLINE
+            else -> ConnectionStatus.OFFLINE
+        }
+        val rommVersion = (connectionState as? ConnectionState.Connected)?.version
+        val rommCapabilities = (connectionState as? ConnectionState.Connected)?.capabilities
+
+        val downloadedSize = vm.gameRepository.getDownloadedGamesSize()
+        val downloadedCount = vm.gameRepository.getDownloadedGamesCount()
+        val adoptedCount = vm.gameRepository.getAdoptedGamesCount()
+        val availableSpace = vm.gameRepository.getAvailableStorageBytes()
+        val box3dCapableGames = vm.gameRepository.countBox3dCapableGames()
+        val libraryRegionOptions = vm.gameRepository.getDistinctRegions()
+        val iconPacks = vm.iconPackRepository.installedPacks()
+
+        vm.displayDelegate.updateState(DisplayState(
+            themeMode = prefs.themeMode,
+            primaryColor = prefs.primaryColor,
+            secondaryColor = prefs.secondaryColor,
+            surfaceTintBleed = prefs.surfaceTintBleed,
+            surfaceBackdrop = com.nendo.argosy.ui.theme.backdrop.BackdropConfig(
+                enabled = prefs.backdropEnabled,
+                preset = prefs.backdropPreset,
+                cellSize = prefs.backdropCellSize,
+                scatter = prefs.backdropScatter,
+                scaleJitter = prefs.backdropScaleJitter,
+                strength = prefs.backdropStrength,
+                edgeStyle = prefs.backdropEdgeStyle,
+                vertexIcons = prefs.backdropVertexIcons,
+                seed = prefs.backdropSeed,
+                motion = prefs.backdropMotion,
+                motionSpeed = prefs.backdropMotionSpeed,
+                driftAngle = prefs.backdropDriftAngle
+            ),
+            displayFontName = prefs.displayFontName,
+            bodyFontName = prefs.bodyFontName,
+            displayFontScale = prefs.displayFontScale,
+            bodyFontScale = prefs.bodyFontScale,
+            gridDensity = prefs.gridDensity,
+            libraryLayout = prefs.libraryLayout,
+            libraryListStyle = prefs.libraryListStyle,
+            backgroundBlur = prefs.backgroundBlur,
+            backgroundSaturation = prefs.backgroundSaturation,
+            backgroundOpacity = prefs.backgroundOpacity,
+            useGameBackground = prefs.useGameBackground,
+            customBackgroundPath = prefs.customBackgroundPath,
+            homeBackgroundMode = prefs.homeBackgroundMode,
+            homeLayout = prefs.homeLayout,
+            presentationStyle = prefs.presentationStyle,
+            presentationBackgroundBlur = prefs.presentationBackgroundBlur,
+            box3dCapableGames = box3dCapableGames,
+            libraryBoxArt3d = prefs.libraryBoxArt3d,
+            useAccentColorFooter = prefs.useAccentColorFooter,
+            compactFooter = prefs.compactFooter,
+            hideSystemNavigationBar = prefs.hideSystemNavigationBar,
+            hideSystemStatusBar = prefs.hideSystemStatusBar,
+            quickPanelInEmulators = prefs.quickPanelInEmulators,
+            lockScreenArt = prefs.lockScreenArt,
+            homeAppAvailable = prefs.homeAppAvailable,
+            isDefaultHome = vm.displayDelegate.isDefaultHome(),
+            preLaunchRecaps = prefs.preLaunchRecapsEnabled,
+            monthlyRecap = prefs.monthlyRecapEnabled,
+            iconPack = prefs.iconPack,
+            iconPacks = iconPacks,
+            boxArtShape = prefs.boxArtShape,
+            boxArtCornerRadius = prefs.boxArtCornerRadius,
+            boxArtBorderThickness = prefs.boxArtBorderThickness,
+            boxArtBorderStyle = prefs.boxArtBorderStyle,
+            glassBorderTint = prefs.glassBorderTint,
+            boxArtGlowStrength = prefs.boxArtGlowStrength,
+            boxArtOuterEffect = prefs.boxArtOuterEffect,
+            boxArtOuterEffectThickness = prefs.boxArtOuterEffectThickness,
+            glowColorMode = prefs.glowColorMode,
+            boxArtInnerEffect = prefs.boxArtInnerEffect,
+            boxArtInnerEffectThickness = prefs.boxArtInnerEffectThickness,
+            gradientPreset = prefs.gradientPreset,
+            gradientAdvancedMode = prefs.gradientAdvancedMode,
+            systemIconPosition = prefs.systemIconPosition,
+            systemIconPadding = prefs.systemIconPadding,
+            platformIndicatorStyle = prefs.platformIndicatorStyle,
+            platformIndicatorContent = prefs.platformIndicatorContent,
+            libraryDefaultSort = prefs.libraryDefaultSort,
+            libraryDefaultSortDescending = prefs.libraryDefaultSortDescending,
+            sortInstalledFirst = prefs.sortInstalledFirst,
+            sortFavoritesFirst = prefs.sortFavoritesFirst,
+            libraryDefaultSource = prefs.libraryDefaultSource,
+            libraryDefaultPlatformId = prefs.libraryDefaultPlatformId,
+            libraryDefaultRegions = prefs.libraryDefaultRegions,
+            libraryDefaultPlayers = prefs.libraryDefaultPlayers,
+            libraryRegionOptions = libraryRegionOptions,
+            videoWallpaperEnabled = prefs.videoWallpaperEnabled,
+            videoWallpaperDelaySeconds = prefs.videoWallpaperDelaySeconds,
+            videoWallpaperMuted = prefs.videoWallpaperMuted,
+            uiScale = prefs.uiScale,
+            gripReserveMode = prefs.gripReserveMode,
+            gripReservePercent = prefs.gripReservePercent,
+            gripAutoControllers = prefs.gripAutoControllers,
+            ambientLedEnabled = prefs.ambientLedEnabled,
+            ambientLedBrightness = prefs.ambientLedBrightness,
+            ambientLedAudioBrightness = prefs.ambientLedAudioBrightness,
+            ambientLedAudioColors = prefs.ambientLedAudioColors,
+            ambientLedColorMode = prefs.ambientLedColorMode,
+            ambientLedCoverArtEnabled = prefs.ambientLedCoverArtEnabled,
+            ambientLedCustomColor = prefs.ambientLedCustomColor,
+            ambientLedCustomColorHue = prefs.ambientLedCustomColorHue,
+            ambientLedTransitionMs = prefs.ambientLedTransitionMs,
+            ambientLedScreenEnabled = prefs.ambientLedScreenEnabled,
+            ambientLedAchievementFlash = prefs.ambientLedAchievementFlash,
+            ambientLedAvailable = vm.displayDelegate.isAmbientLedAvailable(),
+            hasScreenCapturePermission = vm.displayDelegate.hasScreenCapturePermission(),
+            hasSecondaryDisplay = vm.displayAffinityHelper.hasSecondaryDisplay,
+            hasPhysicalSecondaryDisplay = vm.displayAffinityHelper.hasPhysicalSecondaryDisplay,
+            lidSleepSupported = vm.lidSleepGuard.isSupported,
+            lidSleepEnabled = prefs.lidSleepEnabled,
+            dualScreenEnabled = prefs.dualScreenEnabled,
+            dualScreenMatchSize = vm.libretroSettingsRepo.getBuiltinEmulatorSettings().first().dualScreenMatchSize,
+            dualScreenMatchSizeAvailable = vm.displayAffinityHelper.hasPhysicalSecondaryDisplay &&
+                com.nendo.argosy.libretro.KnownPanels.forModel().isNotEmpty(),
+            displayRoleOverride = prefs.displayRoleOverride,
+            gamesLaunchTarget = prefs.gamesDisplayTarget,
+            appsLaunchTarget = prefs.appsDisplayTarget,
+            installedOnlyHome = prefs.installedOnlyHome,
+            showStatusClock = prefs.showStatusClock,
+            showStatusBattery = prefs.showStatusBattery,
+            showStatusNetwork = prefs.showStatusNetwork
+        ))
+        routeRefreshLaunchTargets(vm)
+
+        val detectionResult = vm.controlsDelegate.detectActiveController()
+        val detectedLayoutName = when (detectionResult.layout) {
+            DetectedLayout.XBOX -> "Xbox"
+            DetectedLayout.NINTENDO -> "Nintendo"
+            null -> null
+        }
+        vm.controlsDelegate.updateState(ControlsState(
+            hapticEnabled = prefs.hapticEnabled,
+            vibrationStrength = prefs.hapticStrength,
+            controllerLayout = prefs.controllerLayout,
+            detectedLayout = detectedLayoutName,
+            detectedDeviceName = detectionResult.deviceName,
+            swapAB = prefs.swapAB,
+            swapXY = prefs.swapXY,
+            swapStartSelect = prefs.swapStartSelect,
+            selectLCombo = prefs.selectLCombo,
+            selectRCombo = prefs.selectRCombo,
+            hasSecondaryDisplay = vm.displayAffinityHelper.hasSecondaryDisplay,
+            menuWrapMode = prefs.menuWrapMode,
+            selectSwapMode = prefs.selectSwapMode,
+            openNavigationKey = prefs.openNavigationKey,
+            openQuickPanelKey = prefs.openQuickPanelKey,
+            navRingRoutes = com.nendo.argosy.ui.navigation.NavRing.resolve(prefs.navRingRoutes),
+            quickNavigation = prefs.quickNavigation,
+            navBarAutoHide = prefs.navBarAutoHide,
+            ignoreControllerTouchpad = prefs.ignoreControllerTouchpad
+        ))
+        vm.controlsDelegate.refreshUsageStatsPermission()
+
+        vm.soundsDelegate.updateState(SoundState(
+            enabled = prefs.soundEnabled,
+            volume = prefs.soundVolume,
+            soundConfigs = prefs.soundConfigs,
+            musicApiSupported = rommCapabilities?.supportsMusicApi == true
+        ))
+
+        vm.ambientAudioDelegate.updateState(AmbientAudioState(
+            enabled = prefs.ambientAudioEnabled,
+            volume = prefs.ambientAudioVolume,
+            shuffle = prefs.ambientAudioShuffle,
+            gameDetailThemeEnabled = prefs.gameDetailThemeEnabled,
+            currentTrackName = vm.ambientAudioDelegate.state.value.currentTrackName,
+            playlistEntryCount = vm.ambientAudioDelegate.state.value.playlistEntryCount,
+            musicDirPath = vm.ambientAudioDelegate.state.value.musicDirPath,
+            pendingMusicRelocation = vm.ambientAudioDelegate.state.value.pendingMusicRelocation
+        ))
+        vm.ambientAudioDelegate.refreshMusicDirPath(vm.viewModelScope)
+
+        val filteredPlatformConfigs = platformConfigs.inPlatformsListOrder { it.platform }
+
+        val currentEmulatorState = vm.emulatorDelegate.state.value
+        val anchoredPlatformId = vm._uiState.value.emulators.platforms
+            .getOrNull(vm._uiState.value.platformDetail.platformIndex)?.platform?.id
+        val archOverride = vm.libretroSettingsRepo.getArchitectureOverride().first()
+        val builtinSettings = vm.libretroSettingsRepo.getBuiltinEmulatorSettings().first()
+        vm.emulatorDelegate.updateState(EmulatorState(
+            platforms = filteredPlatformConfigs,
+            installedEmulators = installedEmulators,
+            platformSubFocusIndex = currentEmulatorState.platformSubFocusIndex,
+            builtinLibretroEnabled = prefs.builtinLibretroEnabled,
+            closeEmulatorOnSessionEnd = prefs.closeEmulatorOnSessionEnd,
+            architectureDisplay = architectureAbiToDisplay(archOverride),
+            ingameMenuTwoColumn = builtinSettings.ingameMenuTwoColumn,
+            hudEnabled = builtinSettings.hudEnabled,
+            hudCorner = builtinSettings.hudCorner,
+            hudShowBattery = builtinSettings.hudShowBattery,
+            hudShowClock = builtinSettings.hudShowClock,
+            hudShowPlaytime = builtinSettings.hudShowPlaytime,
+            hudShowFps = builtinSettings.hudShowFps,
+            hudShowLastSave = builtinSettings.hudShowLastSave,
+            emulatorUpdateVersions = currentEmulatorState.emulatorUpdateVersions,
+            coreUpdatesAvailable = currentEmulatorState.coreUpdatesAvailable
+        ))
+        vm.emulatorDelegate.updateCoreCounts()
+        anchoredPlatformId?.let { anchorId ->
+            val reanchored = filteredPlatformConfigs.indexOfFirst { it.platform.id == anchorId }
+            if (reanchored >= 0) {
+                vm._uiState.update { st ->
+                    st.copy(platformDetail = st.platformDetail.copy(platformIndex = reanchored))
+                }
+            }
+        }
+
+        vm.serverDelegate.updateState(ServerState(
+            connectionStatus = connectionStatus,
+            rommUrl = prefs.rommBaseUrl ?: "",
+            rommUsername = prefs.rommUsername ?: "",
+            rommVersion = rommVersion,
+            lastRommSync = prefs.lastRommSync,
+            syncScreenshotsEnabled = prefs.syncScreenshotsEnabled,
+            uploadScreenshotsEnabled = prefs.uploadScreenshotsEnabled,
+            boxArtCacheEnabled = prefs.boxArtCacheEnabled,
+            screenshotUploadSupported = rommCapabilities?.supportsScreenshotUpload == true,
+            musicApiSupported = rommCapabilities?.supportsMusicApi == true,
+            deviceInstallSupported = rommCapabilities?.supportsDeviceInstall == true
+        ))
+
+        val jellyfinInFlight = vm.jellyfinDelegate.state.value
+        vm.jellyfinDelegate.updateState(JellyfinState(
+            serverUrl = prefs.jellyfinServerUrl ?: "",
+            configUrl = prefs.jellyfinServerUrl ?: "",
+            isSignedIn = prefs.isJellyfinSignedIn,
+            userName = prefs.jellyfinUserName ?: "",
+            quickConnectRequested = jellyfinInFlight.quickConnectRequested,
+            quickConnectCode = jellyfinInFlight.quickConnectCode,
+            quickConnectAvailable = jellyfinInFlight.quickConnectAvailable,
+            showLoginForm = jellyfinInFlight.showLoginForm,
+            loginUsername = jellyfinInFlight.loginUsername,
+            loginPassword = jellyfinInFlight.loginPassword,
+            isSigningIn = jellyfinInFlight.isSigningIn,
+            signInError = jellyfinInFlight.signInError,
+            passwordFallbackOffered = jellyfinInFlight.passwordFallbackOffered,
+            configuring = jellyfinInFlight.configuring,
+            configFocusField = jellyfinInFlight.configFocusField,
+            configError = jellyfinInFlight.configError,
+            loginFocusField = jellyfinInFlight.loginFocusField,
+            showSignOutConfirm = jellyfinInFlight.showSignOutConfirm,
+            pendingMediaRelocation = jellyfinInFlight.pendingMediaRelocation,
+            downloadQuality = prefs.mediaDownloadQuality,
+            streamingQuality = prefs.mediaStreamingQuality,
+            audioLanguage = prefs.mediaAudioLanguage,
+            subtitleMode = prefs.mediaSubtitleMode,
+            subtitleLanguage = prefs.mediaSubtitleLanguage,
+            burnInImageSubtitles = prefs.mediaBurnInImageSubtitles,
+            confirmPlayerExit = prefs.mediaConfirmPlayerExit,
+            sharePresence = prefs.shareMediaPresence,
+            mediaDirPath = jellyfinInFlight.mediaDirPath,
+            isSyncingLibrary = jellyfinInFlight.isSyncingLibrary,
+            lastLibrarySync = jellyfinInFlight.lastLibrarySync,
+            librarySyncError = jellyfinInFlight.librarySyncError
+        ))
+        vm.jellyfinDelegate.refreshMediaDirPath(vm.viewModelScope)
+
+        vm.storageDelegate.updateState(StorageState(
+            romStoragePath = prefs.romStoragePath ?: "",
+            downloadedGamesSize = downloadedSize,
+            downloadedGamesCount = downloadedCount,
+            adoptedGamesCount = adoptedCount,
+            maxConcurrentDownloads = prefs.maxConcurrentDownloads,
+            allowRemoteInstalls = prefs.allowRemoteInstalls,
+            autoStartDownloads = prefs.autoStartDownloads,
+            instantDownloadThresholdMb = prefs.instantDownloadThresholdMb,
+            stageDownloadsInternally = prefs.stageDownloadsInternally,
+            folderNameFromRom = prefs.folderNameFromRom,
+            availableSpace = availableSpace,
+            screenDimmerEnabled = prefs.screenDimmerEnabled,
+            screenDimmerTimeoutMinutes = prefs.screenDimmerTimeoutMinutes,
+            screenDimmerLevel = prefs.screenDimmerLevel,
+            weeklyIntegrityCheckEnabled = prefs.weeklyIntegrityCheckEnabled
+        ))
+        vm.storageDelegate.checkAllFilesAccess()
+        val platformEmulatorInfoMap = mutableMapOf<Long, StorageSettingsDelegate.PlatformEmulatorInfo>()
+        val builtinStateSettings = vm.libretroSettingsRepo.getBuiltinEmulatorSettings().first()
+        for (config in platformConfigs) {
+            val emulatorId = config.effectiveEmulatorId
+            val userStateConfig = emulatorId?.let { vm.emulatorDelegate.getEmulatorSaveConfig(it) }
+            val builtinStateOverride = if (emulatorId == EmulatorRegistry.BUILTIN_ID) {
+                vm.libretroSettingsRepo.getByPlatformId(config.platform.id)?.statePath?.takeIf { it.isNotBlank() }
+                    ?: builtinStateSettings.customStatePath?.takeIf { it.isNotBlank() }
+            } else null
+            val isUserStatePathOverride = if (emulatorId == EmulatorRegistry.BUILTIN_ID) {
+                builtinStateOverride != null
+            } else {
+                userStateConfig?.isUserStateOverride == true
+            }
+            val userStatePathPattern = userStateConfig?.statePathPattern
+
+            val statePath = when {
+                config.effectiveEmulatorIsRetroArch && emulatorId != null -> {
+                    val req = com.nendo.argosy.data.emulator.RetroArchPathResolver.Request(
+                        emulatorId = emulatorId,
+                        coreName = config.selectedCore,
+                        romPath = null,
+                    )
+                    when (val display = vm.retroArchPathResolver.displayStatePath(req)) {
+                        is com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.ContentDirectory ->
+                            vm.context.getString(R.string.settings_shell_router_content_dir_state2)
+                        is com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.Resolved -> display.path
+                        com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.Unknown -> null
+                    }
+                }
+                config.effectiveEmulatorId == EmulatorRegistry.BUILTIN_ID ->
+                    builtinStateOverride ?: AppPaths.libretroStatesDir(vm.context.filesDir).absolutePath
+                isUserStatePathOverride && userStatePathPattern != null -> userStatePathPattern
+                else -> null
+            }
+
+            val emulatorIdForStateCheck = config.effectiveEmulatorId
+            val supportsStatePath = when {
+                emulatorIdForStateCheck == null -> false
+                emulatorIdForStateCheck == EmulatorRegistry.BUILTIN_ID -> true
+                config.effectiveEmulatorIsRetroArch -> true
+                else -> com.nendo.argosy.data.emulator.StatePathRegistry.getConfig(emulatorIdForStateCheck) != null
+            }
+
+            val saveConfigForMemcard = if (config.platform.slug == "ps2") {
+                val effectiveSaveConfigIdMc = emulatorId?.let { id ->
+                    val pkg = config.effectiveEmulatorPackage
+                    pkg?.let { SavePathRegistry.getConfigByPackage(it) }?.emulatorId
+                        ?: SavePathRegistry.getConfig(id)?.emulatorId
+                }
+                effectiveSaveConfigIdMc?.let { vm.emulatorDelegate.getEmulatorSaveConfig(it) }
+            } else null
+
+            val folderMemcards = if (
+                config.platform.slug == "ps2" && emulatorId != null && emulatorId != EmulatorRegistry.BUILTIN_ID
+            ) {
+                vm.emulatorDelegate.listPs2FolderMemcardsForEmulator(
+                    emulatorId = emulatorId,
+                    emulatorPackage = config.effectiveEmulatorPackage
+                )
+            } else null
+            val folderMemcardCount = folderMemcards?.size ?: -1
+
+            platformEmulatorInfoMap[config.platform.id] = StorageSettingsDelegate.PlatformEmulatorInfo(
+                supportsStatePath = supportsStatePath,
+                emulatorId = emulatorId,
+                effectiveSavePath = config.effectiveSavePath,
+                isUserSavePathOverride = config.isUserSavePathOverride,
+                isEvaluatedSavePath = config.isEvaluatedSavePath,
+                isFallbackSavePath = config.isFallbackSavePath,
+                effectiveStatePath = statePath,
+                isUserStatePathOverride = isUserStatePathOverride,
+                folderMemcardCount = folderMemcardCount,
+                onlyMemcardPath = folderMemcards?.singleOrNull()?.path,
+                selectedMemcardPath = saveConfigForMemcard?.selectedMemcardPath
+            )
+        }
+        vm.storageDelegate.setPendingEmulatorInfo(platformEmulatorInfoMap)
+        vm.storageDelegate.loadPlatformConfigs(vm.viewModelScope)
+
+        vm.syncDelegate.updateState(SyncSettingsState(
+            syncFilters = prefs.syncFilters,
+            regionPriority = prefs.regionPriority,
+            saveSyncEnabled = prefs.saveSyncEnabled,
+            secureSaves = prefs.secureSaves,
+            stateCacheEnabled = prefs.stateCacheEnabled,
+            saveCacheLimit = prefs.saveCacheLimit,
+            pendingUploadsCount = vm.saveCacheDao.countNeedingRemoteSync(),
+            imageCachePath = prefs.imageCachePath,
+            defaultImageCachePath = vm.imageCacheManager.getDefaultCachePath()
+        ))
+
+        val refreshSettings = vm.libretroSettingsRepo.getBuiltinEmulatorSettings().first()
+        val displayManager = vm.context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        val display = displayManager.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+        val refreshRate = display?.supportedModes?.maxOfOrNull { it.refreshRate } ?: 60f
+        vm._uiState.update {
+            it.copy(
+                betaUpdatesEnabled = prefs.betaUpdatesEnabled,
+                appLanguage = prefs.appLanguage,
+                fileLoggingEnabled = prefs.fileLoggingEnabled,
+                fileLoggingPath = prefs.fileLoggingPath,
+                fileLogLevel = prefs.fileLogLevel,
+                saveDebugLoggingEnabled = prefs.saveDebugLoggingEnabled,
+                builtinVideo = it.builtinVideo.copy(
+                    shader = refreshSettings.shader,
+                    shaderChainJson = refreshSettings.shaderChainJson,
+                    filter = refreshSettings.filter,
+                    aspectRatio = refreshSettings.aspectRatio,
+                    portraitPosition = refreshSettings.portraitPosition,
+                    skipDuplicateFrames = refreshSettings.skipDuplicateFrames,
+                    blackFrameInsertion = refreshSettings.blackFrameInsertion,
+                    displayRefreshRate = refreshRate,
+                    fastForwardEnabled = refreshSettings.fastForwardEnabled,
+                    fastForwardSpeed = refreshSettings.fastForwardSpeedDisplay,
+                    rotation = refreshSettings.rotationDisplay,
+                    overscanCrop = refreshSettings.overscanCropDisplay,
+                    lowLatencyAudio = refreshSettings.lowLatencyAudio,
+                    audioVolume = refreshSettings.audioVolumeDisplay,
+                    vsync = !refreshSettings.forceSoftwareTiming,
+                    rewindEnabled = refreshSettings.rewindEnabled,
+                    rewindSpeed = refreshSettings.rewindSpeedDisplay,
+                    rewindBufferDuration = refreshSettings.rewindBufferDurationDisplay,
+                    autoSaveState = refreshSettings.autoSaveState,
+                    autoRestoreState = refreshSettings.autoRestoreState,
+                    preferNewerServerSave = refreshSettings.preferNewerServerSave,
+                    hwCoreSaveStatesEnabled = refreshSettings.hwCoreSaveStatesEnabled,
+                    savePath = refreshSettings.customSavePath
+                        ?: AppPaths.libretroSavesDir(vm.context.filesDir).absolutePath,
+                    statePath = refreshSettings.customStatePath
+                        ?: AppPaths.libretroStatesDir(vm.context.filesDir).absolutePath,
+                    isCustomSavePath = refreshSettings.customSavePath != null,
+                    isCustomStatePath = refreshSettings.customStatePath != null,
+                    gpuDriver = refreshSettings.gpuDriver
+                ),
+                builtinControls = BuiltinControlsState(
+                    controllerOrderCount = it.builtinControls.controllerOrderCount,
+                    rumbleEnabled = refreshSettings.rumbleEnabled,
+                    motionEnabled = refreshSettings.motionEnabled,
+                    limitHotkeysToPlayer1 = refreshSettings.limitHotkeysToPlayer1,
+                    speedrunStartOnReset = refreshSettings.speedrunStartOnReset,
+                    speedrunPanelSide = refreshSettings.speedrunPanelSide,
+                    speedrunPanelWidthPercent = refreshSettings.speedrunPanelWidthPercent,
+                    fastForwardMode = refreshSettings.fastForwardMode,
+                    selectAsBack = refreshSettings.selectAsBack,
+                    fastForwardPreservePitch = refreshSettings.fastForwardPreservePitch,
+                    analogAsDpad = refreshSettings.analogAsDpad,
+                    dpadAsAnalog = refreshSettings.dpadAsAnalog,
+                    touchEnabled = refreshSettings.showTouchControlsWhenNoGamepad,
+                    touchOpacityLandscape = refreshSettings.touchControlsOpacityLandscape,
+                    touchOpacityPortrait = refreshSettings.touchControlsOpacityPortrait,
+                    touchSizeScale = refreshSettings.touchControlsSizeScale,
+                    touchHaptic = refreshSettings.touchControlsHaptic,
+                    touchFadeOnIdle = refreshSettings.touchControlsFadeOnIdle,
+                    touchSwapHanded = refreshSettings.touchControlsSwapHanded,
+                    touchLockOrientation = refreshSettings.touchControlsLockOrientation,
+                    touchMirror180 = refreshSettings.touchControlsMirror180,
+                    touchColouredFaceButtons = refreshSettings.touchControlsColouredFaceButtons,
+                    touchGenesis6Button = refreshSettings.touchControlsGenesis6Button
+                )
+            )
+        }
+
+        vm.soundManager.setVolume(prefs.soundVolume)
+
+        vm.permissionsDelegate.refreshPermissions()
+        vm.biosDelegate.init(vm.viewModelScope)
+    }
+}

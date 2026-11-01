@@ -1,0 +1,419 @@
+package com.nendo.argosy.data.storage
+
+import android.content.Context
+
+import com.nendo.argosy.util.Logger
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class FileAccessLayerImpl @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val androidDataAccessor: AndroidDataAccessor,
+    private val managedStorageAccessor: ManagedStorageAccessor,
+    private val rootFileAccessor: RootFileAccessor
+) : FileAccessLayer {
+
+    companion object {
+        private const val TAG = "FileAccessLayer"
+    }
+
+    override fun exists(path: String): Boolean {
+        if (File(path).exists()) return true
+
+        if (!isRestrictedPath(path)) return false
+
+        if (androidDataAccessor.isAltAccessSupported() && androidDataAccessor.exists(path)) {
+            Logger.verbose(TAG) { "[AltAccess] exists=true | path=$path" }
+            return true
+        }
+
+        val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return false
+        if (managedStorageAccessor.existsAtPath(volumeId, relativePath)) {
+            Logger.verbose(TAG) { "[ManagedAccess] exists=true | path=$path" }
+            return true
+        }
+
+        return false
+    }
+
+    override fun isDirectory(path: String): Boolean {
+        if (!isRestrictedPath(path)) return File(path).isDirectory
+        if (androidDataAccessor.isAltAccessSupported() && androidDataAccessor.isDirectory(path)) return true
+        if (File(path).isDirectory) return true
+        val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return false
+        return managedStorageAccessor.isDirectoryAtPath(volumeId, relativePath)
+    }
+
+    override fun isFile(path: String): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            return androidDataAccessor.isFile(path)
+        }
+        return File(path).isFile
+    }
+
+    override fun length(path: String): Long {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            return androidDataAccessor.length(path)
+        }
+        return File(path).length()
+    }
+
+    override fun lastModified(path: String): Long {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            return androidDataAccessor.lastModified(path)
+        }
+        return File(path).lastModified()
+    }
+
+    override fun canRead(path: String): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            return androidDataAccessor.canRead(path)
+        }
+        return File(path).canRead()
+    }
+
+    override fun canWrite(path: String): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            return androidDataAccessor.canWrite(path)
+        }
+        return File(path).canWrite()
+    }
+
+    override fun listFiles(path: String): List<FileInfo>? {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            val files = androidDataAccessor.listFiles(path)
+            if (files != null && files.isNotEmpty()) {
+                Logger.verbose(TAG) { "[AltAccess] listFiles=${files.size} | path=$path" }
+                return files.map { it.toPlainFileInfo() }
+            }
+        }
+
+        if (isRestrictedPath(path) && !plainListingWorks(path)) {
+            val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return directListFiles(path)
+            val docs = managedStorageAccessor.listFiles(volumeId, relativePath)
+            if (docs != null && docs.isNotEmpty()) {
+                Logger.verbose(TAG) { "[ManagedAccess] listFiles=${docs.size} | path=$path" }
+                return docs.map { doc ->
+                    FileInfo(
+                        path = "$path/${doc.displayName}",
+                        name = doc.displayName,
+                        isDirectory = doc.isDirectory,
+                        isFile = !doc.isDirectory,
+                        size = doc.size,
+                        lastModified = doc.lastModified
+                    )
+                }
+            }
+        }
+
+        return directListFiles(path)
+    }
+
+    private fun plainListingWorks(path: String): Boolean =
+        !AndroidDataAccessor.isOnInternalVolume(path) && File(path).list() != null
+
+    private fun directListFiles(path: String): List<FileInfo>? {
+        val dir = File(path)
+        if (!dir.exists() || !dir.isDirectory) return null
+        return dir.listFiles()?.map { it.toFileInfo() }
+    }
+
+    override fun listFilesUnion(path: String): List<FileInfo> {
+        val byName = linkedMapOf<String, FileInfo>()
+
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            androidDataAccessor.listFiles(path)?.forEach { file ->
+                val info = file.toPlainFileInfo()
+                byName.putIfAbsent(info.name, info)
+            }
+        }
+
+        if (isRestrictedPath(path) && !plainListingWorks(path)) {
+            extractVolumeAndPath(path)?.let { (volumeId, relativePath) ->
+                managedStorageAccessor.listFiles(volumeId, relativePath)?.forEach { doc ->
+                    byName.putIfAbsent(
+                        doc.displayName,
+                        FileInfo(
+                            path = "$path/${doc.displayName}",
+                            name = doc.displayName,
+                            isDirectory = doc.isDirectory,
+                            isFile = !doc.isDirectory,
+                            size = doc.size,
+                            lastModified = doc.lastModified
+                        )
+                    )
+                }
+            }
+        }
+
+        directListFiles(path)?.forEach { info ->
+            byName.putIfAbsent(info.name, info)
+        }
+
+        Logger.verbose(TAG) { "[Union] listFiles=${byName.size} | path=$path" }
+        return byName.values.toList()
+    }
+
+    override fun isListable(path: String): Boolean {
+        if (!isRestrictedPath(path)) return File(path).list() != null
+        if (androidDataAccessor.isAltAccessSupported() && androidDataAccessor.listFiles(path) != null) return true
+        if (plainListingWorks(path)) return true
+        if (rootFileAccessor.isAvailable && File(path).list() != null) return true
+        val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return false
+        return managedStorageAccessor.isListableDirectory(volumeId, relativePath)
+    }
+
+    override fun mkdirs(path: String): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            val result = androidDataAccessor.mkdirs(path)
+            if (result) {
+                Logger.verbose(TAG) { "[AltAccess] mkdirs=true | path=$path" }
+                return true
+            }
+        }
+
+        if (isRestrictedPath(path)) {
+            val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return File(path).mkdirs()
+            if (managedStorageAccessor.createDirectoryAtPath(volumeId, relativePath)) {
+                Logger.verbose(TAG) { "[ManagedAccess] mkdirs=true | path=$path" }
+                return true
+            }
+        }
+
+        val file = File(path)
+        return file.mkdirs() || file.exists()
+    }
+
+    override fun delete(path: String): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            return androidDataAccessor.delete(path)
+        }
+
+        if (isRestrictedPath(path)) {
+            val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return File(path).delete()
+            if (managedStorageAccessor.deleteAtPath(volumeId, relativePath)) {
+                return true
+            }
+        }
+
+        return File(path).delete()
+    }
+
+    override fun deleteRecursively(path: String): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            return androidDataAccessor.deleteRecursively(path)
+        }
+        return File(path).deleteRecursively()
+    }
+
+    override fun readBytes(path: String): ByteArray? {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            val result = androidDataAccessor.readBytes(path)
+            if (result != null) return result
+        }
+
+        if (isRestrictedPath(path)) {
+            val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return null
+            managedStorageAccessor.openInputStreamAtPath(volumeId, relativePath)?.use { stream ->
+                return stream.readBytes()
+            }
+        }
+
+        val file = File(path)
+        return if (file.exists() && file.canRead()) file.readBytes() else null
+    }
+
+    override fun writeBytes(path: String, data: ByteArray): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            if (androidDataAccessor.writeBytes(path, data)) return true
+        }
+
+        if (isRestrictedPath(path)) {
+            extractVolumeAndPath(path)?.let { (volumeId, relativePath) ->
+                managedStorageAccessor.openOutputStreamAtPath(volumeId, relativePath)?.let { stream ->
+                    return try {
+                        stream.use { it.write(data) }
+                        true
+                    } catch (e: Exception) {
+                        Logger.error(TAG, "writeBytes: managed-storage write failed | path=$path", e)
+                        false
+                    }
+                }
+            }
+        }
+
+        return try {
+            val file = File(path)
+            if (!ensureParentDirectory(file)) return false
+            file.writeBytes(data)
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "writeBytes: direct write failed | path=$path", e)
+            false
+        }
+    }
+
+    override fun openSeekable(path: String, writable: Boolean): SeekableFile? {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            RandomAccessSeekableFile.open(androidDataAccessor.getFile(path), writable)
+                ?.let { return it }
+        }
+
+        if (isRestrictedPath(path)) {
+            extractVolumeAndPath(path)?.let { (volumeId, relativePath) ->
+                managedStorageAccessor.openDescriptorAtPath(volumeId, relativePath, writable)
+                    ?.let { return DescriptorSeekableFile(it) }
+            }
+        }
+
+        return RandomAccessSeekableFile.open(File(path), writable)
+    }
+
+    override fun getInputStream(path: String): InputStream? {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            val stream = androidDataAccessor.getInputStream(path)
+            if (stream != null) return stream
+        }
+
+        if (isRestrictedPath(path)) {
+            val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return null
+            val stream = managedStorageAccessor.openInputStreamAtPath(volumeId, relativePath)
+            if (stream != null) return stream
+        }
+
+        val file = File(path)
+        return if (file.exists() && file.canRead()) file.inputStream() else null
+    }
+
+    override fun getOutputStream(path: String): OutputStream? {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            val stream = androidDataAccessor.getOutputStream(path)
+            if (stream != null) return stream
+        }
+
+        if (isRestrictedPath(path)) {
+            extractVolumeAndPath(path)?.let { (volumeId, relativePath) ->
+                val stream = managedStorageAccessor.openOutputStreamAtPath(volumeId, relativePath)
+                if (stream != null) return stream
+            }
+        }
+
+        return try {
+            val file = File(path)
+            if (!ensureParentDirectory(file)) return null
+            file.outputStream()
+        } catch (e: Exception) {
+            Logger.error(TAG, "getOutputStream: direct open failed | path=$path", e)
+            null
+        }
+    }
+
+    override fun copyFile(source: String, dest: String): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && (isRestrictedPath(source) || isRestrictedPath(dest))) {
+            return androidDataAccessor.copyFile(source, dest)
+        }
+        return try {
+            val destFile = File(dest)
+            if (!ensureParentDirectory(destFile)) return false
+            File(source).copyTo(destFile, overwrite = true)
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "copyFile: direct copy failed | source=$source, dest=$dest", e)
+            false
+        }
+    }
+
+    override fun copyDirectory(source: String, dest: String): Boolean {
+        if (androidDataAccessor.isAltAccessSupported() && (isRestrictedPath(source) || isRestrictedPath(dest))) {
+            return androidDataAccessor.copyDirectory(source, dest)
+        }
+        return try {
+            val destFile = File(dest)
+            if (!ensureParentDirectory(destFile)) return false
+            File(source).copyRecursively(destFile, overwrite = true)
+        } catch (e: Exception) {
+            Logger.error(TAG, "copyDirectory: direct copy failed | source=$source, dest=$dest", e)
+            false
+        }
+    }
+
+    override fun walk(path: String): Sequence<FileInfo> {
+        if (androidDataAccessor.isAltAccessSupported() && isRestrictedPath(path)) {
+            return androidDataAccessor.walk(path).map { it.toPlainFileInfo() }
+        }
+        return File(path).walkTopDown().map { it.toFileInfo() }
+    }
+
+    override fun isRestrictedPath(path: String): Boolean {
+        return androidDataAccessor.isRestrictedAndroidPath(path)
+    }
+
+    override fun externalStorageRoots(): List<String> = androidDataAccessor.getAllStorageRoots()
+
+    override fun normalizeForDisplay(path: String): String {
+        return androidDataAccessor.normalizePathForDisplay(path)
+    }
+
+    override fun getTransformedFile(path: String): File {
+        return androidDataAccessor.getFile(path)
+    }
+
+    override fun prepareSaveAccess(vararg paths: String?): Boolean {
+        val restricted = paths.filterNotNull().filter(::isRestrictedPath)
+        if (restricted.isEmpty()) return true
+        androidDataAccessor.syncMirror(restricted)?.let { return it }
+        if (rootFileAccessor.isAvailable) rootFileAccessor.grantGroupAccess(restricted)
+        return true
+    }
+
+    override fun commitSaveAccess(vararg paths: String?): Boolean {
+        val restricted = paths.filterNotNull().filter(::isRestrictedPath)
+        if (restricted.isEmpty()) return true
+        return androidDataAccessor.syncMirror(restricted) ?: true
+    }
+
+    private fun extractVolumeAndPath(path: String): Pair<String, String>? {
+        return StoragePathUtils.extractVolumeAndPath(androidDataAccessor.normalizePathForDisplay(path))
+    }
+
+    private fun File.toPlainFileInfo(): FileInfo =
+        toFileInfo().let { it.copy(path = androidDataAccessor.normalizePathForDisplay(it.path)) }
+
+    private fun ensureParentDirectory(file: File): Boolean {
+        val parent = file.parentFile ?: return true
+        if (parent.isDirectory) return true
+
+        val privateRoot = context.filesDir.absolutePath
+        var cursor: File? = parent
+        while (cursor != null && !cursor.isDirectory) {
+            if (cursor.exists()) {
+                if (cursor.absolutePath.startsWith("$privateRoot/")) {
+                    Logger.warn(TAG, "ensureParentDirectory: cleaning stale non-directory in app private dir to unblock mkdirs | blocker=${cursor.absolutePath}, target=${file.absolutePath}")
+                    if (!cursor.delete()) {
+                        Logger.error(TAG, "ensureParentDirectory: delete failed | blocker=${cursor.absolutePath}")
+                        return false
+                    }
+                } else {
+                    Logger.error(TAG, "ensureParentDirectory: invalid write: path component is not a directory and lives outside the app's private dir (refusing to auto-delete) | blocker=${cursor.absolutePath}, target=${file.absolutePath}")
+                    return false
+                }
+            }
+            cursor = cursor.parentFile
+        }
+        return parent.mkdirs() || parent.isDirectory
+    }
+
+    private fun File.toFileInfo(): FileInfo = FileInfo(
+        path = absolutePath,
+        name = name,
+        isDirectory = isDirectory,
+        isFile = isFile,
+        size = length(),
+        lastModified = lastModified()
+    )
+}

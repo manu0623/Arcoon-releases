@@ -1,0 +1,11 @@
+<resources>
+    <string name="dock_reorder_save_failed">無法儲存停駐列順序。請重試。</string>
+    <string name="dock_hint_options">長按查看選項</string>
+    <string name="dock_reorder_move_left">向左移動</string>
+    <string name="dock_reorder_move_right">向右移動</string>
+    <string name="dock_accessibility_label">停駐列</string>
+    <string name="dock_hint_move">移動</string>
+    <string name="dock_hint_cancel">取消</string>
+    <string name="dock_reorder_action">調整順序</string>
+    <string name="dock_menu_reorder">調整順序</string>
+</resources>

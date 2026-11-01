@@ -1,0 +1,636 @@
+package com.nendo.argosy.ui.screens.collections
+
+import android.content.Context
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.qualifiers.ApplicationContext
+import com.nendo.argosy.data.repository.CollectionRepository
+import com.nendo.argosy.data.repository.DownloadFileStatusRepository
+import com.nendo.argosy.data.repository.PlatformRepository
+import com.nendo.argosy.ui.common.GameListDetails
+import com.nendo.argosy.ui.common.listDetails
+import com.nendo.argosy.ui.common.resolveDownloaded
+import com.nendo.argosy.data.local.entity.CollectionEntity
+import com.nendo.argosy.data.local.entity.GameEntity
+import com.nendo.argosy.data.local.entity.getDisplayName
+import com.nendo.argosy.data.remote.romm.RomMRepository
+import com.nendo.argosy.domain.usecase.collection.IsPinnedUseCase
+import com.nendo.argosy.domain.usecase.collection.PinCollectionUseCase
+import com.nendo.argosy.domain.usecase.collection.RefreshAllCollectionsUseCase
+import com.nendo.argosy.domain.usecase.collection.UnpinCollectionUseCase
+import com.nendo.argosy.domain.usecase.download.DownloadGameUseCase
+import com.nendo.argosy.R
+import com.nendo.argosy.core.notification.NotificationDuration
+import com.nendo.argosy.core.notification.NotificationManager
+import com.nendo.argosy.core.notification.NotificationText
+import com.nendo.argosy.core.notification.NotificationType
+import com.nendo.argosy.ui.input.InputHandler
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.ui.screens.collections.dialogs.CollectionOption
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+data class CollectionGameUi(
+    val id: Long,
+    val title: String,
+    val platformId: Long,
+    val platformSlug: String,
+    val platformDisplayName: String,
+    val details: GameListDetails,
+    val isFavorite: Boolean,
+    val isDownloaded: Boolean,
+    val rommId: Long?
+)
+
+suspend fun GameEntity.toCollectionGameUi(
+    platformDisplayName: String,
+    downloadStatus: DownloadFileStatusRepository
+) = CollectionGameUi(
+    id = id,
+    title = title,
+    platformId = platformId,
+    platformSlug = platformSlug,
+    platformDisplayName = platformDisplayName,
+    details = listDetails,
+    isFavorite = isFavorite,
+    isDownloaded = resolveDownloaded(downloadStatus),
+    rommId = rommId
+)
+
+data class CollectionDetailUiState(
+    val collection: CollectionEntity? = null,
+    val games: List<CollectionGameUi> = emptyList(),
+    val isLoading: Boolean = true,
+    val isRefreshing: Boolean = false,
+    val focusedIndex: Int = 0,
+    val showOptionsModal: Boolean = false,
+    val optionsModalFocusIndex: Int = 0,
+    val showEditDialog: Boolean = false,
+    val showDeleteDialog: Boolean = false,
+    val showRemoveGameDialog: Boolean = false,
+    val gameToRemove: CollectionGameUi? = null,
+    val isPinned: Boolean = false,
+    val sectionLabels: List<String> = emptyList(),
+    val currentSectionLabel: String = "",
+    val isSearchActive: Boolean = false,
+    val searchQuery: String = "",
+    val overlayLetter: String? = null
+) {
+    val focusedGame: CollectionGameUi?
+        get() = games.getOrNull(focusedIndex)
+
+    val downloadableGamesCount: Int
+        get() = games.count { !it.isDownloaded && it.rommId != null }
+
+    val showSectionSidebar: Boolean
+        get() = !isSearchActive && sectionLabels.size > 1
+}
+
+@HiltViewModel
+class CollectionDetailViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
+    savedStateHandle: SavedStateHandle,
+    private val collectionRepository: CollectionRepository,
+    private val platformRepository: PlatformRepository,
+    private val romMRepository: RomMRepository,
+    private val isPinnedUseCase: IsPinnedUseCase,
+    private val pinCollectionUseCase: PinCollectionUseCase,
+    private val unpinCollectionUseCase: UnpinCollectionUseCase,
+    private val refreshAllCollectionsUseCase: RefreshAllCollectionsUseCase,
+    private val downloadGameUseCase: DownloadGameUseCase,
+    private val notificationManager: NotificationManager,
+    private val positions: VirtualBrowsePositions,
+    private val downloadFileStatusRepository: DownloadFileStatusRepository,
+    showcaseSource: com.nendo.argosy.ui.common.PresentationShowcaseSource
+) : ViewModel() {
+
+    private val presentation = com.nendo.argosy.ui.common.PresentationFocus(
+        "collections.detail",
+        this,
+        showcaseSource,
+        viewModelScope
+    )
+
+    private val collectionId: Long = checkNotNull(savedStateHandle["collectionId"])
+    private val stickyKey = "col:$collectionId"
+
+    private data class ModalState(
+        val focusedIndex: Int = 0,
+        val showOptionsModal: Boolean = false,
+        val optionsModalFocusIndex: Int = 0,
+        val showEditDialog: Boolean = false,
+        val showDeleteDialog: Boolean = false,
+        val showRemoveGameDialog: Boolean = false,
+        val gameToRemove: CollectionGameUi? = null,
+        val isPinned: Boolean = false,
+        val isRefreshing: Boolean = false,
+        val searchActive: Boolean = false,
+        val searchQuery: String = ""
+    )
+
+    private val _modalState = MutableStateFlow(ModalState(focusedIndex = positions.get(stickyKey)))
+    private val _refreshTrigger = MutableStateFlow(0)
+    private val _overlayLetter = MutableStateFlow<String?>(null)
+    private var preSearchIndex = 0
+    private var lastRefreshTime = 0L
+    private var overlayJob: Job? = null
+
+    companion object {
+        private const val REFRESH_DEBOUNCE_MS = 30_000L
+    }
+
+    init {
+        loadPinStatus()
+    }
+
+    private fun loadPinStatus() {
+        viewModelScope.launch {
+            val isPinned = isPinnedUseCase.isRegularPinned(collectionId)
+            _modalState.update { it.copy(isPinned = isPinned) }
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val core = _refreshTrigger.flatMapLatest {
+        combine(
+            collectionRepository.observeCollectionById(collectionId),
+            collectionRepository.observeGamesInCollection(collectionId),
+            platformRepository.observeAllPlatforms(),
+            _modalState
+        ) { collection, games, platforms, modalState ->
+            val platformMap = platforms.associate { it.id to it.getDisplayName() }
+            val sorted = games
+                .map { game ->
+                    game.toCollectionGameUi(
+                        platformDisplayName = platformMap[game.platformId]
+                            ?: context.getString(R.string.collections_detail_platform_unknown),
+                        downloadStatus = downloadFileStatusRepository
+                    )
+                }
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+            val visible = if (modalState.searchQuery.isBlank()) {
+                sorted
+            } else {
+                val q = com.nendo.argosy.util.SearchNormalizer.normalize(modalState.searchQuery)
+                sorted.filter { com.nendo.argosy.util.SearchNormalizer.normalize(it.title).contains(q) }
+            }
+            val clamped = modalState.focusedIndex.coerceIn(0, (visible.size - 1).coerceAtLeast(0))
+            CollectionDetailUiState(
+                collection = collection,
+                games = visible,
+                isLoading = false,
+                isRefreshing = modalState.isRefreshing,
+                focusedIndex = clamped,
+                showOptionsModal = modalState.showOptionsModal,
+                optionsModalFocusIndex = modalState.optionsModalFocusIndex,
+                showEditDialog = modalState.showEditDialog,
+                showDeleteDialog = modalState.showDeleteDialog,
+                showRemoveGameDialog = modalState.showRemoveGameDialog,
+                gameToRemove = modalState.gameToRemove,
+                isPinned = modalState.isPinned,
+                sectionLabels = if (modalState.searchActive) emptyList() else visible.map { sectionLabelFor(it.title) }.distinct(),
+                currentSectionLabel = visible.getOrNull(clamped)?.let { sectionLabelFor(it.title) } ?: "",
+                isSearchActive = modalState.searchActive,
+                searchQuery = modalState.searchQuery
+            )
+        }
+    }
+
+    val uiState: StateFlow<CollectionDetailUiState> = combine(core, _overlayLetter) { state, overlay ->
+        state.copy(overlayLetter = overlay)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = CollectionDetailUiState()
+    )
+
+    init {
+        viewModelScope.launch {
+            uiState
+                .map { state ->
+                    state.focusedGame?.let { com.nendo.argosy.ui.common.PresentationTarget.Game(it.id) }
+                        ?: state.collection?.let { collection ->
+                            com.nendo.argosy.ui.common.PresentationTarget.GameSet(
+                                "collection:$collectionId",
+                                collection.name
+                            ) { collectionRepository.getGameIdsInCollection(collectionId) }
+                        }
+                        ?: com.nendo.argosy.ui.common.PresentationTarget.Nothing
+                }
+                .distinctUntilChanged()
+                .collect { presentation.show(it) }
+        }
+    }
+
+    fun republishCompanionDetail() = presentation.startDescribing()
+
+    fun clearCompanionDetail() = presentation.stopDescribing()
+
+    private fun sectionLabelFor(name: String): String {
+        val first = name.trim().firstOrNull()?.uppercaseChar() ?: '#'
+        return if (first in 'A'..'Z') first.toString() else "#"
+    }
+
+    private fun hasDialogOpen(state: CollectionDetailUiState): Boolean =
+        state.showEditDialog || state.showDeleteDialog || state.showRemoveGameDialog
+
+    private fun setFocus(index: Int) {
+        _modalState.update { it.copy(focusedIndex = index) }
+        if (!_modalState.value.searchActive) positions.set(stickyKey, index)
+    }
+
+    fun moveUp() {
+        val current = uiState.value.focusedIndex
+        if (current > 0) setFocus(current - 1)
+    }
+
+    fun moveDown() {
+        val current = uiState.value.focusedIndex
+        if (current < uiState.value.games.size - 1) setFocus(current + 1)
+    }
+
+    fun handleGameLongPress(index: Int) {
+        val state = uiState.value
+        if (hasDialogOpen(state) || state.showOptionsModal) return
+        if (index !in state.games.indices) return
+        setFocus(index)
+        showOptionsModal()
+    }
+
+    fun jumpToSection(label: String) {
+        val state = uiState.value
+        val target = state.games.indexOfFirst { sectionLabelFor(it.title) == label }
+        if (target < 0) return
+        setFocus(target)
+        showLetterOverlay(label)
+    }
+
+    fun jumpToNextSection() {
+        val labels = uiState.value.sectionLabels
+        if (labels.isEmpty()) return
+        val current = labels.indexOf(uiState.value.currentSectionLabel)
+        val next = if (current < 0 || current >= labels.lastIndex) 0 else current + 1
+        jumpToSection(labels[next])
+    }
+
+    fun jumpToPreviousSection() {
+        val labels = uiState.value.sectionLabels
+        if (labels.isEmpty()) return
+        val current = labels.indexOf(uiState.value.currentSectionLabel)
+        val prev = if (current <= 0) labels.lastIndex else current - 1
+        jumpToSection(labels[prev])
+    }
+
+    private fun showLetterOverlay(label: String) {
+        overlayJob?.cancel()
+        _overlayLetter.value = label
+        overlayJob = viewModelScope.launch {
+            delay(600)
+            _overlayLetter.value = null
+        }
+    }
+
+    fun openSearch() {
+        if (_modalState.value.searchActive) return
+        preSearchIndex = uiState.value.focusedIndex
+        _modalState.update {
+            it.copy(
+                searchActive = true,
+                searchQuery = "",
+                focusedIndex = 0
+            )
+        }
+    }
+
+    fun closeSearch() {
+        if (!_modalState.value.searchActive) return
+        _modalState.update {
+            it.copy(
+                searchActive = false,
+                searchQuery = "",
+                focusedIndex = preSearchIndex
+            )
+        }
+    }
+
+    fun setSearchQuery(query: String) {
+        _modalState.update { it.copy(searchQuery = query, focusedIndex = 0) }
+    }
+
+    fun showOptionsModal() {
+        _modalState.update {
+            it.copy(
+                showOptionsModal = true,
+                optionsModalFocusIndex = 0
+            )
+        }
+    }
+
+    fun hideOptionsModal() {
+        _modalState.update { it.copy(showOptionsModal = false) }
+    }
+
+    fun moveOptionsFocus(delta: Int) {
+        val state = uiState.value
+        val hasGame = state.focusedGame != null
+        val hasDownloadable = state.downloadableGamesCount > 0
+        val optionCount = 2 + (if (hasDownloadable) 1 else 0) + (if (hasGame) 1 else 0)
+        val maxIndex = optionCount - 1
+        val currentIndex = _modalState.value.optionsModalFocusIndex
+        val newIndex = (currentIndex + delta).coerceIn(0, maxIndex)
+        _modalState.update { it.copy(optionsModalFocusIndex = newIndex) }
+    }
+
+    fun selectOption(option: CollectionOption) {
+        hideOptionsModal()
+        when (option) {
+            CollectionOption.DOWNLOAD_ALL -> downloadAllGames()
+            CollectionOption.RENAME -> showEditDialog()
+            CollectionOption.DELETE -> showDeleteDialog()
+            CollectionOption.REMOVE_GAME -> showRemoveGameDialog()
+        }
+    }
+
+    fun confirmOptionSelection() {
+        val state = uiState.value
+        val hasDownloadable = state.downloadableGamesCount > 0
+        var idx = _modalState.value.optionsModalFocusIndex
+
+        val option = if (hasDownloadable) {
+            when (idx) {
+                0 -> CollectionOption.DOWNLOAD_ALL
+                1 -> CollectionOption.RENAME
+                2 -> CollectionOption.DELETE
+                else -> CollectionOption.REMOVE_GAME
+            }
+        } else {
+            when (idx) {
+                0 -> CollectionOption.RENAME
+                1 -> CollectionOption.DELETE
+                else -> CollectionOption.REMOVE_GAME
+            }
+        }
+        selectOption(option)
+    }
+
+    fun downloadAllGames() {
+        val state = uiState.value
+        val downloadable = state.games.filter { !it.isDownloaded && it.rommId != null }
+        if (downloadable.isEmpty()) return
+
+        viewModelScope.launch {
+            var queued = 0
+            for (game in downloadable) {
+                downloadGameUseCase(game.id)
+                queued++
+            }
+            notificationManager.show(
+                title = NotificationText.Res(R.string.notif_collection_downloads_queued_title),
+                subtitle = NotificationText.Plural(
+                    R.plurals.notif_collection_downloads_queued_subtitle,
+                    queued,
+                    listOf(queued)
+                ),
+                type = NotificationType.INFO,
+                duration = NotificationDuration.MEDIUM
+            )
+        }
+    }
+
+    fun showEditDialog() {
+        _modalState.update { it.copy(showEditDialog = true) }
+    }
+
+    fun hideEditDialog() {
+        _modalState.update { it.copy(showEditDialog = false) }
+    }
+
+    fun showDeleteDialog() {
+        _modalState.update { it.copy(showDeleteDialog = true) }
+    }
+
+    fun hideDeleteDialog() {
+        _modalState.update { it.copy(showDeleteDialog = false) }
+    }
+
+    fun showRemoveGameDialog() {
+        val game = uiState.value.focusedGame ?: return
+        _modalState.update {
+            it.copy(
+                gameToRemove = game,
+                showRemoveGameDialog = true
+            )
+        }
+    }
+
+    fun hideRemoveGameDialog() {
+        _modalState.update {
+            it.copy(
+                showRemoveGameDialog = false,
+                gameToRemove = null
+            )
+        }
+    }
+
+    fun confirmRemoveGame() {
+        val game = _modalState.value.gameToRemove ?: return
+        viewModelScope.launch {
+            romMRepository.removeGameFromCollectionWithSync(game.id, collectionId)
+            hideRemoveGameDialog()
+            _refreshTrigger.value++
+        }
+    }
+
+    fun updateCollectionName(name: String) {
+        viewModelScope.launch {
+            romMRepository.updateCollectionWithSync(collectionId, name, null)
+            hideEditDialog()
+        }
+    }
+
+    fun deleteCollection(onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            romMRepository.deleteCollectionWithSync(collectionId)
+            hideDeleteDialog()
+            onDeleted()
+        }
+    }
+
+    fun removeGameFromCollection(gameId: Long) {
+        viewModelScope.launch {
+            romMRepository.removeGameFromCollectionWithSync(gameId, collectionId)
+        }
+    }
+
+    fun togglePin() {
+        viewModelScope.launch {
+            val isPinned = _modalState.value.isPinned
+            if (isPinned) {
+                unpinCollectionUseCase.unpinRegular(collectionId)
+            } else {
+                pinCollectionUseCase.pinRegular(collectionId)
+            }
+            _modalState.update { it.copy(isPinned = !isPinned) }
+        }
+    }
+
+    fun refresh() {
+        val now = System.currentTimeMillis()
+        if (now - lastRefreshTime < REFRESH_DEBOUNCE_MS) return
+        if (_modalState.value.isRefreshing) return
+
+        lastRefreshTime = now
+        viewModelScope.launch {
+            _modalState.update { it.copy(isRefreshing = true) }
+            refreshAllCollectionsUseCase()
+            _modalState.update { it.copy(isRefreshing = false) }
+            _refreshTrigger.value++
+        }
+    }
+
+    fun createInputHandler(
+        onBack: () -> Unit,
+        onGameClick: (Long) -> Unit
+    ): InputHandler = object : InputHandler {
+        override fun onUp(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state)) return InputResult.UNHANDLED
+            when {
+                state.showOptionsModal -> {
+                    moveOptionsFocus(-1)
+                    return InputResult.HANDLED
+                }
+                else -> {
+                    moveUp()
+                    return InputResult.HANDLED
+                }
+            }
+        }
+
+        override fun onDown(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state)) return InputResult.UNHANDLED
+            when {
+                state.showOptionsModal -> {
+                    moveOptionsFocus(1)
+                    return InputResult.HANDLED
+                }
+                else -> {
+                    moveDown()
+                    return InputResult.HANDLED
+                }
+            }
+        }
+
+        override fun onConfirm(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state)) return InputResult.UNHANDLED
+            when {
+                state.showOptionsModal -> {
+                    confirmOptionSelection()
+                    return InputResult.HANDLED
+                }
+                else -> {
+                    state.focusedGame?.let { onGameClick(it.id) }
+                    return InputResult.HANDLED
+                }
+            }
+        }
+
+        override fun onBack(): InputResult {
+            val state = uiState.value
+            when {
+                state.showEditDialog -> {
+                    hideEditDialog()
+                    return InputResult.HANDLED
+                }
+                state.showDeleteDialog -> {
+                    hideDeleteDialog()
+                    return InputResult.HANDLED
+                }
+                state.showRemoveGameDialog -> {
+                    hideRemoveGameDialog()
+                    return InputResult.HANDLED
+                }
+                state.showOptionsModal -> {
+                    hideOptionsModal()
+                    return InputResult.HANDLED
+                }
+                state.isSearchActive -> {
+                    closeSearch()
+                    return InputResult.HANDLED
+                }
+                else -> {
+                    onBack()
+                    return InputResult.HANDLED
+                }
+            }
+        }
+
+        override fun onContextMenu(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state) || state.showOptionsModal) return InputResult.HANDLED
+            openSearch()
+            return InputResult.HANDLED
+        }
+
+        override fun onMenu(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state) || state.showOptionsModal) return InputResult.HANDLED
+            refresh()
+            return InputResult.HANDLED
+        }
+
+        override fun onPrevTrigger(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state) || state.showOptionsModal) return InputResult.HANDLED
+            if (state.sectionLabels.isEmpty()) return InputResult.UNHANDLED
+            jumpToPreviousSection()
+            return InputResult.HANDLED
+        }
+
+        override fun onNextTrigger(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state) || state.showOptionsModal) return InputResult.HANDLED
+            if (state.sectionLabels.isEmpty()) return InputResult.UNHANDLED
+            jumpToNextSection()
+            return InputResult.HANDLED
+        }
+
+        override fun onSelect(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state)) return InputResult.UNHANDLED
+            if (com.nendo.argosy.ui.dualscreen.selectSwapsRoles()) return InputResult.UNHANDLED
+            showOptionsModal()
+            return InputResult.HANDLED
+        }
+
+        override fun onLongConfirm(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state)) return InputResult.UNHANDLED
+            if (state.showOptionsModal) return InputResult.HANDLED
+            showOptionsModal()
+            return InputResult.HANDLED
+        }
+
+        override fun onSecondaryAction(): InputResult {
+            val state = uiState.value
+            if (hasDialogOpen(state) || state.showOptionsModal) return InputResult.HANDLED
+            togglePin()
+            return InputResult.HANDLED
+        }
+    }
+}

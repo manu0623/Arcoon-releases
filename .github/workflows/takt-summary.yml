@@ -1,0 +1,34 @@
+name: Takt summary
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: takt-summary-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: scripts/ci/takt_gate.py
+          sparse-checkout-cone-mode: false
+
+      - name: Check the pasted review summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          PR_HEAD_MESSAGE="$(gh api "repos/$REPO/commits/$PR_HEAD_SHA" --jq .commit.message)" \
+            python3 scripts/ci/takt_gate.py pr-check

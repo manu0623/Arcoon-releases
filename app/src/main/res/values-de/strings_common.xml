@@ -1,0 +1,1089 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sort_title">A-Z</string>
+    <string name="sort_rating">Bewertung</string>
+    <string name="sort_user_rating">Eigene Bewertung</string>
+    <string name="sort_difficulty">Schwierigkeit</string>
+    <string name="sort_release_year">Erscheinungsjahr</string>
+    <string name="sort_play_count">Anzahl Starts</string>
+    <string name="sort_play_time">Spielzeit</string>
+    <string name="sort_last_played">Zuletzt gespielt</string>
+    <string name="sort_recently_added">Neu hinzugefügt</string>
+
+    <string name="source_filter_all">Alle Spiele</string>
+    <string name="source_filter_playable">Spielbar</string>
+    <string name="source_filter_favorites">Favoriten</string>
+    <string name="source_filter_hidden">Ausgeblendet</string>
+
+    <string name="completion_status_incomplete">Unvollständig</string>
+    <string name="completion_status_finished">Durchgespielt</string>
+    <string name="completion_status_completed_100">100 %</string>
+    <string name="completion_status_retired">Aufgegeben</string>
+    <string name="completion_status_never_playing">Wird nicht gespielt</string>
+
+    <!-- Save manager (ui/common/savechannel) -->
+
+    <string name="ui_save_channel_title">Spielstandverwaltung</string>
+    <string name="ui_save_channel_slots_heading">Spielstand-Slots</string>
+    <string name="ui_save_channel_history_heading_named">Verlauf (%1$s)</string>
+    <string name="ui_save_channel_history_heading">Verlauf</string>
+    <string name="ui_save_channel_history_empty">Noch keine Spielstände</string>
+    <string name="ui_save_channel_tab_saves">Spielstände</string>
+    <string name="ui_save_channel_tab_states">Savestates</string>
+    <string name="ui_save_channel_states_empty">Keine Savestate-Slots verfügbar</string>
+    <string name="ui_save_channel_states_heading_named">Savestates in %1$s</string>
+    <string name="ui_save_channel_states_heading_default">Savestates im Standard-Slot</string>
+    <string name="ui_save_channel_slot_new">Neuer Slot</string>
+    <string name="ui_save_channel_slot_legacy_tag">[Alt]</string>
+    <string name="ui_save_channel_history_active_point">Aktiver Wiederherstellungspunkt</string>
+    <string name="ui_save_channel_history_latest">Neueste</string>
+    <string name="ui_save_channel_history_tag_synced">[Synchronisiert]</string>
+    <string name="ui_save_channel_history_tag_local">[Lokal]</string>
+    <string name="ui_save_channel_active_default">Neueste</string>
+    <string name="ui_save_channel_slot_autosave">Autospeicherung</string>
+    <string name="ui_save_channel_slot_archived">Archiviert</string>
+
+    <string name="ui_save_channel_footer_migrate">Migrieren</string>
+    <string name="ui_save_channel_footer_delete_legacy_slot">Löschen</string>
+    <string name="ui_save_channel_footer_activate">Aktivieren</string>
+    <string name="ui_save_channel_footer_rename">Umbenennen</string>
+    <string name="ui_save_channel_footer_delete_slot">Löschen</string>
+    <string name="ui_save_channel_footer_restore_save">Wiederherstellen</string>
+    <string name="ui_save_channel_footer_save_as">In Slot kopieren</string>
+    <string name="ui_save_channel_slot_picker_title">Spielstand kopieren nach</string>
+    <string name="ui_save_channel_slot_picker_new_save">Neuer Spielstand</string>
+    <string name="ui_save_channel_slot_picker_confirm">Hierhin kopieren</string>
+    <string name="ui_save_channel_slot_picker_cancel">Abbrechen</string>
+    <string name="ui_save_channel_slot_picker_has_save_tag">Bereits vorhanden</string>
+    <string name="ui_save_channel_notice_slot_has_this_save">%1$s enthält diesen Spielstand bereits</string>
+    <string name="ui_save_channel_footer_restore_state">Wiederherstellen</string>
+    <string name="ui_save_channel_footer_preview_state">Vorschau</string>
+    <string name="ui_save_channel_footer_delete_state">Löschen</string>
+    <string name="ui_save_channel_footer_download_state">Herunterladen</string>
+    <string name="ui_save_channel_footer_tab_states">Savestates</string>
+    <string name="ui_save_channel_footer_tab_saves">Spielstände</string>
+    <string name="ui_save_channel_footer_sync">Sync</string>
+
+    <string name="ui_save_channel_restore_title">SPIELSTAND WIEDERHERSTELLEN</string>
+    <string name="ui_save_channel_restore_confirm">Wiederherstellen</string>
+    <string name="ui_save_channel_restore_cancel">Abbrechen</string>
+    <string name="ui_save_channel_restore_message">Diesen Spielstand in Ihrem aktuellen Spiel wiederherstellen?</string>
+
+    <string name="ui_save_channel_rename_title_save_as">SPEICHERN UNTER</string>
+    <string name="ui_save_channel_rename_title_new_slot">NEUER SPEICHER-SLOT</string>
+    <string name="ui_save_channel_rename_title_rename">SPEICHER-SLOT UMBENENNEN</string>
+    <string name="ui_save_channel_rename_confirm_save_as">Speichern</string>
+    <string name="ui_save_channel_rename_confirm_new_slot">Erstellen</string>
+    <string name="ui_save_channel_rename_confirm_rename">Umbenennen</string>
+    <string name="ui_save_channel_rename_prompt_save_as">Geben Sie einen Namen für diesen Speicher-Slot ein</string>
+    <string name="ui_save_channel_rename_prompt_new_slot">Geben Sie einen Namen für diesen Speicher-Slot ein</string>
+    <string name="ui_save_channel_rename_prompt_rename">Geben Sie einen neuen Namen ein</string>
+    <string name="ui_save_channel_rename_footer_confirm">Bestätigen</string>
+    <string name="ui_save_channel_rename_footer_cancel">Abbrechen</string>
+    <string name="ui_save_channel_rename_placeholder">Slot-Name</string>
+    <string name="ui_save_channel_rename_cancel_button">Abbrechen</string>
+
+    <string name="ui_save_channel_migrate_title">SPIELSTAND MIGRIEREN</string>
+    <string name="ui_save_channel_migrate_confirm">Migrieren</string>
+    <string name="ui_save_channel_migrate_cancel">Abbrechen</string>
+    <string name="ui_save_channel_migrate_message">\"%1$s\" in das neue Speichersystem migrieren?</string>
+    <string name="ui_save_channel_migrate_note">Dadurch wird er als benannter Speicher-Slot registriert.</string>
+
+    <string name="ui_save_channel_delete_legacy_title">ALTEN SPIELSTAND LÖSCHEN</string>
+    <string name="ui_save_channel_delete_legacy_confirm">Löschen</string>
+    <string name="ui_save_channel_delete_legacy_cancel">Abbrechen</string>
+    <plurals name="ui_save_channel_delete_legacy_message">
+        <item quantity="one">\"%1$s\" und %2$d Sicherung löschen?</item>
+        <item quantity="other">\"%1$s\" und %2$d Sicherungen löschen?</item>
+    </plurals>
+    <string name="ui_save_channel_delete_legacy_note">Dies entfernt ihn vom Server und aus dem lokalen Speicher. Dies kann nicht rückgängig gemacht werden.</string>
+
+    <string name="ui_save_channel_delete_slot_title">SPEICHER-SLOT LÖSCHEN</string>
+    <string name="ui_save_channel_delete_slot_confirm">Löschen</string>
+    <string name="ui_save_channel_delete_slot_cancel">Abbrechen</string>
+    <string name="ui_save_channel_delete_slot_message">\"%1$s\" löschen?</string>
+    <string name="ui_save_channel_delete_slot_note">Dies entfernt ihn vom Server und aus dem lokalen Speicher. Dies kann nicht rückgängig gemacht werden.</string>
+    <string name="ui_save_channel_footer_delete_archived">Alle löschen</string>
+    <string name="ui_save_channel_footer_delete_version">Löschen</string>
+    <string name="ui_save_channel_delete_version_title">SPIELSTAND LÖSCHEN</string>
+    <string name="ui_save_channel_delete_version_message">Spielstand vom %1$s löschen?</string>
+    <string name="ui_save_channel_delete_archived_title">ARCHIVIERTE SPIELSTÄNDE LÖSCHEN</string>
+    <plurals name="ui_save_channel_delete_archived_message">
+        <item quantity="one">%1$d archivierten Spielstand löschen?</item>
+        <item quantity="other">%1$d archivierte Spielstände löschen?</item>
+    </plurals>
+    <string name="ui_save_channel_delete_local_note">Dies entfernt die Kopie auf diesem Gerät. Eine Kopie auf dem Server bleibt erhalten. Dies kann nicht rückgängig gemacht werden.</string>
+    <string name="ui_save_channel_delete_only_copy_note">Dieses Gerät hat die einzige Kopie. Sie ist danach endgültig verloren.</string>
+    <plurals name="ui_save_channel_notice_versions_deleted">
+        <item quantity="one">%1$d Spielstand gelöscht</item>
+        <item quantity="other">%1$d Spielstände gelöscht</item>
+    </plurals>
+
+    <string name="ui_save_channel_version_mismatch_title">CORE-VERSION STIMMT NICHT ÜBEREIN</string>
+    <string name="ui_save_channel_version_mismatch_confirm">Trotzdem laden</string>
+    <string name="ui_save_channel_version_mismatch_cancel">Abbrechen</string>
+    <string name="ui_save_channel_version_mismatch_saved_with">Dieser Savestate wurde gespeichert mit:</string>
+    <string name="ui_save_channel_version_mismatch_saved_core_unknown">Unbekannt</string>
+    <string name="ui_save_channel_version_mismatch_current">Aktuelle Core-Version:</string>
+    <string name="ui_save_channel_version_mismatch_current_core_unknown">Unbekannt</string>
+    <string name="ui_save_channel_version_mismatch_warning">Das Laden kann Abstürze oder Datenbeschädigung verursachen.</string>
+
+    <string name="ui_save_channel_delete_state_title">SAVESTATE LÖSCHEN</string>
+    <string name="ui_save_channel_delete_state_confirm">Löschen</string>
+    <string name="ui_save_channel_delete_state_cancel">Abbrechen</string>
+    <string name="ui_save_channel_delete_state_target_auto">Auto-Savestate</string>
+    <string name="ui_save_channel_delete_state_target_slot">Slot %1$d</string>
+    <string name="ui_save_channel_delete_state_message">%1$s löschen?</string>
+    <string name="ui_save_channel_delete_state_note">Dies entfernt ihn aus dem Cache.</string>
+
+    <string name="ui_save_channel_replace_auto_title">AUTO-SAVESTATE ERSETZEN</string>
+    <string name="ui_save_channel_replace_auto_confirm">Ersetzen</string>
+    <string name="ui_save_channel_replace_auto_cancel">Abbrechen</string>
+    <string name="ui_save_channel_replace_auto_message">Auto-Savestate durch Slot %1$d ersetzen?</string>
+    <string name="ui_save_channel_replace_auto_note">Der aktuelle Auto-Savestate wird überschrieben.</string>
+
+    <string name="ui_save_channel_notice_download_target_auto">Auto-Savestate</string>
+    <string name="ui_save_channel_notice_download_target_slot">Savestate-Slot %1$d</string>
+    <string name="ui_save_channel_notice_downloaded">%1$s heruntergeladen</string>
+    <string name="ui_save_channel_notice_no_local_path">Spiel hat keinen lokalen Pfad</string>
+    <string name="ui_save_channel_notice_restore_target_auto">Auto-Savestate</string>
+    <string name="ui_save_channel_notice_restore_target_slot">Savestate-Slot %1$d</string>
+    <string name="ui_save_channel_notice_restored_state">%1$s wiederhergestellt</string>
+    <string name="ui_save_channel_notice_state_not_cached">Savestate nicht im Cache gefunden</string>
+    <string name="ui_save_channel_notice_state_no_config">Keine Savestate-Konfiguration für diesen Emulator</string>
+    <string name="ui_save_channel_notice_delete_target_auto">Auto-Savestate</string>
+    <string name="ui_save_channel_notice_delete_target_slot">Savestate-Slot %1$d</string>
+    <string name="ui_save_channel_notice_deleted_state">%1$s gelöscht</string>
+    <string name="ui_save_channel_notice_replace_auto_failed">Auto-Savestate konnte nicht ersetzt werden</string>
+    <string name="ui_save_channel_notice_replaced_auto">Auto-Savestate durch Slot %1$d ersetzt</string>
+
+    <string name="ui_save_channel_notice_activate_default">Autospeicherung</string>
+    <string name="ui_save_channel_notice_using_slot">Verwendeter Speicher-Slot: %1$s</string>
+    <string name="ui_save_channel_notice_save_unavailable">Dieser Spielstand ist nicht mehr verfügbar. Synchronisieren und erneut versuchen.</string>
+    <string name="ui_save_channel_notice_clear_failed">Vorhandener Spielstand konnte nicht gelöscht werden</string>
+    <string name="ui_save_channel_notice_switch_default">Autospeicherung</string>
+    <string name="ui_save_channel_notice_switched_to">Gewechselt zu: %1$s</string>
+    <string name="ui_save_channel_notice_restored_to_slot">Wiederhergestellt zu %1$s</string>
+    <string name="ui_save_channel_notice_restored">Spielstand wiederhergestellt</string>
+    <string name="ui_save_channel_notice_restored_to_slot_synced">Wiederhergestellt zu %1$s und synchronisiert</string>
+    <string name="ui_save_channel_notice_restored_synced">Spielstand wiederhergestellt und synchronisiert</string>
+    <string name="ui_save_channel_notice_slot_name_empty">Der Slot-Name darf nicht leer sein</string>
+    <string name="ui_save_channel_notice_slot_name_reserved">\'%1$s\' ist ein reservierter Name</string>
+    <string name="ui_save_channel_notice_new_slot_exists">Slot \'%1$s\' existiert bereits</string>
+    <string name="ui_save_channel_notice_new_slot_created">Speicher-Slot \'%1$s\' erstellt</string>
+    <string name="ui_save_channel_notice_save_as_same_name">Der neue Slot-Name muss sich von der Quelle unterscheiden</string>
+    <string name="ui_save_channel_notice_save_as_slot_exists">Slot \'%1$s\' existiert bereits</string>
+    <string name="ui_save_channel_notice_save_as_created">Speicher-Slot \'%1$s\' erstellt</string>
+    <string name="ui_save_channel_notice_save_as_failed">Speicher-Slot konnte nicht erstellt werden</string>
+    <string name="ui_save_channel_notice_renamed">Umbenannt in \'%1$s\'</string>
+    <string name="ui_save_channel_notice_slot_deleted">Speicher-Slot \'%1$s\' gelöscht</string>
+    <string name="ui_save_channel_notice_slot_deleted_server_failed">Speicher-Slot \'%1$s\' hier gelöscht; die Kopie auf dem Server konnte nicht entfernt werden</string>
+    <string name="ui_save_channel_notice_migrated">\'%1$s\' migriert</string>
+    <string name="ui_save_channel_notice_migrate_failed">Spielstand konnte nicht migriert werden</string>
+    <string name="ui_save_channel_notice_legacy_deleted">\'%1$s\' gelöscht</string>
+    <string name="ui_save_channel_notice_legacy_deleted_server_failed">\'%1$s\' hier gelöscht; die Kopie auf dem Server konnte nicht entfernt werden</string>
+    <string name="ui_save_channel_notice_saves_synced">Spielstände vom Server synchronisiert</string>
+
+    <string name="ui_state_slot_row_empty">(Leer)</string>
+    <string name="ui_state_slot_row_tag_synced">[Synchronisiert]</string>
+    <string name="ui_state_slot_row_tag_pending">[Ausstehend]</string>
+    <string name="ui_state_slot_row_tag_server">[Server]</string>
+    <string name="ui_state_slot_row_tag_local">[Lokal]</string>
+
+    <!-- Shared modals and controls (ui/components, ui/primitives) -->
+
+    <string name="ui_confirm_modal_cancel">Abbrechen</string>
+    <string name="ui_pushed_apk_title">%1$s installieren?</string>
+    <string name="ui_pushed_apk_message">%1$s hat diese App an dieses Gerät gesendet.\n\nPaket: %2$s\nSignatur: %3$s</string>
+    <string name="ui_pushed_apk_unknown_server">Dein RomM-Server</string>
+    <string name="ui_pushed_apk_unknown_signer">unbekannt</string>
+    <string name="ui_pushed_apk_install">Installieren</string>
+    <string name="ui_pushed_apk_not_now">Nicht jetzt</string>
+
+    <string name="ui_modal_search_placeholder">Suchen...</string>
+
+    <string name="ui_disc_picker_title">DISC AUSWÄHLEN</string>
+    <string name="ui_disc_picker_subtitle">Wählen Sie, welche Disc gestartet werden soll</string>
+    <string name="ui_disc_picker_row">Disc %1$d</string>
+
+    <string name="ui_memcard_picker_title">SPEICHERKARTE AUSWÄHLEN</string>
+    <string name="ui_memcard_picker_subtitle">Spielstand-Sync liest und schreibt die gewählte Karte</string>
+    <string name="ui_memcard_picker_empty">leer</string>
+    <plurals name="ui_memcard_picker_save_count">
+        <item quantity="one">%d Spielstand</item>
+        <item quantity="other">%d Spielstände</item>
+    </plurals>
+    <string name="ui_memcard_picker_summary_dated">%1$s - %2$s</string>
+
+    <string name="ui_netplay_invite_title">Netplay-Einladung</string>
+    <string name="ui_netplay_invite_message">%1$s hat Sie zum Spielen eingeladen</string>
+    <string name="ui_netplay_invite_dismiss">Verwerfen</string>
+    <string name="ui_netplay_invite_join">Beitreten</string>
+
+    <string name="ui_changelog_title">Neu in %1$s</string>
+    <string name="ui_changelog_footer_continue">Weiter</string>
+    <string name="ui_changelog_action_required">Aktion erforderlich: %1$s</string>
+    <string name="ui_changelog_action_relogin_romm">Erneut bei RomM anmelden</string>
+    <string name="ui_changelog_action_resync_library">Bibliothek neu synchronisieren</string>
+    <string name="ui_changelog_action_clear_cache">Cache leeren</string>
+
+    <string name="ui_background_conflict_title">Spielstand-Synchronisierungskonflikt</string>
+    <string name="ui_background_conflict_default_slot">Standard-Spielstand</string>
+    <string name="ui_background_conflict_message_local_changed">Ihr lokaler Spielstand hat sich seit der letzten Synchronisierung geändert. Wählen Sie, welcher Spielstand gelten soll.</string>
+    <string name="ui_background_conflict_message_server_newer">Auf dem Server ist ein neuerer Spielstand vorhanden. Wählen Sie, welcher Spielstand gelten soll.</string>
+    <string name="ui_background_conflict_choice_local">Lokal</string>
+    <string name="ui_background_conflict_choice_server">Server</string>
+    <string name="ui_background_conflict_choice_skip">Überspringen</string>
+    <string name="ui_background_conflict_choice_skip_subtitle">Beide vorerst behalten</string>
+    <string name="ui_background_conflict_age_future">in der Zukunft</string>
+    <string name="ui_background_conflict_age_now">gerade eben</string>
+    <plurals name="ui_background_conflict_age_minutes">
+        <item quantity="one">vor %d Minute</item>
+        <item quantity="other">vor %d Minuten</item>
+    </plurals>
+    <plurals name="ui_background_conflict_age_hours">
+        <item quantity="one">vor %d Stunde</item>
+        <item quantity="other">vor %d Stunden</item>
+    </plurals>
+    <plurals name="ui_background_conflict_age_days">
+        <item quantity="one">vor %d Tag</item>
+        <item quantity="other">vor %d Tagen</item>
+    </plurals>
+    <plurals name="ui_background_conflict_age_months">
+        <item quantity="one">vor %d Monat</item>
+        <item quantity="other">vor %d Monaten</item>
+    </plurals>
+
+    <string name="ui_save_conflict_title">Spielstandkonflikt</string>
+    <string name="ui_save_conflict_default_slot">Standard-Spielstand</string>
+    <string name="ui_save_conflict_message">Der Server hat einen neueren Spielstand. Beim Hochladen wird Ihr lokaler Spielstand zum neuesten, und die Kopie auf dem Server bleibt erhalten.</string>
+    <string name="ui_save_conflict_source_local">Lokal</string>
+    <string name="ui_save_conflict_source_server">Server</string>
+    <string name="ui_save_conflict_skip">Sync überspringen</string>
+    <string name="ui_save_conflict_overwrite">Hochladen</string>
+    <string name="ui_save_conflict_hardcore_title">Hardcore-Spielstand ersetzen?</string>
+    <string name="ui_save_conflict_hardcore_message">Der aktuelle Spielstand dieses Kanals wurde im Hardcore-Modus erstellt. Wenn Sie diesen Spielstand behalten, ersetzt er ihn als aktuellen Spielstand. Der Hardcore-Spielstand bleibt im Verlauf erhalten.</string>
+    <string name="ui_save_conflict_hardcore_replace">Ersetzen</string>
+    <string name="ui_save_conflict_unknown_game">Unbekanntes Spiel</string>
+    <string name="ui_save_conflict_age_future">in der Zukunft</string>
+    <string name="ui_save_conflict_age_now">gerade eben</string>
+    <plurals name="ui_save_conflict_age_minutes">
+        <item quantity="one">vor %d Minute</item>
+        <item quantity="other">vor %d Minuten</item>
+    </plurals>
+    <plurals name="ui_save_conflict_age_hours">
+        <item quantity="one">vor %d Stunde</item>
+        <item quantity="other">vor %d Stunden</item>
+    </plurals>
+    <plurals name="ui_save_conflict_age_days">
+        <item quantity="one">vor %d Tag</item>
+        <item quantity="other">vor %d Tagen</item>
+    </plurals>
+    <plurals name="ui_save_conflict_age_months">
+        <item quantity="one">vor %d Monat</item>
+        <item quantity="other">vor %d Monaten</item>
+    </plurals>
+
+    <string name="ui_view_all_outline_label">Alle anzeigen</string>
+    <string name="ui_view_all_remaining_count">+%1$d</string>
+    <string name="ui_view_all_accent_label">Alle anzeigen</string>
+
+    <string name="ui_new_badge_label">NEU</string>
+
+    <string name="ui_expandable_preference_collapse">Einklappen</string>
+    <string name="ui_expandable_preference_expand">Ausklappen</string>
+
+    <string name="ui_permission_card_granted">Erteilt</string>
+
+    <string name="ui_game_card_favorite">Favorit</string>
+    <string name="ui_game_card_downloaded">Heruntergeladen</string>
+
+    <string name="ui_download_badge_paused">Pausiert</string>
+    <string name="ui_download_cover_paused">Pausiert</string>
+
+    <string name="ui_section_breadcrumb_previous">Vorheriger Abschnitt</string>
+    <string name="ui_section_breadcrumb_next">Nächster Abschnitt</string>
+
+    <string name="ui_qr_code_description">QR-Code für %1$s</string>
+    <string name="ui_qr_scanner_hint">Richten Sie die Kamera auf den RomM-Pairing-QR-Code</string>
+
+    <string name="ui_custom_tile_menu_header">KACHEL</string>
+
+    <string name="ui_add_to_collection_title">ZUR SAMMLUNG HINZUFÜGEN</string>
+    <string name="ui_add_to_collection_empty">Noch keine Sammlungen</string>
+    <string name="ui_add_to_collection_create">Neue Sammlung erstellen</string>
+    <string name="ui_add_to_collection_member">In Sammlung</string>
+
+    <string name="ui_steam_location_mark_installed">Als installiert markieren</string>
+    <string name="ui_steam_location_managed_by">Verwaltet von %1$s</string>
+
+    <string name="ui_direction_ring_title">Richtung</string>
+    <string name="ui_direction_ring_rotate">Drehen</string>
+    <string name="ui_direction_ring_set">Festlegen</string>
+    <string name="ui_direction_ring_cancel">Abbrechen</string>
+
+    <string name="ui_core_crash_title">Core abgestürzt</string>
+    <string name="ui_core_crash_footer_select">Auswählen</string>
+    <string name="ui_core_crash_footer_dismiss_options">Verwerfen</string>
+    <string name="ui_core_crash_footer_launch">Spiel starten</string>
+    <string name="ui_core_crash_footer_dismiss_ready">Verwerfen</string>
+    <string name="ui_core_crash_footer_dismiss_done">Verwerfen</string>
+    <string name="ui_core_crash_footer_cancel_download">Abbrechen</string>
+    <string name="ui_core_crash_message">\'%1$s\' ist während Ihrer letzten Sitzung abgestürzt. Wählen Sie eine Wiederherstellungsoption.</string>
+
+    <string name="ui_episode_picker_selection_none">Noch nichts ausgewählt</string>
+    <plurals name="ui_episode_picker_selection_count">
+        <item quantity="one">%d Episode ausgewählt</item>
+        <item quantity="other">%d Episoden ausgewählt</item>
+    </plurals>
+    <string name="ui_episode_picker_cancel">Abbrechen</string>
+
+    <string name="ui_media_tile_mode_sequential">Nächste Episode</string>
+    <string name="ui_media_tile_mode_sequential_supporting">Setzt dort fort, wo Sie zuletzt waren, egal wo Sie schauen</string>
+    <string name="ui_media_tile_mode_random">Zufällige Episode</string>
+    <string name="ui_media_tile_mode_random_supporting">Wählt eine aus und behält sie, bis Sie sie gesehen haben</string>
+    <string name="ui_media_tile_mode_season">Eine Staffel</string>
+    <string name="ui_media_tile_mode_season_supporting">Arbeitet eine einzelne Staffel ab</string>
+    <string name="ui_media_tile_mode_playlist">Ausgewählte Episoden</string>
+    <string name="ui_media_tile_mode_playlist_supporting">Spielt die von Ihnen gewählten Episoden in der gewählten Reihenfolge</string>
+    <string name="ui_media_tile_step_mode">Was soll diese Kachel abspielen?</string>
+    <string name="ui_media_tile_step_season">Staffel wählen</string>
+    <string name="ui_media_tile_step_episodes">Episoden wählen</string>
+    <string name="ui_media_tile_empty_seasons">Für diese Serie wurden noch keine Staffeln synchronisiert</string>
+    <string name="ui_media_tile_empty_episodes">Für diese Serie wurden noch keine Episoden synchronisiert</string>
+    <string name="ui_media_tile_episodes_confirm">Diese Episoden verwenden</string>
+    <string name="ui_media_tile_error_season_not_synced">Für diese Staffel wurden noch keine Episoden synchronisiert</string>
+    <string name="ui_media_tile_error_series_not_synced">Für diese Serie wurden noch keine Episoden synchronisiert</string>
+
+    <string name="ui_tile_picker_title">ZUM RASTER HINZUFÜGEN</string>
+    <string name="ui_tile_picker_title_track_game">EIN SPIEL VERFOLGEN</string>
+    <string name="ui_tile_picker_subtitle_matching">Treffer für \"%1$s\"</string>
+    <string name="ui_tile_picker_empty_games">Keine installierten Spiele zum Hinzufügen</string>
+    <string name="ui_tile_picker_empty_collections">Noch keine Sammlungen</string>
+    <string name="ui_tile_picker_empty_apps">Keine Apps gefunden</string>
+    <string name="ui_tile_picker_empty_media">Keine Titel zum Hinzufügen</string>
+    <string name="ui_tile_picker_empty_features">Keine Widgets verfügbar</string>
+    <string name="ui_tile_picker_empty_ra_games">Kein von RetroAchievements erkanntes Spiel</string>
+    <string name="ui_feature_setup_title">Zufälliges Spiel</string>
+    <string name="ui_feature_setup_title_library_link">Bibliotheks-Link</string>
+    <string name="ui_feature_setup_step_mode">Was diese Kachel zeigt</string>
+    <string name="ui_feature_setup_mode_account">Kontoübersicht</string>
+    <string name="ui_feature_setup_mode_track">Ein Spiel verfolgen</string>
+    <string name="ui_feature_setup_step_filters">Woraus gewählt wird</string>
+    <string name="ui_feature_setup_step_platforms">Plattformen</string>
+    <string name="ui_feature_setup_step_genres">Genres</string>
+    <string name="ui_feature_setup_downloaded_only">Nur heruntergeladene Spiele</string>
+    <string name="ui_feature_setup_never_played">Noch nie gespielt</string>
+    <string name="ui_feature_setup_platforms">Plattformen</string>
+    <string name="ui_feature_setup_genres">Genres</string>
+    <string name="ui_feature_setup_step_library_link">Womit die Bibliothek geöffnet wird</string>
+    <string name="ui_feature_setup_step_series">Reihe</string>
+    <string name="ui_feature_setup_step_players">Spieler</string>
+    <string name="ui_feature_setup_step_sort">Sortierung</string>
+    <string name="ui_feature_setup_source">Anzeigen</string>
+    <string name="ui_feature_setup_series">Reihe</string>
+    <string name="ui_feature_setup_players">Spieler</string>
+    <string name="ui_feature_setup_sort">Sortierung</string>
+    <string name="ui_feature_setup_sort_ascending">Aufsteigend</string>
+    <string name="ui_feature_setup_sort_descending">Absteigend</string>
+    <string name="ui_feature_setup_done">Fertig</string>
+    <string name="ui_feature_setup_any">Alle</string>
+    <string name="ui_feature_setup_selected_count">%1$d ausgewählt</string>
+    <string name="ui_tile_picker_empty_search">Keine Treffer für diese Suche</string>
+    <string name="ui_tile_picker_delete_page">Seite löschen</string>
+
+    <string name="ui_page_chooser_title_focus_game">Als Nächstes spielen</string>
+    <string name="ui_page_chooser_title_backdrop">Hintergrund</string>
+    <string name="ui_page_chooser_title_music">Musik</string>
+    <string name="ui_page_chooser_subtitle_focus_game">Das Spiel, das diese Kachel startet</string>
+    <string name="ui_page_chooser_subtitle_game_art">Artworks und Screenshots</string>
+    <string name="ui_page_chooser_subtitle_backdrop">Was diese Seite hinter ihren Kacheln zeigt</string>
+    <string name="ui_page_chooser_subtitle_music">Was diese Seite abspielt</string>
+    <string name="ui_page_chooser_footer_navigate">Navigieren</string>
+    <string name="ui_page_chooser_footer_choose">Wählen</string>
+    <string name="ui_page_chooser_footer_back">Zurück</string>
+    <string name="ui_page_chooser_search_placeholder">Spiele suchen...</string>
+    <string name="ui_page_chooser_loading">Lädt...</string>
+    <string name="ui_page_chooser_empty">Hier gibt es nichts zur Auswahl.</string>
+    <string name="ui_page_chooser_focus_game_current">Spielt jetzt</string>
+    <string name="ui_page_chooser_source_game_art">Artwork eines Spiels</string>
+    <string name="ui_page_chooser_source_game_art_subtitle">Cover und Screenshots, die bereits in Ihrer Bibliothek sind</string>
+    <string name="ui_page_chooser_source_file">Eine Datei auf diesem Gerät</string>
+    <string name="ui_page_chooser_source_file_subtitle">Ein Bild, eine Animation oder ein kurzes Video</string>
+    <string name="ui_page_chooser_source_none">Kein Hintergrund</string>
+    <string name="ui_page_chooser_source_none_subtitle">Den eigenen Hintergrund des Launchers anzeigen</string>
+    <string name="ui_page_chooser_art_background">Hintergrundbild</string>
+    <string name="ui_page_chooser_art_cover">Cover</string>
+    <string name="ui_page_chooser_art_screenshot">Screenshot %1$d</string>
+    <string name="ui_page_chooser_music_launcher">Launcher-Musik</string>
+    <string name="ui_page_chooser_music_tile_audio">Video dieser Seite</string>
+    <string name="ui_page_chooser_music_soundtracks_header">Ihre Soundtracks</string>
+
+    <string name="ui_custom_grid_add_page">Seite hinzufügen</string>
+    <string name="ui_custom_grid_hidden_tiles_title">Ausgeblendete Kacheln</string>
+    <string name="ui_custom_grid_hidden_tile_unnamed">Unbenannte Kachel</string>
+    <plurals name="ui_custom_grid_hidden_count">
+        <item quantity="one">%d ausgeblendet</item>
+        <item quantity="other">%d ausgeblendet</item>
+    </plurals>
+    <string name="ui_custom_grid_edit_move">Verschieben</string>
+    <string name="ui_custom_grid_edit_resize">Größe ändern</string>
+    <string name="ui_custom_grid_confirm_play">Spielen</string>
+    <string name="ui_custom_grid_confirm_open">Öffnen</string>
+    <string name="ui_custom_grid_confirm_add">Hinzufügen</string>
+    <string name="ui_custom_grid_confirm_browse">Durchsuchen</string>
+    <string name="ui_custom_grid_confirm_sign_in">Anmelden</string>
+    <string name="ui_custom_grid_confirm_library">Bibliothek</string>
+
+    <string name="ui_quick_friends_my_code">Mein Freundescode</string>
+    <string name="ui_quick_friends_add_friend">Freund hinzufügen</string>
+
+    <string name="ui_friend_code_title">Mein Freundescode</string>
+    <string name="ui_friend_code_footer_regenerate">Erneuern</string>
+    <string name="ui_friend_code_footer_close">Schließen</string>
+    <string name="ui_friend_code_instructions">Code scannen oder eingeben, um einen Freund hinzuzufügen</string>
+    <string name="ui_friend_code_regenerate_row">Code erneuern</string>
+    <string name="ui_friend_code_regenerate_warning">Beim Erneuern wird Ihr aktueller Code ungültig</string>
+
+    <string name="ui_add_friend_title">Freund hinzufügen</string>
+    <string name="ui_add_friend_footer_submit">Absenden</string>
+    <string name="ui_add_friend_footer_cancel">Abbrechen</string>
+    <string name="ui_add_friend_instructions">Geben Sie den 6-stelligen Code Ihres Freundes ein</string>
+    <string name="ui_add_friend_code_placeholder">ABC123</string>
+    <string name="ui_add_friend_error_length">Der Code muss 6 Zeichen lang sein</string>
+
+    <string name="ui_netplay_join_unknown_game">Unbekannt</string>
+    <string name="ui_netplay_join_heading">Verbinde mit %1$s</string>
+    <string name="ui_netplay_join_unknown_host">Netplay</string>
+    <string name="ui_netplay_join_status_joining">Sitzung wird betreten</string>
+    <string name="ui_netplay_join_status_matching_core">Core wird abgeglichen</string>
+    <string name="ui_netplay_join_status_downloading_core">Core wird heruntergeladen</string>
+    <string name="ui_netplay_join_status_core_ready">Core bereit</string>
+    <string name="ui_netplay_join_status_verifying">Spiel wird überprüft</string>
+    <string name="ui_netplay_join_status_verified">Überprüft</string>
+    <string name="ui_netplay_join_candidates_single_missing">ROM nicht heruntergeladen. Zum Installieren auswählen.</string>
+    <string name="ui_netplay_join_candidates_single_failed">Überprüfung fehlgeschlagen. Zum Wiederholen auswählen.</string>
+    <string name="ui_netplay_join_candidates_none_installed">Keine installierte ROM passt. Wählen Sie eine zum Herunterladen.</string>
+    <string name="ui_netplay_join_candidates_multiple">Mehrere Treffer. Wählen Sie eine ROM.</string>
+    <string name="ui_netplay_join_candidate_installed">Installiert</string>
+    <string name="ui_netplay_join_candidate_not_installed">Nicht installiert</string>
+    <string name="ui_netplay_join_variants_prompt">ROM-Hash stimmt nicht überein. Wählen Sie eine Variante.</string>
+
+    <!-- Platform filter header (ui/components/PlatformFilterHeader.kt) -->
+
+    <string name="ui_platform_filter_sort_default">Standard</string>
+    <string name="ui_platform_filter_sort_name_asc">Name (A-Z)</string>
+    <string name="ui_platform_filter_sort_name_desc">Name (Z-A)</string>
+    <string name="ui_platform_filter_sort_most_games">Meiste Spiele</string>
+    <string name="ui_platform_filter_sort_least_games">Wenigste Spiele</string>
+    <string name="ui_platform_filter_search_placeholder">Plattformen suchen...</string>
+    <string name="ui_platform_filter_search_clear">Leeren</string>
+    <plurals name="ui_platform_filter_count">
+        <item quantity="one">%d Plattform</item>
+        <item quantity="other">%d Plattformen</item>
+    </plurals>
+    <string name="ui_platform_filter_open_search">Suchen</string>
+    <string name="ui_platform_filter_open_sort">Sortieren</string>
+    <string name="ui_platform_filter_open_filter">Plattformen filtern</string>
+    <string name="ui_platform_filter_mode_has_games">Mit Spielen</string>
+    <string name="ui_platform_filter_mode_enabled">Aktiviert</string>
+    <string name="ui_platform_filter_mode_all">Alle</string>
+    <string name="ui_platform_filter_hint_sort_navigate">Navigieren</string>
+    <string name="ui_platform_filter_hint_sort_select">Auswählen</string>
+    <string name="ui_platform_filter_hint_sort_back">Zurück</string>
+    <string name="ui_platform_filter_hint_search_done">Fertig</string>
+    <string name="ui_platform_filter_hint_search_close">Schließen</string>
+    <string name="ui_platform_filter_hint_header_navigate">Navigieren</string>
+    <string name="ui_platform_filter_hint_header_select">Auswählen</string>
+    <string name="ui_platform_filter_hint_header_close">Schließen</string>
+    <string name="ui_platform_filter_hint_list_navigate">Navigieren</string>
+    <string name="ui_platform_filter_hint_list_toggle">Umschalten</string>
+    <string name="ui_platform_filter_hint_list_close">Schließen</string>
+
+    <!-- Storage meter, preference rows, home layout rows (ui/components) -->
+
+    <string name="ui_volume_meter_other">Andere Apps &amp; Dateien</string>
+    <string name="ui_volume_meter_free">%1$s frei</string>
+
+    <string name="ui_cycle_preference_reset_to_global">Auf global zurücksetzen</string>
+    <string name="ui_toggle_preference_reset_to_global">Auf global zurücksetzen</string>
+    <string name="ui_toggle_preference_custom_marker">(Angepasst)</string>
+    <string name="ui_action_preference_reset_to_default">Auf Standard zurücksetzen</string>
+    <string name="ui_hue_slider_default">Standard</string>
+    <string name="ui_image_cache_migrating">Bilder werden verschoben...</string>
+    <string name="ui_image_cache_change">Ändern</string>
+    <string name="ui_image_cache_reset">Zurücksetzen</string>
+
+    <string name="ui_home_layout_row_alignment">Zeilenposition</string>
+    <string name="ui_home_layout_focus_position">Fokusanker</string>
+    <string name="ui_home_layout_inverted">Umgekehrte Reihenfolge</string>
+    <string name="ui_home_layout_resting_scale">Ruhegröße</string>
+    <string name="ui_home_layout_neighbour_push">Nachbarn verschieben</string>
+    <string name="ui_home_layout_platform_badge">Plattform-Badge</string>
+    <string name="ui_home_layout_scroll_axis">Scrollrichtung</string>
+    <string name="ui_home_layout_show_titles">Titel anzeigen</string>
+    <string name="ui_home_layout_show_all_games">Alle Spiele anzeigen</string>
+    <string name="ui_home_layout_show_all_games_subtitle">Durch die gesamte Bibliothek einer Plattform scrollen, statt bei \"Alle anzeigen\" zu stoppen</string>
+    <string name="ui_home_layout_custom_grid_columns">Spalten</string>
+    <string name="ui_home_layout_custom_grid_rows">Zeilen</string>
+    <string name="ui_home_layout_custom_grid_auto_add">Neue Downloads hinzufügen</string>
+    <string name="ui_home_layout_custom_grid_empty_slots">Leere Felder anzeigen</string>
+    <string name="ui_home_layout_custom_grid_empty_slots_subtitle">Zellen umranden, auf denen nichts liegt</string>
+    <string name="ui_home_layout_custom_grid_persist_pages">Leere Seiten behalten</string>
+    <string name="ui_home_layout_custom_grid_persist_pages_subtitle">Eine hinzugefügte Seite bleibt bestehen, auch wenn sie leer ist</string>
+    <string name="ui_home_layout_custom_grid_auto_fit">Zellen automatisch anpassen</string>
+    <string name="ui_home_layout_custom_grid_auto_fit_subtitle">Verschiebt oder verkleinert Kacheln, auf die platziert wird, statt die Platzierung abzulehnen</string>
+    <string name="ui_home_layout_rail_libraries">Medienbibliotheken</string>
+    <string name="ui_home_layout_rail_libraries_subtitle">Eine Zeile für jede Bibliothek auf Ihrem Medienserver</string>
+    <string name="ui_home_layout_rail_continue_watching">Weiterschauen</string>
+    <string name="ui_home_layout_rail_continue_watching_subtitle">Eine Zeile mit Filmen und Episoden, die Sie angefangen haben</string>
+    <string name="ui_home_layout_rail_next_up">Als Nächstes</string>
+    <string name="ui_home_layout_rail_next_up_subtitle">Eine Zeile mit der nächsten Episode jeder Serie, die Sie schauen</string>
+    <string name="ui_home_layout_auto_add_off">Aus</string>
+    <string name="ui_home_layout_auto_add_auto">Automatisch</string>
+    <string name="ui_home_layout_auto_add_prompt">Vorher fragen</string>
+    <string name="ui_home_layout_kind_carousel">Karussell</string>
+    <string name="ui_home_layout_kind_auto_grid">Automatisches Raster</string>
+    <string name="ui_home_layout_kind_custom_grid">Eigenes Raster</string>
+    <string name="ui_home_layout_alignment_top">Oben</string>
+    <string name="ui_home_layout_alignment_center">Mitte</string>
+    <string name="ui_home_layout_alignment_bottom">Unten</string>
+    <string name="ui_home_layout_focus_leading">Anfang</string>
+    <string name="ui_home_layout_focus_center">Mitte</string>
+    <string name="ui_home_layout_axis_vertical">Vertikal</string>
+    <string name="ui_home_layout_axis_horizontal">Horizontal</string>
+    <string name="ui_home_layout_lanes_columns">Spalten</string>
+    <string name="ui_home_layout_lanes_rows">Zeilen</string>
+
+    <!-- Quick settings panel (ui/components/QuickSettingsPanel.kt) -->
+
+    <string name="ui_quick_settings_title">Einstellungen</string>
+    <string name="ui_quick_settings_performance">Leistung</string>
+    <string name="ui_quick_settings_fan">Lüfter</string>
+    <string name="ui_quick_settings_fan_quiet">Leise</string>
+    <string name="ui_quick_settings_fan_smart">Intelligent</string>
+    <string name="ui_quick_settings_fan_sport">Sport</string>
+    <string name="ui_quick_settings_fan_custom">Manuell</string>
+    <string name="ui_quick_settings_performance_standard">Standard</string>
+    <string name="ui_quick_settings_performance_high">Hoch</string>
+    <string name="ui_quick_settings_performance_max">Max</string>
+    <string name="ui_quick_settings_performance_eco">Eco</string>
+    <string name="ui_quick_settings_performance_balanced">Ausgewogen</string>
+    <string name="ui_quick_settings_performance_streaming">Streaming</string>
+    <string name="ui_quick_settings_performance_gaming">Gaming</string>
+    <string name="ui_quick_settings_performance_mode">Modus</string>
+    <string name="ui_quick_settings_fan_speed">Manuelle Drehzahl</string>
+    <string name="ui_quick_settings_refresh_rate">Bildwiederholrate</string>
+    <string name="ui_quick_settings_refresh_auto">Auto</string>
+    <string name="ui_quick_settings_refresh_hz">%1$d Hz</string>
+    <string name="ui_quick_settings_hud">Statistik-Overlay</string>
+    <string name="ui_quick_settings_hud_description">In integrierten Spielen</string>
+    <string name="ui_quick_settings_device_access_notice">Argosy benötigt eine Berechtigung, um dies zu ändern.</string>
+    <string name="ui_quick_settings_device_access_allow">Erlauben</string>
+    <string name="ui_quick_settings_theme">Design</string>
+    <string name="ui_quick_settings_accent">Akzentfarbe</string>
+    <string name="ui_quick_settings_accent_default">Standard</string>
+    <string name="ui_quick_settings_theme_light">Hell</string>
+    <string name="ui_quick_settings_theme_dark">Dunkel</string>
+    <string name="ui_quick_settings_theme_system">Auto</string>
+    <string name="ui_quick_settings_haptics">Vibration</string>
+    <string name="ui_quick_settings_ui_sounds">UI-Sounds</string>
+    <string name="ui_quick_settings_swap_ab">A/B tauschen</string>
+    <string name="ui_quick_settings_swap_xy">X/Y tauschen</string>
+    <string name="ui_quick_settings_swap_start_select">Start/Select tauschen</string>
+    <string name="ui_quick_settings_quaypass">QuayPass</string>
+    <string name="ui_quick_settings_volume">Lautstärke</string>
+    <string name="ui_quick_settings_brightness">Helligkeit</string>
+    <string name="ui_quick_settings_brightness_main">Hauptbildschirm</string>
+    <string name="ui_quick_settings_brightness_second">Zweitbildschirm</string>
+    <string name="ui_quick_settings_off">Aus</string>
+    <string name="ui_quick_settings_percent">%1$d%%</string>
+    <string name="ui_quick_settings_page_performance">Leistung</string>
+    <string name="ui_quick_settings_page_friends">Freunde</string>
+    <string name="ui_quick_settings_page_music">Musik</string>
+    <string name="ui_quick_settings_group_display">Anzeige</string>
+    <string name="ui_quick_settings_group_audio">Audio</string>
+    <string name="ui_quick_settings_group_controls">Steuerung</string>
+    <string name="ui_quick_settings_group_performance">Leistung</string>
+    <string name="ui_quick_settings_group_fan">Lüfter</string>
+    <string name="ui_quick_settings_group_overlay">Overlay</string>
+    <string name="ui_quick_settings_music_nothing_playing">Keine Wiedergabe</string>
+    <string name="ui_quick_settings_music_source_launcher">Launcher-Musik</string>
+    <string name="ui_quick_settings_music_track_position">%1$d von %2$d</string>
+    <string name="ui_quick_settings_music_up_next">Als Nächstes &#183; %1$s</string>
+    <string name="ui_quick_settings_music_volume">Musiklautstärke</string>
+    <string name="ui_quick_settings_music_previous">Vorheriger Titel</string>
+    <string name="ui_quick_settings_music_play">Abspielen</string>
+    <string name="ui_quick_settings_music_pause">Pausieren</string>
+    <string name="ui_quick_settings_music_next">Nächster Titel</string>
+    <string name="ui_quick_settings_music_shuffle">Zufallswiedergabe</string>
+    <string name="ui_quick_settings_music_play_in_background">Im Hintergrund abspielen</string>
+    <string name="ui_quick_settings_music_playlists">Playlists</string>
+    <string name="ui_quick_settings_music_soundtracks">Spiel-Soundtracks</string>
+    <string name="ui_quick_settings_music_button_playlists">Playlists</string>
+    <string name="ui_quick_settings_music_button_soundtracks">Soundtracks</string>
+    <string name="ui_quick_settings_music_search_playlists">Playlists durchsuchen</string>
+    <string name="ui_quick_settings_music_search_soundtracks">Soundtracks durchsuchen</string>
+    <string name="ui_quick_settings_music_load_failed">Liste konnte nicht geladen werden</string>
+    <string name="ui_quick_settings_music_retry">Erneut versuchen</string>
+    <string name="ui_quick_settings_music_empty_playlists">Keine passenden Playlists</string>
+    <string name="ui_quick_settings_music_empty_soundtracks">Keine Soundtracks gefunden</string>
+    <string name="ui_quick_settings_music_notice_playlists_offline">RomM-Playlists benötigen eine Verbindung</string>
+    <string name="ui_quick_settings_music_notice_soundtracks_offline">Offline. Heruntergeladene Soundtracks werden angezeigt.</string>
+    <string name="ui_quick_settings_music_notice_local_only">Heruntergeladene Soundtracks werden angezeigt</string>
+    <string name="ui_quick_settings_music_notice_server_failed">RomM hat nicht geantwortet. Einige Einträge fehlen eventuell.</string>
+    <string name="ui_quick_settings_music_notice_no_tracks">In dieser Auswahl ist nichts abspielbar</string>
+    <string name="ui_quick_settings_music_notice_sign_in_playlists">Melde dich erneut bei RomM an, um deine Server-Playlists zu sehen</string>
+    <string name="ui_quick_settings_music_hint_sign_in">Erneut anmelden</string>
+    <string name="ui_quick_friends_options_favorite">Favorit</string>
+    <string name="ui_quick_friends_options_unfavorite">Favorit entfernen</string>
+    <string name="ui_quick_friends_options_profile">Profil anzeigen</string>
+    <string name="ui_quick_friends_options_edit_avatar">Avatar bearbeiten</string>
+    <string name="ui_quick_settings_music_queue_empty">Wähle eine Playlist oder einen Soundtrack</string>
+    <string name="ui_quick_settings_music_playlist_owner">von %1$s</string>
+    <string name="ui_quick_settings_music_now_playing">Wird abgespielt</string>
+    <string name="ui_quick_settings_music_back">Zurück</string>
+    <plurals name="ui_quick_settings_music_track_count">
+        <item quantity="one">%d Titel</item>
+        <item quantity="other">%d Titel</item>
+    </plurals>
+
+    <!-- Main drawer (ui/components/MainDrawer.kt) -->
+
+    <string name="ui_drawer_friends_empty">Noch keine Freunde</string>
+    <string name="ui_drawer_friends_online">Online &#183; %1$d</string>
+    <string name="ui_drawer_friends_offline">Offline &#183; %1$d</string>
+    <string name="ui_quick_friends_status_online">Online</string>
+    <string name="ui_quick_friends_status_offline">Offline</string>
+    <string name="ui_quick_friends_appear_online">Als online anzeigen</string>
+    <string name="ui_drawer_friend_hosting">Hostet %1$s</string>
+    <string name="ui_drawer_friend_playing">Spielt %1$s</string>
+    <string name="ui_drawer_friend_in_game">Im Spiel</string>
+    <string name="ui_drawer_friend_favorite">Favorit</string>
+    <string name="ui_drawer_account_none">Kein Konto</string>
+    <string name="ui_drawer_account_caption">Konto</string>
+    <string name="ui_drawer_server_connected">RomM verbunden</string>
+    <string name="ui_drawer_server_offline">RomM offline</string>
+    <string name="ui_drawer_nav_home">Start</string>
+    <string name="ui_drawer_nav_social">Community</string>
+    <string name="ui_drawer_nav_quaypass">Check-In</string>
+    <string name="ui_drawer_nav_collections">Sammlungen</string>
+    <string name="ui_drawer_nav_library">Bibliothek</string>
+    <string name="ui_drawer_nav_media">Medien</string>
+    <string name="ui_drawer_nav_downloads">Downloads</string>
+    <string name="ui_drawer_nav_save_sync">Spielstand-Sync</string>
+    <string name="ui_drawer_nav_apps">Apps</string>
+    <string name="ui_drawer_nav_settings">Einstellungen</string>
+
+    <!-- Sync overlay (ui/components/SyncOverlay.kt) -->
+
+    <string name="ui_sync_overlay_unknown_game">Spiel</string>
+    <string name="ui_sync_overlay_slot_prefix">"Slot: "</string>
+    <string name="ui_sync_overlay_slot_default">Neueste</string>
+    <string name="ui_sync_overlay_blocked_grant">Berechtigung erteilen</string>
+    <string name="ui_sync_overlay_blocked_configure_path">Speicherpfad konfigurieren</string>
+    <string name="ui_sync_overlay_blocked_disable">Sync deaktivieren</string>
+    <string name="ui_sync_overlay_blocked_skip">Vorerst überspringen</string>
+    <string name="ui_sync_overlay_hardcore_title">Hardcore-Spielstandkonflikt</string>
+    <string name="ui_sync_overlay_hardcore_message">Die Serverversion von \"%1$s\" erfüllt nicht mehr die Anforderungen für den Hardcore-Modus.</string>
+    <string name="ui_sync_overlay_hardcore_note">Dies kann passieren, wenn der Spielstand außerhalb von Argosy verändert wurde.</string>
+    <string name="ui_sync_overlay_hardcore_keep">Hardcore behalten</string>
+    <string name="ui_sync_overlay_hardcore_keep_subtitle">Lokalen Spielstand zum Server hochladen</string>
+    <string name="ui_sync_overlay_hardcore_downgrade">Auf Casual herabstufen</string>
+    <string name="ui_sync_overlay_hardcore_downgrade_subtitle">Serverspielstand verwenden, Hardcore-Status verlieren</string>
+    <string name="ui_sync_overlay_hardcore_skip">Sync überspringen</string>
+    <string name="ui_sync_overlay_hardcore_skip_subtitle">Ohne Synchronisierung starten</string>
+    <string name="ui_launch_overlay_cancel">Abbrechen</string>
+    <string name="ui_launch_overlay_cancel_option">Start abbrechen</string>
+    <string name="ui_launch_overlay_cancel_option_subtitle">Zurück, ohne das Spiel zu starten</string>
+    <string name="ui_launch_overlay_wait_previous">Der vorherige Start wird noch abgeschlossen</string>
+    <string name="ui_launch_overlay_wait_recap">Deine letzte Sitzung wird noch geladen</string>
+    <string name="ui_launch_overlay_wait_save">Dein Spielstand wird noch synchronisiert</string>
+    <string name="ui_launch_overlay_wait_core">Der Emulator-Core wird noch heruntergeladen</string>
+    <string name="ui_launch_overlay_wait_core_sized">Der Emulator-Core wird noch heruntergeladen &#183; %1$s</string>
+    <string name="ui_launch_overlay_wait_prepare">Der Emulator wird noch vorbereitet</string>
+    <string name="ui_launch_overlay_failed_connect">RomM hat nicht geantwortet. Gestartet wird mit dem Spielstand auf diesem Gerät.</string>
+    <string name="ui_launch_overlay_failed_timeout">RomM hat zu lange für eine Antwort gebraucht. Gestartet wird mit dem Spielstand auf diesem Gerät.</string>
+    <string name="ui_launch_overlay_failed_download">Dein Spielstand konnte nicht heruntergeladen werden. Gestartet wird mit dem Spielstand auf diesem Gerät.</string>
+    <string name="ui_launch_overlay_failed_write">Dein Spielstand konnte nicht geschrieben werden. Gestartet wird mit dem Spielstand auf diesem Gerät.</string>
+    <string name="ui_launch_overlay_percent">%1$d %%</string>
+    <plurals name="ui_launch_overlay_percent_eta">
+        <item quantity="one">%1$d %% &#183; noch etwa %2$d Sekunde</item>
+        <item quantity="other">%1$d %% &#183; noch etwa %2$d Sekunden</item>
+    </plurals>
+    <string name="ui_launch_overlay_hint_cancel">Abbrechen</string>
+    <string name="ui_launch_overlay_launcher_choice_title">Launcher wählen</string>
+    <string name="ui_launch_overlay_launcher_choice_message">%1$s ist in mehr als einem Launcher installiert. Lege mit \"Launcher ändern\" auf der Spielseite einen fest, damit diese Frage nicht mehr erscheint.</string>
+    <string name="ui_launch_overlay_launcher_choice_option_subtitle">Spiel in %1$s starten</string>
+    <string name="ui_launch_recap_meta">Letzte Sitzung &#183; %1$s</string>
+    <string name="ui_launch_recap_meta_duration">Letzte Sitzung &#183; %1$s &#183; %2$s</string>
+    <plurals name="ui_launch_recap_meta_unlocked">
+        <item quantity="one">%1$s &#183; %2$d freigeschaltet</item>
+        <item quantity="other">%1$s &#183; %2$d freigeschaltet</item>
+    </plurals>
+    <string name="ui_launch_recap_presence_eyebrow">Hier hast du aufgehört</string>
+    <string name="ui_launch_recap_unlocks_section">In der letzten Sitzung freigeschaltet</string>
+    <string name="ui_launch_recap_start">Spiel starten</string>
+    <plurals name="ui_launch_recap_points">
+        <item quantity="one">%d Punkt</item>
+        <item quantity="other">%d Punkte</item>
+    </plurals>
+    <string name="ui_launch_recap_tier_hardcore">Hardcore</string>
+    <string name="ui_launch_recap_tier_softcore">Softcore</string>
+    <string name="ui_launch_recap_type_progression">Fortschritt</string>
+    <string name="ui_launch_recap_type_win_condition">Siegbedingung</string>
+    <string name="ui_monthly_recap_eyebrow">Monatsrückblick</string>
+    <string name="ui_monthly_recap_loading">Dein %1$s wird zusammengestellt</string>
+    <string name="ui_monthly_recap_empty">Im %1$s keine Spiele gespielt</string>
+    <string name="ui_monthly_recap_failed">Der Rückblick auf %1$s konnte nicht geladen werden</string>
+    <string name="ui_monthly_recap_hero_caption">gespielt im %1$s</string>
+    <string name="ui_monthly_recap_most_played">Meistgespielt</string>
+    <string name="ui_monthly_recap_stat_sessions">Sitzungen</string>
+    <string name="ui_monthly_recap_stat_days">Spieltage</string>
+    <string name="ui_monthly_recap_days_value">%1$d von %2$d</string>
+    <string name="ui_monthly_recap_stat_longest">Längste Sitzung</string>
+    <string name="ui_monthly_recap_busiest_day">Aktivster Tag: %1$s &#183; %2$s</string>
+    <string name="ui_monthly_recap_playtime_under_minute">&lt;1m</string>
+    <string name="ui_monthly_recap_top_games_heading">Top-Spiele</string>
+    <string name="ui_monthly_recap_top_games_others">Andere Spiele</string>
+    <string name="ui_monthly_recap_top_games_new">Neu</string>
+    <string name="ui_monthly_recap_share_percent">%1$d %%</string>
+    <string name="ui_monthly_recap_achievements_heading">Erfolge</string>
+    <plurals name="ui_monthly_recap_unlocked_count">
+        <item quantity="one">%d freigeschaltet</item>
+        <item quantity="other">%d freigeschaltet</item>
+    </plurals>
+    <plurals name="ui_monthly_recap_mastery_count">
+        <item quantity="one">%d gemeistert</item>
+        <item quantity="other">%d gemeistert</item>
+    </plurals>
+    <string name="ui_monthly_recap_achievements_trailing">%1$s &#183; %2$s</string>
+    <string name="ui_monthly_recap_award_line">%1$s &#183; %2$s</string>
+    <string name="ui_monthly_recap_award_mastered">Gemeistert</string>
+    <string name="ui_monthly_recap_award_completed">Abgeschlossen</string>
+    <string name="ui_monthly_recap_award_beaten_hardcore">Durchgespielt (Hardcore)</string>
+    <string name="ui_monthly_recap_award_beaten_softcore">Durchgespielt (Softcore)</string>
+    <string name="ui_monthly_recap_done">Fertig</string>
+    <string name="ui_sync_overlay_restore_failed_title">Spielstand konnte nicht wiederhergestellt werden</string>
+    <string name="ui_sync_overlay_restore_failed_message">Argosy konnte den ausgewählten Spielstand für „%1$s“ nicht zurückspielen.</string>
+    <string name="ui_sync_overlay_restore_failed_launch">Ohne Synchronisierung starten</string>
+    <string name="ui_sync_overlay_restore_failed_launch_subtitle">Mit dem Spielstand auf diesem Gerät spielen. Jetzt wird nichts hochgeladen.</string>
+    <string name="ui_sync_overlay_local_modified_title">Lokaler Spielstand geändert</string>
+    <string name="ui_sync_overlay_local_modified_message">Ihr lokaler Spielstand für \"%1$s\" enthält Änderungen, die noch nicht gesichert wurden.</string>
+    <string name="ui_sync_overlay_local_modified_question">Möchten Sie Ihren lokalen Fortschritt behalten oder den zuvor gewählten Spielstand wiederherstellen?</string>
+    <string name="ui_sync_overlay_local_modified_apply">Lokalen Spielstand übernehmen</string>
+    <string name="ui_sync_overlay_local_modified_apply_subtitle">Lokalen Spielstand als neueste Version festlegen</string>
+    <string name="ui_sync_overlay_local_modified_restore">Synchronisierten Spielstand verwenden</string>
+    <string name="ui_sync_overlay_local_modified_restore_subtitle">Lokalen Spielstand mit der letzten synchronisierten Version überschreiben (Sicherung wird erstellt)</string>
+    <string name="ui_sync_overlay_snapshot_conflict_title">Spielstandkonflikt</string>
+    <string name="ui_sync_overlay_snapshot_conflict_message">Der Spielstand auf diesem Gerät für \"%1$s\" und der auf dem Server haben sich beide seit dem letzten Abgleich geändert.</string>
+    <string name="ui_sync_overlay_snapshot_conflict_mine">Meinen behalten</string>
+    <string name="ui_sync_overlay_snapshot_conflict_mine_subtitle">Der Spielstand dieses Geräts wird der neueste auf dem Server</string>
+    <string name="ui_sync_overlay_snapshot_conflict_theirs">Server-Spielstand verwenden</string>
+    <string name="ui_sync_overlay_snapshot_conflict_theirs_subtitle">Den Spielstand dieses Geräts durch den neuesten ersetzen (Sicherung wird erstellt)</string>
+    <string name="ui_sync_overlay_snapshot_conflict_branch">Beide behalten</string>
+    <string name="ui_sync_overlay_snapshot_conflict_branch_subtitle">Den Spielstand dieses Geräts in einen neuen Kanal verschieben</string>
+    <string name="ui_sync_overlay_snapshot_conflict_revert">Zurücksetzen</string>
+    <string name="ui_sync_overlay_snapshot_conflict_revert_subtitle">Zum zuletzt von diesem Gerät synchronisierten Spielstand zurückkehren (Sicherung wird erstellt)</string>
+    <string name="ui_sync_overlay_post_session_title">Spielstandkonflikt</string>
+    <string name="ui_sync_overlay_post_session_subject">\"%1$s\" -- %2$s</string>
+    <string name="ui_sync_overlay_post_session_default_slot">Standard-Spielstand</string>
+    <string name="ui_sync_overlay_post_session_message">Der Server hat einen neueren Spielstand. Beim Hochladen wird Ihr lokaler Spielstand zum neuesten, und die Kopie auf dem Server bleibt erhalten.</string>
+    <string name="ui_sync_overlay_post_session_local">Lokal</string>
+    <string name="ui_sync_overlay_post_session_server">Server</string>
+    <string name="ui_sync_overlay_post_session_server_named">Server (%1$s)</string>
+    <string name="ui_sync_overlay_post_session_skip">Sync überspringen</string>
+    <string name="ui_sync_overlay_post_session_skip_subtitle">Lokalen Spielstand behalten, nicht hochladen</string>
+    <string name="ui_sync_overlay_post_session_overwrite">Lokalen Spielstand hochladen</string>
+    <string name="ui_sync_overlay_post_session_overwrite_subtitle">Ihr lokaler Spielstand wird zum neuesten. Die Kopie auf dem Server bleibt erhalten.</string>
+    <string name="ui_sync_overlay_legacy_status">Synchronisierung...</string>
+
+    <!-- Quick menu (ui/quickmenu) -->
+
+    <string name="ui_quick_menu_orb_search">Suchen</string>
+    <string name="ui_quick_menu_orb_random">Zufällig</string>
+    <string name="ui_quick_menu_orb_most_played">Meistgespielt</string>
+    <string name="ui_quick_menu_orb_top_unplayed">Top Neu</string>
+    <string name="ui_quick_menu_orb_recent">Zuletzt</string>
+    <string name="ui_quick_menu_orb_favorites">Favoriten</string>
+    <string name="ui_quick_menu_empty_most_played">Noch keine Spiele gespielt</string>
+    <string name="ui_quick_menu_empty_top_unplayed">Keine bewerteten Spiele gefunden</string>
+    <string name="ui_quick_menu_empty_recent">Keine kürzlichen Spiele</string>
+    <string name="ui_quick_menu_empty_favorites">Noch keine Favoriten</string>
+    <string name="ui_quick_menu_empty_random">Keine Spiele verfügbar</string>
+    <string name="ui_quick_menu_search_placeholder">Spiele suchen...</string>
+    <string name="ui_quick_menu_search_prompt">Geben Sie mindestens 2 Zeichen ein, um zu suchen</string>
+    <string name="ui_quick_menu_search_no_results">Keine Spiele gefunden für \"%1$s\"</string>
+    <string name="ui_quick_menu_recent_searches_heading">Letzte Suchen</string>
+    <string name="ui_quick_menu_row_platform_unknown">Unbekannt</string>
+    <string name="ui_quick_menu_row_downloaded">Heruntergeladen</string>
+    <string name="ui_quick_menu_random_platform_unknown">Unbekannt</string>
+    <string name="ui_quick_menu_random_downloaded">Heruntergeladen</string>
+    <string name="ui_quick_menu_random_action_reroll">Neu würfeln</string>
+    <string name="ui_quick_menu_random_action_play">Spielen</string>
+    <string name="ui_quick_menu_random_action_download">Herunterladen</string>
+    <string name="ui_quick_menu_random_action_install">Installieren</string>
+    <string name="ui_quick_menu_random_action_details">Details</string>
+    <string name="ui_quick_menu_random_action_favorite">Favorit</string>
+    <string name="ui_quick_menu_random_action_unfavorite">Favorit entfernen</string>
+    <string name="ui_quick_menu_random_loading">Spiel wird ausgewählt...</string>
+
+    <!-- File browser (ui/filebrowser) -->
+
+    <string name="ui_file_browser_title_folder">Ordner auswählen</string>
+    <string name="ui_file_browser_title_file">Datei auswählen</string>
+    <string name="ui_file_browser_title_file_or_folder">Datei oder Ordner auswählen</string>
+    <string name="ui_file_browser_permission_title">Speicherzugriff erforderlich</string>
+    <string name="ui_file_browser_permission_message">Argosy benötigt Zugriff auf alle Dateien, um Ordner zu durchsuchen, Spiele herunterzuladen und Spielstände zu synchronisieren. Erteilen Sie die Berechtigung und kehren Sie dann hierher zurück.</string>
+    <string name="ui_file_browser_permission_button">Zugriff erteilen</string>
+    <string name="ui_file_browser_permission_footer_grant">Zugriff erteilen</string>
+    <string name="ui_file_browser_permission_footer_back">Zurück</string>
+    <string name="ui_file_browser_error_unreadable">Zugriff auf Verzeichnis nicht möglich</string>
+    <string name="ui_file_browser_empty_folder">Leerer Ordner</string>
+    <string name="ui_file_browser_action_use_folder">Diesen Ordner verwenden</string>
+    <string name="ui_file_browser_action_new_folder">Neuer Ordner</string>
+    <string name="ui_file_browser_footer_new_folder">Neuer Ordner</string>
+    <string name="ui_file_browser_footer_use_folder">Ordner verwenden</string>
+    <string name="ui_file_browser_new_folder_title">Neuer Ordner</string>
+    <string name="ui_file_browser_new_folder_field_label">Ordnername</string>
+    <string name="ui_file_browser_new_folder_cancel">Abbrechen</string>
+    <string name="ui_file_browser_new_folder_confirm">Erstellen</string>
+    <string name="ui_file_browser_new_folder_error_empty">Der Ordnername darf nicht leer sein</string>
+    <string name="ui_file_browser_new_folder_error_invalid">Ungültiger Ordnername</string>
+    <string name="ui_file_browser_new_folder_error_exists">Dieser Ordner existiert bereits</string>
+    <string name="ui_file_browser_new_folder_error_failed">Ordner konnte nicht erstellt werden</string>
+
+    <!-- App shell and startup (ui/ArgosyApp.kt, ui/ArgosyViewModel.kt) -->
+
+    <string name="ui_startup_status_initializing">Wird initialisiert...</string>
+    <string name="ui_startup_status_syncing_collections">Sammlungen werden synchronisiert...</string>
+    <string name="ui_startup_status_checking_emulators">Emulatoren werden geprüft...</string>
+    <string name="ui_startup_status_preparing_home">Startseite wird vorbereitet...</string>
+    <string name="ui_startup_status_waiting_for_storage">Warten auf Speicher...</string>
+    <string name="ui_startup_status_scanning_roms">ROM-Dateien werden gescannt...</string>
+    <string name="ui_deep_link_startup_timeout">Argosy wurde noch gestartet, bitte erneut versuchen</string>
+    <string name="ui_deep_link_game_not_found">Spiel in Argosy nicht gefunden</string>
+    <string name="ui_deep_link_ambiguous_file_name">Mehr als ein Spiel passt zu diesem Dateinamen</string>
+    <string name="ui_builtin_cores_ready_title">Integrierter Emulator bereit</string>
+    <plurals name="ui_builtin_cores_ready_subtitle">
+        <item quantity="one">%d Core heruntergeladen</item>
+        <item quantity="other">%d Cores heruntergeladen</item>
+    </plurals>
+    <string name="ui_netplay_invite_failed_title">%1$s kann nicht beigetreten werden</string>
+    <string name="ui_netplay_invite_reason_rom_missing">ROM nicht gefunden</string>
+    <string name="ui_netplay_invite_reason_rom_version">Andere ROM-Version</string>
+    <string name="ui_netplay_invite_reason_core_version">Andere Core-Version</string>
+    <string name="ui_netplay_invite_reason_core_unsupported">Core nicht unterstützt</string>
+    <string name="ui_netplay_invite_reason_missing_game_id">Spiel-ID für Sitzung fehlt</string>
+    <string name="ui_netplay_invite_reason_game_not_local">Lokales Spiel nicht gefunden</string>
+    <string name="ui_netplay_invite_reason_launch_failed">Spiel konnte nicht gestartet werden</string>
+    <string name="ui_dual_file_picker_hint_tab">Tab</string>
+    <string name="ui_dual_file_picker_hint_select">Auswählen</string>
+    <string name="ui_dual_file_picker_hint_back">Zurück</string>
+    <string name="ui_dual_collections_hint_navigate">Navigieren</string>
+    <string name="ui_dual_collections_hint_open">Öffnen</string>
+    <string name="ui_dual_collections_hint_back">Zurück</string>
+
+    <!-- Transient notifications (ui/notification) -->
+
+    <string name="ui_download_notice_queued">Wartend</string>
+    <string name="ui_download_notice_no_space">Warten auf Speicherplatz</string>
+    <string name="ui_download_notice_extracting">Wird entpackt</string>
+    <string name="ui_download_notice_moving">Wird in ROM-Speicher verschoben</string>
+    <string name="ui_download_notice_paused">Pausiert</string>
+    <string name="ui_download_notice_completed">Abgeschlossen</string>
+    <string name="ui_download_notice_failed">Fehlgeschlagen</string>
+    <string name="ui_download_notice_failed_subtitle">%1$s: %2$s</string>
+
+    <string name="ui_sync_notice_success_title">Spielstand synchronisiert</string>
+    <string name="ui_sync_notice_game_with_slot">%1$s (%2$s)</string>
+    <plurals name="ui_sync_notice_batch_title">
+        <item quantity="one">%d Spielstand synchronisiert</item>
+        <item quantity="other">%d Spielstände synchronisiert</item>
+    </plurals>
+    <string name="ui_sync_notice_batch_subtitle">%1$s, +%2$d weitere</string>
+    <string name="ui_sync_notice_upload_failed_title">Upload fehlgeschlagen</string>
+    <string name="ui_sync_notice_download_failed_title">Download fehlgeschlagen</string>
+    <string name="ui_sync_notice_failed_game_with_slot">%1$s (%2$s)</string>
+    <string name="ui_sync_notice_failed_subtitle">%1$s: %2$s</string>
+
+    <!-- Rendered outside this file's own area; each key keeps its owner's prefix. -->
+
+    <string name="util_formatters_relative_today">Heute</string>
+    <string name="util_formatters_relative_yesterday">Gestern</string>
+    <plurals name="util_formatters_relative_days_ago">
+        <item quantity="one">vor %dT</item>
+        <item quantity="other">vor %dT</item>
+    </plurals>
+    <plurals name="util_formatters_relative_weeks_ago">
+        <item quantity="one">vor %dW</item>
+        <item quantity="other">vor %dW</item>
+    </plurals>
+
+    <string name="util_formatters_relative_str_now">jetzt</string>
+    <plurals name="util_formatters_relative_str_minutes_ago">
+        <item quantity="one">vor %dMin</item>
+        <item quantity="other">vor %dMin</item>
+    </plurals>
+    <plurals name="util_formatters_relative_str_hours_ago">
+        <item quantity="one">vor %dStd</item>
+        <item quantity="other">vor %dStd</item>
+    </plurals>
+    <plurals name="util_formatters_relative_str_days_ago">
+        <item quantity="one">vor %dT</item>
+        <item quantity="other">vor %dT</item>
+    </plurals>
+    <plurals name="util_formatters_relative_str_weeks_ago">
+        <item quantity="one">vor %dW</item>
+        <item quantity="other">vor %dW</item>
+    </plurals>
+
+    <string name="util_formatters_relative_verbose_just_now">gerade eben</string>
+    <plurals name="util_formatters_relative_verbose_minutes_ago">
+        <item quantity="one">vor %d Min</item>
+        <item quantity="other">vor %d Min</item>
+    </plurals>
+    <plurals name="util_formatters_relative_verbose_hours_ago">
+        <item quantity="one">vor %d Std</item>
+        <item quantity="other">vor %d Std</item>
+    </plurals>
+    <plurals name="util_formatters_relative_verbose_days_ago">
+        <item quantity="one">vor %d Tag</item>
+        <item quantity="other">vor %d Tagen</item>
+    </plurals>
+    <plurals name="util_formatters_relative_verbose_weeks_ago">
+        <item quantity="one">vor %d Woche</item>
+        <item quantity="other">vor %d Wochen</item>
+    </plurals>
+
+    <string name="util_formatters_relative_short_future">in der Zukunft</string>
+    <string name="util_formatters_relative_short_just_now">gerade eben</string>
+    <plurals name="util_formatters_relative_short_minutes_ago">
+        <item quantity="one">vor %dMin</item>
+        <item quantity="other">vor %dMin</item>
+    </plurals>
+    <plurals name="util_formatters_relative_short_hours_ago">
+        <item quantity="one">vor %dStd</item>
+        <item quantity="other">vor %dStd</item>
+    </plurals>
+    <plurals name="util_formatters_relative_short_days_ago">
+        <item quantity="one">vor %dT</item>
+        <item quantity="other">vor %dT</item>
+    </plurals>
+
+    <string name="util_formatters_save_timestamp_today">Heute %1$s</string>
+    <string name="util_formatters_save_timestamp_yesterday">Gestern</string>
+    <plurals name="util_formatters_save_timestamp_days_ago">
+        <item quantity="one">vor %d Tag</item>
+        <item quantity="other">vor %d Tagen</item>
+    </plurals>
+
+    <string name="util_formatters_playtime_minutes">%1$dm</string>
+    <string name="util_formatters_playtime_hours_minutes">%1$dh %2$dm</string>
+    <string name="util_formatters_playtime_hours">%1$dh</string>
+    <string name="util_formatters_time_to_beat_minutes">%1$dm</string>
+    <string name="util_formatters_time_to_beat_hours">%1$dh</string>
+    <string name="util_formatters_time_to_beat_half_hours">%1$d.5h</string>
+
+    <string name="common_homegrid_playtime_hours_minutes">%1$dh %2$dm</string>
+    <string name="common_homegrid_playtime_minutes">%1$dm</string>
+
+    <string name="notif_steam_sync_error_no_cached_licenses">Keine zwischengespeicherten Lizenzen -- zuerst mit Steam verbinden</string>
+    <string name="notif_steam_sync_error_no_active_account">Kein aktives Konto</string>
+    <string name="notif_steam_sync_error_not_connected">Nicht mit Steam verbunden</string>
+    <string name="notif_steam_sync_error_could_not_connect_sync">Verbindung zu Steam nicht möglich</string>
+    <string name="notif_steam_sync_error_could_not_connect_overwrite">Verbindung zu Steam nicht möglich</string>
+
+    <string name="media_library_viewmodel_refresh_label">Wird aktualisiert</string>
+
+    <string name="gamedetail_action_buttons_play">SPIELEN</string>
+    <string name="gamedetail_action_buttons_autosave">Autospeicherung</string>
+    <string name="gamedetail_action_buttons_download">HERUNTERLADEN</string>
+    <string name="gamedetail_action_buttons_install">INSTALLIEREN</string>
+    <string name="gamedetail_action_buttons_queued">WARTET...</string>
+    <string name="gamedetail_action_buttons_no_space">SPEICHER VOLL</string>
+    <string name="gamedetail_action_buttons_downloading_percent">%1$d%%</string>
+    <string name="gamedetail_action_buttons_waiting_for_server">Warten auf Server…</string>
+    <string name="gamedetail_action_buttons_extracting">WIRD ENTPACKT...</string>
+    <string name="gamedetail_action_buttons_resume_percent">FORTSETZEN %1$d%%</string>
+    <string name="gamedetail_action_buttons_retry">WIEDERHOLEN</string>
+    <string name="gamedetail_action_buttons_unfavorite">Aus Favoriten entfernen</string>
+    <string name="gamedetail_action_buttons_favorite">Zu Favoriten hinzufügen</string>
+    <string name="gamedetail_action_buttons_more_options">Weitere Optionen</string>
+
+    <string name="home_grid_local_video_row_title">Ein Video auf diesem Gerät auswählen</string>
+    <string name="home_grid_local_video_row_subtitle">Spielt direkt von Ihrem Speicher ab</string>
+    <string name="ui_quick_settings_swap_displays">Displays tauschen</string>
+    <string name="ui_quick_settings_page_connections">Verbindungen</string>
+    <string name="ui_quick_connections_unsupported">Dieses Gerät erlaubt keine direkte Steuerung von WLAN und Bluetooth</string>
+    <string name="ui_quick_connections_tab_wifi">WLAN</string>
+    <string name="ui_quick_connections_tab_bluetooth">Bluetooth</string>
+    <string name="ui_quick_connections_wifi_off">WLAN ist aus</string>
+    <string name="ui_quick_connections_bluetooth_off">Bluetooth ist aus</string>
+    <string name="ui_quick_connections_nearby">Netzwerke in der Nähe</string>
+    <string name="ui_quick_connections_saved">Gespeicherte Netzwerke</string>
+    <string name="ui_quick_connections_paired">Gekoppelte Geräte</string>
+    <string name="ui_quick_connections_scanning">Suche nach Netzwerken</string>
+    <string name="ui_quick_connections_no_networks">Keine Netzwerke gefunden</string>
+    <string name="ui_quick_connections_no_paired">Keine gekoppelten Geräte</string>
+    <string name="ui_quick_connections_row_joining">Verbinde</string>
+    <string name="ui_quick_connections_row_failed">Fehlgeschlagen</string>
+    <string name="ui_quick_connections_secured">Gesichert</string>
+    <string name="ui_quick_connections_forget">Entfernen</string>
+    <string name="ui_quick_connections_bluetooth_permission">Argosy benötigt eine Berechtigung, um gekoppelte Geräte anzuzeigen.</string>
+    <string name="ui_quick_connections_bluetooth_permission_allow">Erlauben</string>
+    <string name="ui_quick_connections_device_connected">Verbunden</string>
+    <string name="ui_quick_connections_device_not_connected">Nicht verbunden</string>
+    <string name="ui_quick_connections_battery">%1$d %%</string>
+    <string name="ui_quick_connections_band_2_4">2,4 GHz</string>
+    <string name="ui_quick_connections_band_5">5 GHz</string>
+    <string name="ui_quick_connections_band_6">6 GHz</string>
+    <string name="ui_quick_connections_join_title">Mit %1$s verbinden</string>
+    <string name="ui_quick_connections_join_password">Passwort</string>
+    <string name="ui_quick_connections_join_confirm">Verbinden</string>
+    <string name="ui_quick_connections_join_busy">Verbinde</string>
+    <string name="ui_quick_connections_join_cancel">Abbrechen</string>
+    <string name="ui_quick_connections_join_failed">Das Gerät konnte keine Verbindung zu diesem Netzwerk herstellen.</string>
+    <string name="ui_quick_settings_wifi">WLAN</string>
+    <string name="ui_quick_settings_bluetooth">Bluetooth</string>
+    <string name="ui_quick_settings_radio_on">An</string>
+    <string name="ui_quick_settings_radio_off">Aus</string>
+    <string name="ui_quick_settings_wifi_connected">Verbunden</string>
+    <string name="ui_quick_settings_wifi_not_connected">Nicht verbunden</string>
+    <string name="ui_sibling_choice_title_download">VARIANTE WÄHLEN</string>
+    <string name="ui_sibling_choice_title_active">AKTIVE VARIANTE</string>
+    <string name="ui_sibling_choice_automatic">Automatisch</string>
+    <string name="ui_sibling_choice_automatic_showing">Zeigt %1$s</string>
+    <string name="ui_sibling_choice_loading">Wird geladen...</string>
+    <string name="ui_sibling_choice_load_failed">Die Kopien dieses Spiels konnten nicht gelesen werden</string>
+    <string name="ui_sibling_choice_empty">Dieses Spiel hat keine weiteren Kopien</string>
+    <string name="ui_sibling_choice_notice_pick_failed">Aktive Variante konnte nicht geändert werden</string>
+    <string name="ui_sibling_member_kind_hack">Hack</string>
+    <string name="ui_sibling_member_kind_translation">Übersetzung</string>
+    <string name="ui_sibling_member_kind_pre_release">Vorabversion</string>
+
+    <string name="gamelist_row_rating_value">%1$d%%</string>
+    <string name="gamelist_row_user_rating_value">%1$d/10</string>
+    <string name="gamelist_row_difficulty_value">%1$d/10</string>
+    <string name="gamelist_row_achievements_value">%1$d/%2$d</string>
+    <string name="gamelist_row_playtime_of_hltb">%1$s / %2$s</string>
+    <string name="gamelist_row_cd_downloaded">Heruntergeladen</string>
+    <string name="gamelist_row_cd_download_paused">Download pausiert</string>
+    <string name="gamelist_row_cd_download_queued">Download in Warteschlange</string>
+    <string name="gamelist_row_cd_needs_install">Bereit zur Installation</string>
+    <string name="gamelist_row_cd_save_synced">Spielstände synchronisiert</string>
+    <string name="gamelist_row_cd_save_local_ahead">Neuerer Spielstand auf diesem Gerät</string>
+    <string name="gamelist_row_cd_save_server_ahead">Neuerer Spielstand auf dem Server</string>
+    <string name="gamelist_row_cd_save_needs_attention">Spielstand erfordert Aufmerksamkeit</string>
+    <string name="gamelist_row_genre_beat_em_up">Beat \'em up</string>
+    <string name="gamelist_row_genre_rpg">RPG</string>
+    <string name="gamelist_row_genre_rts">RTS</string>
+    <string name="gamelist_row_genre_tbs">TBS</string>
+    <string name="gamelist_row_genre_point_and_click">Point &amp; Click</string>
+    <string name="gamelist_row_genre_board_game">Brettspiel</string>
+    <string name="gamelist_row_genre_quiz">Quiz</string>
+    <string name="gamelist_row_genre_sim">Simulation</string>
+    <string name="common_game_confirm_hide_title">%1$s ausblenden?</string>
+    <string name="common_game_confirm_hide_message">Ausgeblendete Spiele lassen sich in der Bibliothek wieder anzeigen, indem du Quelle auf Ausgeblendet filterst.</string>
+    <string name="common_game_confirm_hide_confirm">Ausblenden</string>
+</resources>

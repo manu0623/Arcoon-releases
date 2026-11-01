@@ -1,0 +1,290 @@
+package com.nendo.argosy.ui.screens.settings.libretro
+
+import androidx.annotation.StringRes
+import com.nendo.argosy.R
+import com.nendo.argosy.core.emulator.LibretroSettingDef
+import com.nendo.argosy.core.input.SoundType
+import com.nendo.argosy.data.local.entity.PlatformLibretroSettingsEntity
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.ui.primitives.SEGMENTED_MAX_OPTIONS
+import com.nendo.argosy.ui.screens.settings.BuiltinVideoState
+
+sealed interface SettingDisplayValue {
+    data class Raw(val text: String) : SettingDisplayValue
+    data class Resource(@StringRes val resId: Int) : SettingDisplayValue
+}
+
+interface LibretroSettingsAccessor {
+    fun getValue(setting: LibretroSettingDef): String
+    fun getDisplayValue(setting: LibretroSettingDef): SettingDisplayValue =
+        SettingDisplayValue.Raw(getValue(setting))
+    fun getGlobalValue(setting: LibretroSettingDef): String
+    fun hasOverride(setting: LibretroSettingDef): Boolean
+    fun isActionItem(setting: LibretroSettingDef): Boolean = false
+    fun isSwitch(setting: LibretroSettingDef): Boolean = setting.type == LibretroSettingDef.SettingType.Switch
+
+    /**
+     * Boolean state for a switch row, read from the raw stored/parsed value rather than any
+     * display string. Display formatting must never feed back into this.
+     */
+    fun isSwitchEnabled(setting: LibretroSettingDef): Boolean =
+        getValue(setting).toBooleanStrictOrNull() ?: false
+    fun cycle(setting: LibretroSettingDef, direction: Int)
+    fun toggle(setting: LibretroSettingDef)
+    fun reset(setting: LibretroSettingDef)
+    fun onAction(setting: LibretroSettingDef) { cycle(setting, 1) }
+}
+
+val LibretroSettingDef.isSegmented: Boolean
+    get() = (type as? LibretroSettingDef.SettingType.Cycle)?.options?.size in 2..SEGMENTED_MAX_OPTIONS
+
+fun LibretroSettingsAccessor.isAtSegmentEnd(setting: LibretroSettingDef, direction: Int): Boolean {
+    if (!setting.isSegmented) return false
+    val options = (setting.type as LibretroSettingDef.SettingType.Cycle).options
+    return options.indexOf(getValue(setting)).coerceAtLeast(0) + direction !in options.indices
+}
+
+fun LibretroSettingsAccessor.step(setting: LibretroSettingDef, direction: Int): InputResult {
+    if (setting.type !is LibretroSettingDef.SettingType.Cycle) return InputResult.UNHANDLED
+    if (isAtSegmentEnd(setting, direction)) return InputResult.handled(SoundType.BOUNDARY)
+    cycle(setting, direction)
+    return InputResult.HANDLED
+}
+
+class GlobalLibretroSettingsAccessor(
+    private val state: BuiltinVideoState,
+    private val onCycle: (LibretroSettingDef, Int) -> Unit,
+    private val onToggle: (LibretroSettingDef, Boolean) -> Unit,
+    private val onActionCallback: (LibretroSettingDef) -> Unit = {}
+) : LibretroSettingsAccessor {
+
+    override fun getValue(setting: LibretroSettingDef): String = getGlobalValue(setting)
+
+    override fun getDisplayValue(setting: LibretroSettingDef): SettingDisplayValue = when {
+        setting == LibretroSettingDef.Shader -> SettingDisplayValue.Raw(state.shaderDisplayValue)
+        setting.key == "filter" && state.shader == "Custom" ->
+            SettingDisplayValue.Resource(R.string.settings_libretro_shell_configure_shader_chain_title)
+        else -> SettingDisplayValue.Raw(getValue(setting))
+    }
+
+    override fun getGlobalValue(setting: LibretroSettingDef): String = when (setting) {
+        LibretroSettingDef.Shader -> state.shader
+        LibretroSettingDef.Filter -> state.filter
+        LibretroSettingDef.AspectRatio -> state.aspectRatio
+        LibretroSettingDef.PortraitPosition -> state.portraitPosition
+        LibretroSettingDef.Rotation -> state.rotation
+        LibretroSettingDef.OverscanCrop -> state.overscanCrop
+        LibretroSettingDef.Frame -> state.framesEnabled.toString()
+        LibretroSettingDef.BlackFrameInsertion -> state.blackFrameInsertion.toString()
+        LibretroSettingDef.FastForwardEnabled -> state.fastForwardEnabled.toString()
+        LibretroSettingDef.FastForwardSpeed -> state.fastForwardSpeed
+        LibretroSettingDef.RewindEnabled -> state.rewindEnabled.toString()
+        LibretroSettingDef.SkipDuplicateFrames -> state.skipDuplicateFrames.toString()
+        LibretroSettingDef.LowLatencyAudio -> state.lowLatencyAudio.toString()
+        LibretroSettingDef.AudioVolume -> state.audioVolume
+        LibretroSettingDef.VSync -> state.vsync.toString()
+        LibretroSettingDef.RewindSpeed -> state.rewindSpeed
+        LibretroSettingDef.RewindBufferDuration -> state.rewindBufferDuration
+        LibretroSettingDef.AutoSaveState -> state.autoSaveState.toString()
+        LibretroSettingDef.AutoRestoreState -> state.autoRestoreState.toString()
+        LibretroSettingDef.PreferNewerServerSave -> state.preferNewerServerSave.toString()
+        LibretroSettingDef.HwCoreSaveStates -> state.hwCoreSaveStatesEnabled.toString()
+    }
+
+    override fun hasOverride(setting: LibretroSettingDef): Boolean = false
+
+    override fun isActionItem(setting: LibretroSettingDef): Boolean =
+        setting.key == "filter" && state.shader == "Custom"
+
+    override fun isSwitch(setting: LibretroSettingDef): Boolean =
+        setting.type == LibretroSettingDef.SettingType.Switch || setting == LibretroSettingDef.Frame
+
+    override fun cycle(setting: LibretroSettingDef, direction: Int) {
+        onCycle(setting, direction)
+    }
+
+    override fun toggle(setting: LibretroSettingDef) {
+        val current = when (setting) {
+            LibretroSettingDef.Frame -> state.framesEnabled
+            LibretroSettingDef.BlackFrameInsertion -> state.blackFrameInsertion
+            LibretroSettingDef.RewindEnabled -> state.rewindEnabled
+            LibretroSettingDef.SkipDuplicateFrames -> state.skipDuplicateFrames
+            LibretroSettingDef.LowLatencyAudio -> state.lowLatencyAudio
+            LibretroSettingDef.AutoSaveState -> state.autoSaveState
+            LibretroSettingDef.AutoRestoreState -> state.autoRestoreState
+            LibretroSettingDef.PreferNewerServerSave -> state.preferNewerServerSave
+            LibretroSettingDef.HwCoreSaveStates -> state.hwCoreSaveStatesEnabled
+            else -> return
+        }
+        onToggle(setting, !current)
+    }
+
+    override fun reset(setting: LibretroSettingDef) {
+    }
+
+    override fun onAction(setting: LibretroSettingDef) {
+        onActionCallback(setting)
+    }
+}
+
+class PlatformLibretroSettingsAccessor(
+    private val platformSettings: PlatformLibretroSettingsEntity?,
+    private val globalState: BuiltinVideoState,
+    private val onUpdate: (LibretroSettingDef, String?) -> Unit,
+    private val onActionCallback: (LibretroSettingDef) -> Unit = {}
+) : LibretroSettingsAccessor {
+
+    override fun getValue(setting: LibretroSettingDef): String {
+        if (setting == LibretroSettingDef.Frame) {
+            return platformSettings?.frame ?: "Auto"
+        }
+        val override = getOverrideValue(setting)
+        return override ?: getGlobalValue(setting)
+    }
+
+    override fun getDisplayValue(setting: LibretroSettingDef): SettingDisplayValue {
+        if (setting == LibretroSettingDef.Frame) {
+            val value = platformSettings?.frame
+            return when {
+                value == null -> SettingDisplayValue.Resource(R.string.settings_libretro_shell_frame_value_auto)
+                value == "none" -> SettingDisplayValue.Resource(R.string.settings_libretro_shell_frame_value_none)
+                else -> SettingDisplayValue.Raw(value.replaceFirstChar { it.uppercase() })
+            }
+        }
+        if (setting == LibretroSettingDef.Filter && getEffectiveShader() == "Custom") {
+            return SettingDisplayValue.Resource(R.string.settings_libretro_shell_configure_shader_chain_title)
+        }
+        return SettingDisplayValue.Raw(getValue(setting))
+    }
+
+    private fun getEffectiveShader(): String {
+        return platformSettings?.shader ?: globalState.shader
+    }
+
+    override fun getGlobalValue(setting: LibretroSettingDef): String = when (setting) {
+        LibretroSettingDef.Shader -> globalState.shader
+        LibretroSettingDef.Filter -> globalState.filter
+        LibretroSettingDef.AspectRatio -> globalState.aspectRatio
+        LibretroSettingDef.PortraitPosition -> globalState.portraitPosition
+        LibretroSettingDef.Rotation -> globalState.rotation
+        LibretroSettingDef.OverscanCrop -> globalState.overscanCrop
+        LibretroSettingDef.Frame -> "Auto"
+        LibretroSettingDef.BlackFrameInsertion -> globalState.blackFrameInsertion.toString()
+        LibretroSettingDef.FastForwardEnabled -> globalState.fastForwardEnabled.toString()
+        LibretroSettingDef.FastForwardSpeed -> globalState.fastForwardSpeed
+        LibretroSettingDef.RewindEnabled -> globalState.rewindEnabled.toString()
+        LibretroSettingDef.SkipDuplicateFrames -> globalState.skipDuplicateFrames.toString()
+        LibretroSettingDef.LowLatencyAudio -> globalState.lowLatencyAudio.toString()
+        LibretroSettingDef.AudioVolume -> globalState.audioVolume
+        LibretroSettingDef.VSync -> globalState.vsync.toString()
+        LibretroSettingDef.RewindSpeed -> globalState.rewindSpeed
+        LibretroSettingDef.RewindBufferDuration -> globalState.rewindBufferDuration
+        LibretroSettingDef.AutoSaveState -> globalState.autoSaveState.toString()
+        LibretroSettingDef.AutoRestoreState -> globalState.autoRestoreState.toString()
+        LibretroSettingDef.PreferNewerServerSave -> globalState.preferNewerServerSave.toString()
+        LibretroSettingDef.HwCoreSaveStates -> globalState.hwCoreSaveStatesEnabled.toString()
+    }
+
+    override fun hasOverride(setting: LibretroSettingDef): Boolean {
+        if (setting == LibretroSettingDef.Frame) {
+            return platformSettings?.frame != null
+        }
+        return getOverrideValue(setting) != null
+    }
+
+    override fun isActionItem(setting: LibretroSettingDef): Boolean =
+        setting == LibretroSettingDef.Frame ||
+        (setting == LibretroSettingDef.Filter && getEffectiveShader() == "Custom")
+
+    override fun cycle(setting: LibretroSettingDef, direction: Int) {
+        val type = setting.type as? LibretroSettingDef.SettingType.Cycle ?: return
+        val options = type.options
+        val current = getValue(setting)
+        val currentIndex = options.indexOf(current).coerceAtLeast(0)
+        val nextIndex = (currentIndex + direction + options.size) % options.size
+        onUpdate(setting, options[nextIndex])
+    }
+
+    override fun toggle(setting: LibretroSettingDef) {
+        val current = getValue(setting).toBooleanStrictOrNull() ?: false
+        onUpdate(setting, (!current).toString())
+    }
+
+    override fun reset(setting: LibretroSettingDef) {
+        onUpdate(setting, null)
+    }
+
+    override fun onAction(setting: LibretroSettingDef) {
+        onActionCallback(setting)
+    }
+
+    private fun getOverrideValue(setting: LibretroSettingDef): String? {
+        val ps = platformSettings ?: return null
+        return when (setting) {
+            LibretroSettingDef.Shader -> ps.shader
+            LibretroSettingDef.Filter -> ps.filter
+            LibretroSettingDef.AspectRatio -> ps.aspectRatio
+            LibretroSettingDef.PortraitPosition -> ps.portraitPosition
+            LibretroSettingDef.Rotation -> ps.rotation?.toRotationString()
+            LibretroSettingDef.OverscanCrop -> ps.overscanCrop?.toOverscanString()
+            LibretroSettingDef.Frame -> ps.frame
+            LibretroSettingDef.BlackFrameInsertion -> ps.blackFrameInsertion?.toString()
+            LibretroSettingDef.FastForwardEnabled -> ps.fastForwardEnabled?.toString()
+            LibretroSettingDef.FastForwardSpeed -> ps.fastForwardSpeed?.let { "${it}x" }
+            LibretroSettingDef.RewindEnabled -> ps.rewindEnabled?.toString()
+            LibretroSettingDef.SkipDuplicateFrames -> ps.skipDuplicateFrames?.toString()
+            LibretroSettingDef.LowLatencyAudio -> ps.lowLatencyAudio?.toString()
+            LibretroSettingDef.AudioVolume -> ps.audioVolume?.let { "${it}%" }
+            LibretroSettingDef.VSync -> ps.vsync?.toString()
+            LibretroSettingDef.RewindSpeed -> ps.rewindSpeed?.let { "${it}x" }
+            LibretroSettingDef.RewindBufferDuration -> ps.rewindBufferDuration?.let { "${it}s" }
+            LibretroSettingDef.AutoSaveState -> ps.autoSaveState?.toString()
+            LibretroSettingDef.AutoRestoreState -> ps.autoRestoreState?.toString()
+            LibretroSettingDef.PreferNewerServerSave -> ps.preferNewerServerSave?.toString()
+            LibretroSettingDef.HwCoreSaveStates -> ps.hwCoreSaveStates?.toString()
+        }
+    }
+
+    private fun Int.toRotationString(): String = when (this) {
+        -1 -> "Auto"
+        0 -> "0°"
+        90 -> "90°"
+        180 -> "180°"
+        270 -> "270°"
+        else -> "Auto"
+    }
+
+    private fun Int.toOverscanString(): String = when (this) {
+        0 -> "Off"
+        else -> "${this}px"
+    }
+}
+
+class InGameLibretroSettingsAccessor(
+    private val getCurrentValue: (LibretroSettingDef) -> String,
+    private val globalValue: (LibretroSettingDef) -> String,
+    private val onCycle: (LibretroSettingDef, Int) -> Unit,
+    private val onToggle: (LibretroSettingDef) -> Unit,
+    private val onReset: (LibretroSettingDef) -> Unit,
+    private val onActionCallback: (LibretroSettingDef) -> Unit = {}
+) : LibretroSettingsAccessor {
+    override fun getValue(setting: LibretroSettingDef): String = getCurrentValue(setting)
+    override fun getDisplayValue(setting: LibretroSettingDef): SettingDisplayValue = when (setting) {
+        LibretroSettingDef.Filter -> if (getCurrentValue(LibretroSettingDef.Shader) == "Custom") {
+            SettingDisplayValue.Resource(R.string.settings_libretro_shell_configure_shader_chain_title)
+        } else {
+            SettingDisplayValue.Raw(getValue(setting))
+        }
+        else -> SettingDisplayValue.Raw(getValue(setting))
+    }
+    override fun getGlobalValue(setting: LibretroSettingDef): String = globalValue(setting)
+    override fun hasOverride(setting: LibretroSettingDef): Boolean =
+        getCurrentValue(setting) != globalValue(setting)
+    override fun isActionItem(setting: LibretroSettingDef): Boolean =
+        setting.key == "frame" ||
+        (setting.key == "filter" && getCurrentValue(LibretroSettingDef.Shader) == "Custom")
+    override fun cycle(setting: LibretroSettingDef, direction: Int) = onCycle(setting, direction)
+    override fun toggle(setting: LibretroSettingDef) = onToggle(setting)
+    override fun reset(setting: LibretroSettingDef) = onReset(setting)
+    override fun onAction(setting: LibretroSettingDef) = onActionCallback(setting)
+}

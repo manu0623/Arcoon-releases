@@ -1,0 +1,1393 @@
+package com.nendo.argosy.ui.screens.gamedetail
+
+import android.content.Intent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import coil.compose.AsyncImage
+import com.nendo.argosy.DualScreenManagerHolder
+import com.nendo.argosy.R
+import com.nendo.argosy.core.notification.NotificationText
+import com.nendo.argosy.ui.common.rememberFileImageModel
+import com.nendo.argosy.ui.common.stackedScreenshotBackdrop
+import coil.request.ImageRequest
+import com.nendo.argosy.ui.components.FooterHints
+import com.nendo.argosy.ui.components.FooterSpacer
+import com.nendo.argosy.ui.components.InputButton
+import com.nendo.argosy.ui.components.SyncOverlay
+import com.nendo.argosy.ui.input.LocalInputDispatcher
+import com.nendo.argosy.ui.input.RightStickStepper
+import com.nendo.argosy.ui.input.ModalInputEffect
+import com.nendo.argosy.ui.navigation.Screen
+import com.nendo.argosy.ui.screens.gamedetail.components.AchievementListOverlay
+import com.nendo.argosy.ui.screens.gamedetail.components.AchievementsSection
+import com.nendo.argosy.ui.screens.gamedetail.components.ExpandedHeader
+import com.nendo.argosy.ui.screens.gamedetail.components.StickyCollapsedHeader
+import com.nendo.argosy.ui.screens.gamedetail.components.DescriptionSection
+import com.nendo.argosy.ui.screens.gamedetail.components.descriptionScrollTarget
+import com.nendo.argosy.ui.screens.gamedetail.components.GameDetailMenu
+import com.nendo.argosy.ui.screens.gamedetail.components.GameDetailMenuState
+import com.nendo.argosy.ui.screens.gamedetail.components.GameDetailSkeleton
+import com.nendo.argosy.ui.screens.gamedetail.components.GameHeader
+import com.nendo.argosy.ui.screens.gamedetail.components.MenuItem
+import com.nendo.argosy.ui.screens.gamedetail.components.MenuLayoutState
+import com.nendo.argosy.ui.screens.gamedetail.components.menuLayout
+import com.nendo.argosy.ui.screens.gamedetail.components.RelatedGamesSection
+import com.nendo.argosy.ui.screens.gamedetail.components.ScreenshotViewerOverlay
+import com.nendo.argosy.ui.screens.gamedetail.components.ReviewEditorOverlay
+import com.nendo.argosy.ui.screens.gamedetail.components.ReviewListOverlay
+import com.nendo.argosy.ui.screens.gamedetail.components.ReviewSummarySection
+import com.nendo.argosy.ui.screens.gamedetail.components.ScreenshotsSection
+import com.nendo.argosy.ui.components.DiscPickerModal
+import com.nendo.argosy.ui.components.MemcardPickerModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.CorePickerModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.EmulatorPickerModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.ExtractionFailedModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.MissingDiscModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.StatusPickerModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.SteamLauncherPickerModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.MoreOptionsModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.PerGameSettingsModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.PlayOptionsModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.RatingsStatusModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.ArtPickerModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.fileBrowserTitleRes
+import com.nendo.argosy.ui.screens.gamedetail.modals.PermissionRequiredModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.RatingPickerModal
+import com.nendo.argosy.ui.screens.gamedetail.modals.FilePickerModal
+import com.nendo.argosy.ui.common.savechannel.SaveChannelModal
+import com.nendo.argosy.ui.components.AddToCollectionModal
+import com.nendo.argosy.ui.components.CollectionItem
+import com.nendo.argosy.ui.screens.collections.dialogs.CreateCollectionDialog
+import com.nendo.argosy.ui.ArgosyViewModel
+import com.nendo.argosy.ui.theme.Dimens
+import com.nendo.argosy.ui.theme.LocalLauncherTheme
+import com.nendo.argosy.ui.theme.Motion
+import com.nendo.argosy.ui.util.clickableNoFocus
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+
+private const val CONTENT_SCROLL_FRACTION = 0.2f
+
+@Composable
+fun GameDetailScreen(
+    gameId: Long,
+    argosyViewModel: ArgosyViewModel,
+    onBack: () -> Unit,
+    onNavigateToPlatformSettings: (platformId: Long) -> Unit = {},
+    onNavigateToGame: (gameId: Long) -> Unit = {},
+    onOpenSaveTimeline: (gameId: Long) -> Unit = {},
+    cocoonSheet: String? = null,
+    viewModel: GameDetailViewModel = hiltViewModel()
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    // Opened from a folder's Y menu: this page only hosts Cocoon's Edit Game / Achievements sheet.
+    LaunchedEffect(cocoonSheet) {
+        if (cocoonSheet != null) viewModel.startCocoonSheet(cocoonSheet, onExit = onBack)
+    }
+
+    LaunchedEffect(gameId) {
+        viewModel.loadGame(gameId)
+    }
+
+    val pendingLaunch by argosyViewModel.pendingLaunch.collectAsState()
+    val sessionEndSyncing = uiState.syncOverlayState != null
+    LaunchedEffect(pendingLaunch, uiState.game?.id, sessionEndSyncing) {
+        val pending = pendingLaunch ?: return@LaunchedEffect
+        if (pending.gameId == gameId && uiState.game?.id == gameId && !sessionEndSyncing) {
+            argosyViewModel.consumePendingLaunch()
+            if (pending.discId != null) {
+                viewModel.playGame(discId = pending.discId, origin = pending.origin)
+            } else {
+                viewModel.primaryAction(origin = pending.origin)
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.launchEvents.collectLatest { event ->
+            when (event) {
+                is LaunchEvent.LaunchIntent -> {
+                    try {
+                        context.startActivity(event.intent)
+                    } catch (e: Exception) {
+                        viewModel.showLaunchError(
+                            NotificationText.Res(
+                                R.string.gamedetail_notice_launch_failed,
+                                listOf(e.message ?: "null")
+                            )
+                        )
+                    }
+                }
+                is LaunchEvent.NavigateBack -> onBack()
+                is LaunchEvent.OpenSaveTimeline -> onOpenSaveTimeline(event.gameId)
+            }
+        }
+    }
+
+    val inputDispatcher = LocalInputDispatcher.current
+    val scrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
+
+    val screenshotListState = rememberLazyListState()
+    val achievementListState = rememberLazyListState()
+    val relatedListState = rememberLazyListState()
+
+    var descriptionTopY by remember { mutableIntStateOf(0) }
+    var descriptionHeight by remember { mutableIntStateOf(0) }
+    var screenshotTopY by remember { mutableIntStateOf(0) }
+    var reviewsTopY by remember { mutableIntStateOf(0) }
+    var achievementTopY by remember { mutableIntStateOf(0) }
+    var relatedTopY by remember { mutableIntStateOf(0) }
+
+    val game = uiState.game
+    val screenshotCount by remember { derivedStateOf { uiState.game?.screenshots?.size ?: 0 } }
+    val achievementColumnCount by remember { derivedStateOf { uiState.game?.achievements?.chunked(3)?.size ?: 0 } }
+
+    LaunchedEffect(uiState.game?.id) {
+        scrollState.scrollTo(0)
+        screenshotListState.scrollToItem(0)
+        achievementListState.scrollToItem(0)
+        relatedListState.scrollToItem(0)
+    }
+
+    val descriptionEndSlack = with(LocalDensity.current) { Dimens.spacingXl.roundToPx() }
+    val inputHandler = remember(onBack) {
+        viewModel.createInputHandler(
+            onBack = onBack,
+            onNavigateToPlatformSettings = onNavigateToPlatformSettings,
+            onSnapUp = {
+                val current = viewModel.uiState.value
+                val onDescription = menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState) == MenuItem.Description
+                val target = descriptionScrollTarget(
+                    scroll = scrollState.value,
+                    viewport = scrollState.viewportSize,
+                    top = descriptionTopY,
+                    height = descriptionHeight + descriptionEndSlack,
+                    direction = -1
+                )
+                if (onDescription && target != null) {
+                    coroutineScope.launch { scrollState.animateScrollTo(target) }
+                } else {
+                    viewModel.moveMenuFocus(-1)
+                }
+                true
+            },
+            onSnapDown = {
+                val current = viewModel.uiState.value
+                val onDescription = menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState) == MenuItem.Description
+                val target = descriptionScrollTarget(
+                    scroll = scrollState.value,
+                    viewport = scrollState.viewportSize,
+                    top = descriptionTopY,
+                    height = descriptionHeight + descriptionEndSlack,
+                    direction = 1
+                )
+                if (onDescription && target != null) {
+                    coroutineScope.launch { scrollState.animateScrollTo(target) }
+                } else {
+                    viewModel.moveMenuFocus(1)
+                }
+                true
+            },
+            onScrollContent = { direction ->
+                val step = scrollState.viewportSize * CONTENT_SCROLL_FRACTION * direction
+                coroutineScope.launch {
+                    scrollState.animateScrollBy(
+                        step,
+                        tween(RightStickStepper.STEP_INTERVAL_MS.toInt(), easing = LinearEasing)
+                    )
+                }
+                true
+            },
+            onSectionLeft = {
+                val current = viewModel.uiState.value
+                when (menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState)) {
+                    MenuItem.Screenshots -> if (screenshotCount > 0) {
+                        val currentIndex = screenshotListState.firstVisibleItemIndex
+                        val newIndex = (currentIndex - 1).coerceAtLeast(0)
+                        coroutineScope.launch { screenshotListState.animateScrollToItem(newIndex) }
+                    }
+                    MenuItem.Achievements -> if (achievementColumnCount > 0) {
+                        val currentIndex = achievementListState.firstVisibleItemIndex
+                        val newIndex = (currentIndex - 1).coerceAtLeast(0)
+                        coroutineScope.launch { achievementListState.animateScrollToItem(newIndex) }
+                    }
+                    MenuItem.RelatedGames -> viewModel.moveRelatedFocus(-1)
+                    MenuItem.Documents -> viewModel.moveDocumentFocus(-1)
+                    else -> {}
+                }
+            },
+            onSectionRight = {
+                val current = viewModel.uiState.value
+                when (menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState)) {
+                    MenuItem.Screenshots -> if (screenshotCount > 0) {
+                        val currentIndex = screenshotListState.firstVisibleItemIndex
+                        val newIndex = (currentIndex + 1).coerceAtMost(screenshotCount - 1)
+                        coroutineScope.launch { screenshotListState.animateScrollToItem(newIndex) }
+                    }
+                    MenuItem.Achievements -> if (achievementColumnCount > 0) {
+                        val currentIndex = achievementListState.firstVisibleItemIndex
+                        val newIndex = (currentIndex + 1).coerceAtMost(achievementColumnCount - 1)
+                        coroutineScope.launch { achievementListState.animateScrollToItem(newIndex) }
+                    }
+                    MenuItem.RelatedGames -> viewModel.moveRelatedFocus(1)
+                    MenuItem.Documents -> viewModel.moveDocumentFocus(1)
+                    else -> {}
+                }
+            },
+            onPrevGame = { viewModel.navigateToPreviousGame() },
+            onNextGame = { viewModel.navigateToNextGame() },
+            onNavigateToGame = onNavigateToGame,
+            isInScreenshotsSection = {
+                val current = viewModel.uiState.value
+                menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState) == MenuItem.Screenshots
+            }
+        )
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, inputHandler) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_GAME_DETAIL)
+                viewModel.republishCompanionDetail()
+                viewModel.refreshSteamLauncher()
+            } else if (event == Lifecycle.Event.ON_STOP) {
+                viewModel.clearCompanionDetail()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_GAME_DETAIL)
+        viewModel.republishCompanionDetail()
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.clearCompanionDetail()
+        }
+    }
+
+    val memcardPickerInputHandler = remember(viewModel) {
+        com.nendo.argosy.ui.input.MemcardPickerInputHandler(
+            getCards = { uiState.memcardPickerState?.cards ?: emptyList() },
+            getFocusIndex = { uiState.memcardPickerFocusIndex },
+            onFocusChange = { viewModel.setMemcardPickerFocusIndex(it) },
+            onSelect = { viewModel.selectMemcard(it) },
+            onDismiss = { viewModel.dismissMemcardPicker() },
+            wrapMode = { viewModel.menuWrapMode }
+        )
+    }
+
+    val showMemcardPicker = uiState.memcardPickerState != null
+    LaunchedEffect(showMemcardPicker) {
+        if (showMemcardPicker) viewModel.setMemcardPickerFocusIndex(0)
+    }
+    ModalInputEffect(active = showMemcardPicker, handler = memcardPickerInputHandler)
+
+    val launchVariantPickerInputHandler = remember(viewModel) {
+        com.nendo.argosy.ui.input.VariantPickerInputHandler(
+            getVariants = { uiState.launchVariantPickerState?.variants ?: emptyList() },
+            getFocusIndex = { uiState.launchVariantPickerFocusIndex },
+            onFocusChange = { viewModel.setLaunchVariantPickerFocusIndex(it) },
+            onSelect = { viewModel.selectLaunchVariant(it) },
+            onDismiss = { viewModel.dismissLaunchVariantPicker() },
+            wrapMode = { viewModel.menuWrapMode }
+        )
+    }
+
+    val showLaunchVariantPicker = uiState.launchVariantPickerState != null
+    LaunchedEffect(showLaunchVariantPicker) {
+        if (showLaunchVariantPicker) viewModel.setLaunchVariantPickerFocusIndex(0)
+    }
+    ModalInputEffect(active = showLaunchVariantPicker, handler = launchVariantPickerInputHandler)
+
+    val perGameSettingsInputHandler = remember(viewModel, onNavigateToPlatformSettings) {
+        viewModel.createPerGameSettingsInputHandler(onNavigateToPlatformSettings)
+    }
+
+    ModalInputEffect(active = uiState.perGameSettings.visible, handler = perGameSettingsInputHandler)
+
+    val documentReader by viewModel.documentReader.collectAsState()
+    ModalInputEffect(active = documentReader != null, handler = viewModel.documentReaderInput)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (cocoonSheet != null && (uiState.isLoading || game == null)) {
+            CocoonSheetBackdrop()
+        } else if (uiState.isLoading || game == null) {
+            GameDetailSkeleton()
+        } else {
+            GameDetailContent(
+                game = game,
+                uiState = uiState,
+                viewModel = viewModel,
+                inputHandler = inputHandler,
+                argosyViewModel = argosyViewModel,
+                scrollState = scrollState,
+                screenshotListState = screenshotListState,
+                achievementListState = achievementListState,
+                relatedListState = relatedListState,
+                onDescriptionPositioned = { top, height ->
+                    descriptionTopY = top
+                    descriptionHeight = height
+                },
+                onScreenshotPositioned = { screenshotTopY = it },
+                onReviewsPositioned = { reviewsTopY = it },
+                onAchievementPositioned = { achievementTopY = it },
+                onRelatedPositioned = { relatedTopY = it },
+                onBack = onBack,
+                onNavigateToPlatformSettings = onNavigateToPlatformSettings,
+                onNavigateToGame = onNavigateToGame
+            )
+        }
+        documentReader?.let { reader ->
+            com.nendo.argosy.ui.screens.gamedetail.components.DocumentReaderOverlay(
+                state = reader,
+                onLinesPerPageMeasured = { viewModel.setDocumentLinesPerPage(it) },
+                onDismiss = { viewModel.dismissDocumentReader() },
+                onTurnPage = { viewModel.turnDocumentPage(it) },
+                onToggleHighlight = { viewModel.toggleDocumentHighlightAt(it) },
+                onCycleHighlightColor = { viewModel.cycleDocumentHighlightColor(it) },
+                onSpreadsMeasured = { viewModel.setDocumentShowsSpreads(it) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun GameDetailContent(
+    game: GameDetailUi,
+    uiState: GameDetailUiState,
+    viewModel: GameDetailViewModel,
+    inputHandler: com.nendo.argosy.ui.input.InputHandler,
+    argosyViewModel: ArgosyViewModel,
+    scrollState: ScrollState,
+    screenshotListState: LazyListState,
+    achievementListState: LazyListState,
+    relatedListState: LazyListState,
+    onDescriptionPositioned: (top: Int, height: Int) -> Unit,
+    onScreenshotPositioned: (Int) -> Unit,
+    onReviewsPositioned: (Int) -> Unit,
+    onAchievementPositioned: (Int) -> Unit,
+    onRelatedPositioned: (Int) -> Unit,
+    onBack: () -> Unit,
+    onNavigateToPlatformSettings: (Long) -> Unit,
+    onNavigateToGame: (Long) -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    val pickerState by viewModel.pickerModalDelegate.state.collectAsState()
+    val downloadProgressState = viewModel.downloadProgress.collectAsState()
+    val isAnySyncing = uiState.isSyncing || uiState.syncOverlayState != null
+    val showAnyOverlay = uiState.showMoreOptions || uiState.showPlayOptions ||
+        uiState.showRatingsStatusMenu || pickerState.hasAnyPickerOpen ||
+        uiState.showRatingPicker || uiState.showMissingDiscPrompt || isAnySyncing ||
+        uiState.showSaveCacheDialog || uiState.showRenameDialog || uiState.showScreenshotViewer ||
+        uiState.showExtractionFailedPrompt || uiState.showAchievementList ||
+        uiState.showReviewList || uiState.reviewEditor != null || uiState.perGameSettings.visible ||
+        viewModel.documentReader.collectAsState().value != null ||
+        viewModel.siblingChoiceState.collectAsState().value != null
+    val modalBlur by animateDpAsState(
+        targetValue = if (showAnyOverlay) Motion.blurRadiusModal else 0.dp,
+        animationSpec = Motion.focusSpringDp,
+        label = "modalBlur"
+    )
+
+    val combinedBlur = modalBlur
+
+    var descriptionTopY by remember { mutableIntStateOf(0) }
+    var screenshotTopY by remember { mutableIntStateOf(0) }
+    var reviewsTopY by remember { mutableIntStateOf(0) }
+    var achievementTopY by remember { mutableIntStateOf(0) }
+    var relatedTopY by remember { mutableIntStateOf(0) }
+    var documentsTopY by remember { mutableIntStateOf(0) }
+
+    val headerScrollThreshold = 200
+    val heroOnOtherScreen = DualScreenManagerHolder.instance
+        ?.isCompanionActive?.collectAsState()?.value == true
+    val isHeaderCollapsed = !heroOnOtherScreen && scrollState.value > headerScrollThreshold
+
+    val menuLayoutState = uiState.menuLayoutState
+
+    val menuDisplayState = GameDetailMenuState(
+        focusedIndex = uiState.menuFocusIndex,
+        downloadStatus = uiState.downloadStatus,
+        isAwaitingServer = uiState.isAwaitingServer,
+        isFavorite = game.isFavorite,
+        saveStatus = uiState.saveStatusInfo,
+        isSyncingSaves = uiState.isSyncingSaves,
+        downloadSizeBytes = uiState.downloadSizeBytes,
+        isPrivate = uiState.isPrivate
+    )
+
+    val focusedItem = menuLayout.itemAtFocusIndex(uiState.menuFocusIndex, menuLayoutState)
+
+    var programmaticScrollInFlight by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.menuFocusIndex) {
+        try {
+            programmaticScrollInFlight = true
+            when (focusedItem) {
+                MenuItem.Details -> scrollState.animateScrollTo(0)
+                MenuItem.Description -> scrollState.animateScrollTo(descriptionTopY.coerceAtLeast(0))
+                MenuItem.Screenshots -> scrollState.animateScrollTo(screenshotTopY.coerceAtLeast(0))
+                MenuItem.Documents -> scrollState.animateScrollTo(documentsTopY.coerceAtLeast(0))
+                MenuItem.Achievements -> scrollState.animateScrollTo(achievementTopY.coerceAtLeast(0))
+                MenuItem.RelatedGames -> scrollState.animateScrollTo(relatedTopY.coerceAtLeast(0))
+                else -> {}
+            }
+        } finally {
+            programmaticScrollInFlight = false
+        }
+    }
+
+    @OptIn(FlowPreview::class)
+    LaunchedEffect(scrollState, menuLayoutState) {
+        snapshotFlow { scrollState.value }
+            .debounce(100)
+            .distinctUntilChanged()
+            .collect { scrollY ->
+                if (programmaticScrollInFlight) return@collect
+                val currentFocus = menuLayout.itemAtFocusIndex(uiState.menuFocusIndex, menuLayoutState)
+                if (currentFocus !in listOf(MenuItem.Details, MenuItem.Description, MenuItem.Screenshots, MenuItem.Achievements, MenuItem.RelatedGames)) {
+                    return@collect
+                }
+
+                val visibleSection = when {
+                    menuLayoutState.hasRelated && scrollY >= relatedTopY - 100 -> MenuItem.RelatedGames
+                    menuLayoutState.hasAchievements && scrollY >= achievementTopY - 100 -> MenuItem.Achievements
+                    menuLayoutState.hasScreenshots && scrollY >= screenshotTopY - 100 -> MenuItem.Screenshots
+                    menuLayoutState.hasDescription && scrollY >= descriptionTopY - 100 -> MenuItem.Description
+                    else -> MenuItem.Details
+                }
+
+                if (visibleSection != currentFocus) {
+                    val targetIndex = menuLayout.focusIndexOf(visibleSection, menuLayoutState)
+                    if (targetIndex >= 0) {
+                        viewModel.setMenuFocusIndex(targetIndex)
+                    }
+                }
+            }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().blur(combinedBlur)) {
+            val liveBackgroundPath = com.nendo.argosy.ui.common.rememberResolvedBackgroundPath(game.id, game.backgroundPath)
+            val effectiveBackgroundPath = uiState.repairedBackgroundPath ?: liveBackgroundPath
+            if (effectiveBackgroundPath != null) {
+                val backgroundModel = rememberFileImageModel(effectiveBackgroundPath)
+                val backgroundContext = LocalContext.current
+                AsyncImage(
+                    model = remember(backgroundModel) {
+                        ImageRequest.Builder(backgroundContext)
+                            .data(backgroundModel)
+                            .stackedScreenshotBackdrop()
+                            .build()
+                    },
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(24.dp),
+                    onError = {
+                        if (uiState.repairedBackgroundPath == null && liveBackgroundPath?.startsWith("/") == true) {
+                            viewModel.repairBackgroundImage(game.id, liveBackgroundPath)
+                        }
+                    }
+                )
+            }
+
+            val isDarkTheme = LocalLauncherTheme.current.isDarkTheme
+            val overlayColor = if (isDarkTheme) Color.Black else Color.White
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                overlayColor.copy(alpha = if (isDarkTheme) 0.5f else 0.3f),
+                                overlayColor.copy(alpha = if (isDarkTheme) 0.9f else 0.7f)
+                            )
+                        )
+                    )
+            )
+        }
+
+        Column(modifier = Modifier.fillMaxSize().blur(combinedBlur)) {
+            val isDark = LocalLauncherTheme.current.isDarkTheme
+            val fadeColor = if (isDark) Color.Black else Color.White
+
+            StickyCollapsedHeader(
+                game = game,
+                isVisible = isHeaderCollapsed
+            )
+
+            Box(modifier = Modifier.weight(1f)) {
+                val configuration = LocalConfiguration.current
+                val displayAspectRatio = configuration.screenWidthDp.toFloat() / configuration.screenHeightDp
+                val isCompactMenu = displayAspectRatio <= 1.3f
+
+                Row(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .then(
+                                if (isCompactMenu) Modifier.width(56.dp)
+                                else Modifier.fillMaxWidth(0.30f)
+                            )
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                    ) {
+                        val menuStartPadding = if (isCompactMenu) Dimens.spacingSm else Dimens.spacingXl
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.gamedetail_header_back_desc),
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier
+                                    .padding(start = menuStartPadding, top = Dimens.spacingMd)
+                                    .clickableNoFocus(onClick = { inputHandler.onBack() })
+                                    .padding(Dimens.spacingXs)
+                                    .size(Dimens.iconMd)
+                            )
+                            GameDetailMenu(
+                                layoutState = menuLayoutState,
+                                displayState = menuDisplayState,
+                                downloadProgress = downloadProgressState,
+                                onItemClick = { item ->
+                                    when (item) {
+                                        MenuItem.Play -> viewModel.primaryAction()
+                                        MenuItem.Saves -> viewModel.syncSavesNow()
+                                        MenuItem.Favorite -> viewModel.toggleFavorite()
+                                        MenuItem.Privacy -> viewModel.togglePrivacy()
+                                        MenuItem.PerGameSettings -> viewModel.showPerGameSettings()
+                                        MenuItem.Options -> viewModel.toggleMoreOptions()
+                                        MenuItem.Details -> coroutineScope.launch {
+                                            scrollState.animateScrollTo(0)
+                                        }
+                                        MenuItem.Description -> coroutineScope.launch {
+                                            scrollState.animateScrollTo(descriptionTopY.coerceAtLeast(0))
+                                        }
+                                        MenuItem.Documents -> coroutineScope.launch {
+                                            scrollState.animateScrollTo(documentsTopY.coerceAtLeast(0))
+                                        }
+                                        MenuItem.Screenshots -> viewModel.openScreenshotViewer()
+                                        MenuItem.Reviews -> viewModel.showReviewList()
+                                        MenuItem.Achievements -> coroutineScope.launch {
+                                            scrollState.animateScrollTo(achievementTopY.coerceAtLeast(0))
+                                        }
+                                        MenuItem.RelatedGames -> coroutineScope.launch {
+                                            scrollState.animateScrollTo(relatedTopY.coerceAtLeast(0))
+                                        }
+                                    }
+                                },
+                                onFocusChange = viewModel::setMenuFocusIndex,
+                                isCompact = isCompactMenu,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .padding(start = menuStartPadding, top = Dimens.spacingSm)
+                            )
+                        }
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+
+                        Box(modifier = Modifier.weight(1f)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(scrollState)
+                                    .padding(start = Dimens.spacingMd, top = Dimens.spacingXl, end = Dimens.spacingXl, bottom = Dimens.spacingXl)
+                            ) {
+                                if (!heroOnOtherScreen) {
+                                    ExpandedHeader(game = game, friends = uiState.friendsActivity)
+                                    Spacer(modifier = Modifier.height(Dimens.spacingXl))
+                                }
+
+                            if (!game.description.isNullOrBlank()) {
+                                DescriptionSection(
+                                    description = game.description,
+                                    onPositioned = { y, height ->
+                                        descriptionTopY = y
+                                        onDescriptionPositioned(y, height)
+                                    }
+                                )
+                                Spacer(modifier = Modifier.height(Dimens.spacingLg))
+                            }
+
+                            if (game.screenshots.isNotEmpty()) {
+                                ScreenshotsSection(
+                                    screenshots = game.screenshots,
+                                    listState = screenshotListState,
+                                    onScreenshotTap = { index -> viewModel.openScreenshotViewer(index) },
+                                    onPositioned = { y ->
+                                        screenshotTopY = y
+                                        onScreenshotPositioned(y)
+                                    },
+                                    isActive = focusedItem == MenuItem.Screenshots,
+                                    gameId = game.id,
+                                    cacheEnabled = uiState.syncScreenshotsEnabled,
+                                    onSectionFocus = {
+                                        viewModel.setMenuFocusIndex(menuLayout.focusIndexOf(MenuItem.Screenshots, menuLayoutState))
+                                    }
+                                )
+                                Spacer(modifier = Modifier.height(Dimens.spacingLg))
+                            }
+
+                            if (uiState.documents.isNotEmpty()) {
+                                com.nendo.argosy.ui.screens.gamedetail.components.DocumentsSection(
+                                    documents = uiState.documents,
+                                    focusedIndex = uiState.documentFocusIndex,
+                                    isActive = focusedItem == MenuItem.Documents,
+                                    onOpen = { viewModel.openDocument(it) },
+                                    onPositioned = { y -> documentsTopY = y },
+                                    onSectionFocus = {
+                                        viewModel.setMenuFocusIndex(
+                                            menuLayout.focusIndexOf(MenuItem.Documents, menuLayoutState)
+                                        )
+                                    }
+                                )
+                                Spacer(modifier = Modifier.height(Dimens.spacingLg))
+                            }
+
+                            if (uiState.hasSocialAccount) {
+                                ReviewSummarySection(
+                                    summary = uiState.reviewSummary,
+                                    isActive = focusedItem == MenuItem.Reviews,
+                                    onOpen = { viewModel.showReviewList() },
+                                    onWriteReview = { viewModel.openReviewEditor() },
+                                    onPositioned = { y -> onReviewsPositioned(y) },
+                                    onSectionFocus = {
+                                        viewModel.setMenuFocusIndex(menuLayout.focusIndexOf(MenuItem.Reviews, menuLayoutState))
+                                    }
+                                )
+                                Spacer(modifier = Modifier.height(Dimens.spacingLg))
+                            }
+
+                            if (game.achievements.isNotEmpty()) {
+                                AchievementsSection(
+                                    achievements = game.achievements,
+                                    listState = achievementListState,
+                                    onPositioned = { y ->
+                                        achievementTopY = y
+                                        onAchievementPositioned(y)
+                                    },
+                                    isActive = focusedItem == MenuItem.Achievements
+                                )
+                                Spacer(modifier = Modifier.height(Dimens.spacingLg))
+                            }
+
+                            if (uiState.relatedGames.isNotEmpty()) {
+                                RelatedGamesSection(
+                                    games = uiState.relatedGames,
+                                    listState = relatedListState,
+                                    focusedIndex = uiState.relatedFocusIndex,
+                                    isActive = focusedItem == MenuItem.RelatedGames,
+                                    onGameTap = { relatedId -> onNavigateToGame(relatedId) },
+                                    onPositioned = { y ->
+                                        relatedTopY = y
+                                        onRelatedPositioned(y)
+                                    },
+                                    onSectionFocus = {
+                                        viewModel.setMenuFocusIndex(menuLayout.focusIndexOf(MenuItem.RelatedGames, menuLayoutState))
+                                    }
+                                )
+                                Spacer(modifier = Modifier.height(Dimens.spacingLg))
+                            }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .height(Dimens.spacingXxl)
+                                    .background(
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                Color.Transparent,
+                                                fadeColor.copy(alpha = 0.8f)
+                                            )
+                                        )
+                                    )
+                            )
+                        }
+                    }
+                }
+            }
+
+            AnimatedVisibility(
+                visible = !showAnyOverlay,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                val canShowPlayOptions = uiState.downloadStatus == GameDownloadStatus.DOWNLOADED &&
+                    game.isBuiltInEmulator
+                val prevNextGameHint = stringResource(R.string.gamedetail_footer_prev_next_game)
+                val sectionScrollHint = stringResource(R.string.gamedetail_footer_section_scroll)
+                val playSyncingHint = stringResource(R.string.gamedetail_footer_play_syncing)
+                val playDownloadedHint = stringResource(R.string.gamedetail_footer_play_downloaded)
+                val playInstallHint = stringResource(R.string.gamedetail_footer_play_install)
+                val playDownloadHint = stringResource(R.string.gamedetail_footer_play_download)
+                val playQueuedHint = stringResource(R.string.gamedetail_footer_play_queued)
+                val playRetryNoSpaceHint =
+                    stringResource(R.string.gamedetail_footer_play_retry_no_space)
+                val playDownloadingHint = stringResource(R.string.gamedetail_footer_play_downloading)
+                val playExtractingHint = stringResource(R.string.gamedetail_footer_play_extracting)
+                val playResumeHint = stringResource(R.string.gamedetail_footer_play_resume)
+                val playRetryFailedHint =
+                    stringResource(R.string.gamedetail_footer_play_retry_failed)
+                val playFallbackHint = stringResource(R.string.gamedetail_footer_play_fallback)
+                val savesSyncingHint = stringResource(R.string.gamedetail_footer_saves_syncing)
+                val savesSyncHint = stringResource(R.string.gamedetail_footer_saves_sync)
+                val menuUnfavoriteHint = stringResource(R.string.gamedetail_footer_menu_unfavorite)
+                val menuFavoriteHint = stringResource(R.string.gamedetail_footer_menu_favorite)
+                val menuMakePublicHint = stringResource(R.string.gamedetail_footer_menu_make_public)
+                val menuMakePrivateHint =
+                    stringResource(R.string.gamedetail_footer_menu_make_private)
+                val configureHint = stringResource(R.string.gamedetail_footer_configure)
+                val optionsHint = stringResource(R.string.gamedetail_footer_options)
+                val viewScreenshotHint = stringResource(R.string.gamedetail_footer_view_screenshot)
+                val viewAllAchievementsHint =
+                    stringResource(R.string.gamedetail_footer_view_all_achievements)
+                val viewReviewsHint = stringResource(R.string.gamedetail_footer_view_reviews)
+                val openRelatedHint = stringResource(R.string.gamedetail_footer_open_related)
+                val backHint = stringResource(R.string.gamedetail_footer_back)
+                val scrollContentHint = stringResource(R.string.gamedetail_footer_scroll)
+                val newGameHint = stringResource(R.string.gamedetail_footer_new_game)
+                val shortcutMakePublicHint =
+                    stringResource(R.string.gamedetail_footer_shortcut_make_public)
+                val shortcutMakePrivateHint =
+                    stringResource(R.string.gamedetail_footer_shortcut_make_private)
+                val shortcutUnfavoriteHint =
+                    stringResource(R.string.gamedetail_footer_shortcut_unfavorite)
+                val shortcutFavoriteHint =
+                    stringResource(R.string.gamedetail_footer_shortcut_favorite)
+                FooterHints(
+                    hints = buildList {
+                        add(InputButton.LB_RB to prevNextGameHint)
+                        add(InputButton.RIGHT_STICK_VERTICAL to scrollContentHint)
+                        if (focusedItem == MenuItem.Screenshots || focusedItem == MenuItem.Achievements || focusedItem == MenuItem.RelatedGames) {
+                            add(InputButton.DPAD_HORIZONTAL to sectionScrollHint)
+                        }
+                        when (focusedItem) {
+                            MenuItem.Play -> add(InputButton.A to when {
+                                isAnySyncing -> playSyncingHint
+                                uiState.downloadStatus == GameDownloadStatus.DOWNLOADED -> playDownloadedHint
+                                uiState.downloadStatus == GameDownloadStatus.NEEDS_INSTALL -> playInstallHint
+                                uiState.downloadStatus == GameDownloadStatus.NOT_DOWNLOADED -> playDownloadHint
+                                uiState.downloadStatus == GameDownloadStatus.QUEUED -> playQueuedHint
+                                uiState.downloadStatus == GameDownloadStatus.WAITING_FOR_STORAGE -> playRetryNoSpaceHint
+                                uiState.downloadStatus == GameDownloadStatus.DOWNLOADING -> playDownloadingHint
+                                uiState.downloadStatus == GameDownloadStatus.EXTRACTING -> playExtractingHint
+                                uiState.downloadStatus == GameDownloadStatus.PAUSED -> playResumeHint
+                                uiState.downloadStatus == GameDownloadStatus.FAILED -> playRetryFailedHint
+                                else -> playFallbackHint
+                            })
+                            MenuItem.Saves -> add(InputButton.A to if (uiState.isSyncingSaves) savesSyncingHint else savesSyncHint)
+                            MenuItem.Favorite -> add(InputButton.A to if (game.isFavorite) menuUnfavoriteHint else menuFavoriteHint)
+                            MenuItem.Privacy -> add(InputButton.A to if (uiState.isPrivate) menuMakePublicHint else menuMakePrivateHint)
+                            MenuItem.PerGameSettings -> add(InputButton.A to configureHint)
+                            MenuItem.Options -> add(InputButton.A to optionsHint)
+                            MenuItem.Screenshots -> add(InputButton.A to viewScreenshotHint)
+                            MenuItem.Documents -> Unit
+                            MenuItem.Reviews -> add(InputButton.A to viewReviewsHint)
+                            MenuItem.Achievements -> add(InputButton.A to viewAllAchievementsHint)
+                            MenuItem.RelatedGames -> add(InputButton.A to openRelatedHint)
+                            MenuItem.Details, MenuItem.Description, null -> {}
+                        }
+                        add(InputButton.B to backHint)
+                        if (canShowPlayOptions && focusedItem == MenuItem.Play) {
+                            add(InputButton.X to newGameHint)
+                        } else if (uiState.hasSocialAccount && game.igdbId != null) {
+                            add(InputButton.X to if (uiState.isPrivate) shortcutMakePublicHint else shortcutMakePrivateHint)
+                        }
+                        add(InputButton.Y to if (game.isFavorite) shortcutUnfavoriteHint else shortcutFavoriteHint)
+                    },
+                    onHintClick = { button ->
+                        when (button) {
+                            InputButton.A -> {
+                                if (focusedItem == MenuItem.RelatedGames) {
+                                    viewModel.focusedRelatedGameId()?.let(onNavigateToGame)
+                                } else {
+                                    viewModel.executeMenuAction()
+                                }
+                            }
+                            InputButton.B -> onBack()
+                            InputButton.X -> {
+                                if (canShowPlayOptions) viewModel.showPlayOptions()
+                                else if (uiState.hasSocialAccount) viewModel.togglePrivacy()
+                            }
+                            InputButton.Y -> viewModel.toggleFavorite()
+                            InputButton.LB -> viewModel.navigateToPreviousGame()
+                            InputButton.RB -> viewModel.navigateToNextGame()
+                            else -> {}
+                        }
+                    }
+                )
+                FooterSpacer()
+            }
+        }
+
+        // A Cocoon sheet sits over the blurred folder look, not over Argosy's game page.
+        if (viewModel.cocoonSheet != null) CocoonSheetBackdrop()
+
+        GameDetailModals(game = game, uiState = uiState, viewModel = viewModel, inputHandler = inputHandler, onBack = onBack, onNavigateToPlatformSettings = onNavigateToPlatformSettings)
+
+        ReviewListOverlay(
+            visible = uiState.showReviewList,
+            gameTitle = game.title,
+            page = uiState.reviewPage,
+            focusIndex = uiState.reviewListFocusIndex,
+            showWriteRow = uiState.reviewListHasWriteRow,
+            onEntryTapped = { index -> viewModel.tapReviewListEntry(index) }
+        )
+
+        uiState.reviewEditor?.let { editor ->
+            ReviewEditorOverlay(state = editor, viewModel = viewModel)
+        }
+
+        AchievementListOverlay(
+            visible = uiState.showAchievementList,
+            gameTitle = game.title,
+            achievements = game.achievements,
+            focusIndex = uiState.achievementListFocusIndex
+        )
+    }
+}
+
+@Composable
+private fun GameDetailModals(
+    onNavigateToPlatformSettings: (Long) -> Unit,
+    game: GameDetailUi,
+    uiState: GameDetailUiState,
+    viewModel: GameDetailViewModel,
+    inputHandler: com.nendo.argosy.ui.input.InputHandler,
+    onBack: () -> Unit
+) {
+    val pickerState by viewModel.pickerModalDelegate.state.collectAsState()
+
+    AnimatedVisibility(
+        visible = uiState.showMoreOptions,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        MoreOptionsModal(
+            game = game,
+            focusIndex = uiState.moreOptionsFocusIndex,
+            isDownloaded = uiState.downloadStatus == GameDownloadStatus.DOWNLOADED,
+            hasVariants = uiState.hasVariants,
+            hasSiblingGroup = uiState.hasSiblingGroup,
+            updateCount = uiState.updateFiles.size + uiState.dlcFiles.size,
+            hasManageableFiles = uiState.hasManageableFiles,
+            launchDisplayNumbers = uiState.launchDisplayNumbers,
+            launchDisplayIndex = uiState.launchDisplayIndex,
+            onAction = { action -> viewModel.handleMoreOptionAction(action, onBack, onNavigateToPlatformSettings) },
+            onDismiss = viewModel::toggleMoreOptions
+        )
+    }
+
+    AnimatedVisibility(
+        visible = uiState.perGameSettings.visible,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        PerGameSettingsModal(
+            gameTitle = game.title,
+            state = uiState.perGameSettings,
+            onEmulatorClick = viewModel::showEmulatorPicker,
+            onCoreClick = viewModel::showCorePicker,
+            onChangeSavePath = viewModel::openPerGameSavePathBrowser,
+            onResetSavePath = viewModel::clearPerGameSavePath,
+            onMemcardClick = viewModel::openPerGameMemcardPicker,
+            onCycleDisplayTarget = viewModel::cyclePerGameDisplayTarget,
+            onCycleExtension = viewModel::cyclePerGameExtension,
+            onCycleBackend = viewModel::cyclePerGameBackend,
+            onOpenGpuDriverPicker = viewModel::openPerGameGpuDriverPicker,
+            onSelectGpuDriverEntry = viewModel::selectPerGameGpuDriverEntry,
+            onDismissGpuDriverPicker = viewModel::dismissPerGameGpuDriverPicker,
+            onPlatformSettings = {
+                viewModel.dismissPerGameSettings()
+                onNavigateToPlatformSettings(game.platformId)
+            },
+            onDismiss = viewModel::dismissPerGameSettings
+        )
+    }
+
+    if (uiState.perGameSettings.showPathBrowser) {
+        com.nendo.argosy.ui.filebrowser.FileBrowserScreen(
+            mode = com.nendo.argosy.ui.filebrowser.FileBrowserMode.FOLDER_SELECTION,
+            title = stringResource(R.string.gamedetail_per_game_save_path_browser_title),
+            onPathSelected = viewModel::setPerGameSavePath,
+            onDismiss = viewModel::dismissPerGameSavePathBrowser
+        )
+    }
+
+    if (uiState.perGameSettings.showMemcardPicker) {
+        com.nendo.argosy.ui.components.MemcardPickerModal(
+            cards = uiState.perGameSettings.memcardPickerCards,
+            focusIndex = uiState.perGameSettings.memcardPickerFocusIndex,
+            selectedCardPath = uiState.perGameSettings.selectedMemcardPath ?: "",
+            onSelectCard = viewModel::selectPerGameMemcard,
+            onDismiss = viewModel::dismissPerGameMemcardPicker
+        )
+    }
+
+    val speedrunSplitsState by viewModel.speedrunSplitsDelegate.state.collectAsState()
+    if (speedrunSplitsState.visible) {
+        com.nendo.argosy.ui.screens.gamedetail.modals.SpeedrunSplitsModal(
+            gameTitle = game.title,
+            state = speedrunSplitsState,
+            delegate = viewModel.speedrunSplitsDelegate
+        )
+    }
+
+    AnimatedVisibility(
+        visible = uiState.showPlayOptions,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        PlayOptionsModal(
+            focusIndex = uiState.playOptionsFocusIndex,
+            hasSaves = uiState.hasCasualSaves,
+            hasHardcoreSave = uiState.hasHardcoreSave,
+            hasRASupport = uiState.hasRASupport,
+            hardcoreAvailable = uiState.hardcoreAvailable,
+            isOnline = uiState.isOnline,
+            canSkipSync = uiState.isOnline,
+            statesAvailable = uiState.statesAvailable,
+            onAction = viewModel::handlePlayOption,
+            onDismiss = viewModel::dismissPlayOptions
+        )
+    }
+
+    AnimatedVisibility(
+        visible = uiState.showRatingsStatusMenu,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        RatingsStatusModal(
+            game = game,
+            focusIndex = uiState.ratingsStatusFocusIndex,
+            onAction = { action -> viewModel.handleMoreOptionAction(action, onBack) },
+            onDismiss = viewModel::dismissRatingsStatusMenu
+        )
+    }
+
+    AnimatedVisibility(
+        visible = pickerState.showFilePicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        val fileRows = pickerState.filePickerRows
+        val isSelected = { row: com.nendo.argosy.data.model.FilePickerRow ->
+            row.rommFileId in pickerState.filePickerSelected
+        }
+        val adds = fileRows.filter { !it.isHeader && !it.isLocked && !it.isDownloaded && isSelected(it) }
+        val removes = fileRows.filter { !it.isHeader && !it.isLocked && it.isDownloaded && !isSelected(it) }
+        val selected = fileRows.filter { !it.isHeader && isSelected(it) }
+        val noChangesSummary = stringResource(R.string.gamedetail_file_picker_summary_no_changes)
+        val addedSummary = stringResource(
+            R.string.gamedetail_file_picker_summary_added,
+            adds.size,
+            com.nendo.argosy.util.formatBytes(adds.sumOf { it.sizeBytes })
+        )
+        val removedSummary = stringResource(
+            R.string.gamedetail_file_picker_summary_removed,
+            removes.size,
+            com.nendo.argosy.util.formatBytes(removes.sumOf { it.sizeBytes })
+        )
+        val selectionSummary = stringResource(
+            R.string.gamedetail_file_picker_summary_selection,
+            selected.size,
+            fileRows.count { !it.isHeader },
+            com.nendo.argosy.util.formatBytes(selected.sumOf { it.sizeBytes })
+        )
+        val summary = if (pickerState.filePickerManageMode) {
+            when {
+                adds.isEmpty() && removes.isEmpty() -> noChangesSummary
+                else -> buildList {
+                    if (adds.isNotEmpty()) add(addedSummary)
+                    if (removes.isNotEmpty()) add(removedSummary)
+                }.joinToString("   ")
+            }
+        } else {
+            selectionSummary
+        }
+        FilePickerModal(
+            gameTitle = uiState.game?.title ?: "",
+            title = if (pickerState.filePickerManageMode) {
+                stringResource(R.string.gamedetail_file_picker_title_manage)
+            } else {
+                stringResource(R.string.gamedetail_file_picker_title_choose)
+            },
+            rows = pickerState.visibleFilePickerRows,
+            selectedIds = pickerState.filePickerSelected,
+            focusIndex = pickerState.filePickerFocusIndex,
+            summary = summary,
+            onToggleRow = viewModel::toggleFilePickerRow,
+            onSelectAll = viewModel::toggleFilePickerSelectAll,
+            onConfirm = viewModel::confirmFilePicker,
+            onDismiss = viewModel::dismissFilePicker,
+            allRows = fileRows,
+            collapsedGroups = pickerState.filePickerCollapsed,
+            onToggleCollapse = viewModel.pickerModalDelegate::toggleFilePickerGroupCollapse,
+            manageMode = pickerState.filePickerManageMode
+        )
+    }
+
+    AnimatedVisibility(
+        visible = pickerState.showEmulatorPicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        EmulatorPickerModal(
+            availableEmulators = pickerState.availableEmulators,
+            builtinCore = pickerState.builtinCore,
+            currentEmulatorName = game.emulatorName,
+            focusIndex = pickerState.emulatorPickerFocusIndex,
+            onSelectEmulator = viewModel.pickerModalDelegate::selectEmulator,
+            onDismiss = viewModel.pickerModalDelegate::dismissEmulatorPicker
+        )
+    }
+
+    AnimatedVisibility(
+        visible = pickerState.showSteamLauncherPicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        SteamLauncherPickerModal(
+            availableLaunchers = pickerState.availableSteamLaunchers,
+            currentLauncherName = game.steamLauncherName,
+            currentLauncherPackage = game.steamLauncherPackage,
+            isAutomatic = !game.steamLauncherSetManually,
+            focusIndex = pickerState.steamLauncherPickerFocusIndex,
+            onSelectLauncher = viewModel.pickerModalDelegate::selectSteamLauncher,
+            onDismiss = viewModel.pickerModalDelegate::dismissSteamLauncherPicker
+        )
+    }
+
+    AnimatedVisibility(
+        visible = pickerState.showCorePicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        CorePickerModal(
+            availableCores = pickerState.availableCores,
+            selectedCoreId = uiState.selectedCoreId,
+            focusIndex = pickerState.corePickerFocusIndex,
+            onSelectCore = viewModel.pickerModalDelegate::selectCore,
+            onDismiss = viewModel.pickerModalDelegate::dismissCorePicker
+        )
+    }
+
+    AnimatedVisibility(
+        visible = pickerState.showDiscPicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        DiscPickerModal(
+            discs = pickerState.discPickerOptions,
+            focusIndex = pickerState.discPickerFocusIndex,
+            onSelectDisc = viewModel.pickerModalDelegate::selectDisc,
+            onDismiss = viewModel.pickerModalDelegate::dismissDiscPicker
+        )
+    }
+
+    uiState.memcardPickerState?.let { pickerState ->
+        MemcardPickerModal(
+            cards = pickerState.cards,
+            focusIndex = uiState.memcardPickerFocusIndex,
+            selectedCardPath = null,
+            onSelectCard = viewModel::selectMemcard,
+            onDismiss = viewModel::dismissMemcardPicker
+        )
+    }
+
+    uiState.launchVariantPickerState?.let { pickerState ->
+        com.nendo.argosy.ui.screens.gamedetail.modals.VariantPickerModal(
+            variants = pickerState.variants,
+            focusIndex = uiState.launchVariantPickerFocusIndex,
+            onSelectVariant = viewModel::selectLaunchVariant,
+            onDismiss = viewModel::dismissLaunchVariantPicker
+        )
+    }
+
+    AnimatedVisibility(
+        visible = pickerState.showVariantPicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        com.nendo.argosy.ui.screens.gamedetail.modals.VariantPickerModal(
+            variants = pickerState.variantPickerOptions,
+            focusIndex = pickerState.variantPickerFocusIndex,
+            onSelectVariant = { fileId -> viewModel.pickerModalDelegate.confirmVariantSelection(fileId) },
+            onDownloadVariant = { fileId -> viewModel.downloadVariant(fileId) },
+            activeFileId = pickerState.variantPickerActiveFileId,
+            showActiveMarker = true,
+            onDismiss = viewModel.pickerModalDelegate::dismissVariantPicker
+        )
+    }
+
+    AnimatedVisibility(
+        visible = pickerState.showArtPicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        ArtPickerModal(
+            gameTitle = game.title,
+            slot = pickerState.artPickerSlot,
+            candidates = pickerState.artCandidates,
+            focusIndex = pickerState.artPickerFocusIndex,
+            isLoading = pickerState.artPickerLoading,
+            errorMessage = pickerState.artPickerError,
+            canSearch = pickerState.artPickerCanSearch,
+            query = pickerState.artPickerQuery,
+            onQueryChange = viewModel::setArtPickerQuery,
+            onSearch = { viewModel.searchArtwork() },
+            onChooseFile = viewModel::openArtFileBrowser,
+            onSelect = viewModel::selectArtCandidate,
+            onSelectSlot = viewModel::selectArtSlot,
+            onDismiss = viewModel::dismissArtPicker
+        )
+    }
+    if (pickerState.showArtFileBrowser) {
+        com.nendo.argosy.ui.filebrowser.FileBrowserScreen(
+            mode = com.nendo.argosy.ui.filebrowser.FileBrowserMode.FILE_SELECTION,
+            title = stringResource(pickerState.artPickerSlot.fileBrowserTitleRes),
+            fileFilter = com.nendo.argosy.ui.filebrowser.FileFilter(
+                extensions = setOf("png", "jpg", "jpeg", "webp")
+            ),
+            onPathSelected = viewModel::selectArtFile,
+            onDismiss = viewModel::closeArtFileBrowser
+        )
+    }
+
+    AnimatedVisibility(
+        visible = uiState.showRatingPicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        RatingPickerModal(
+            type = uiState.ratingPickerType,
+            value = uiState.ratingPickerValue,
+            onValueChange = viewModel::setRatingValue,
+            onAdjust = viewModel::changeRatingValue,
+            onConfirm = viewModel::confirmRating,
+            onDismiss = viewModel::dismissRatingPicker
+        )
+    }
+
+    AnimatedVisibility(
+        visible = uiState.showStatusPicker,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        StatusPickerModal(
+            selectedValue = uiState.statusPickerValue,
+            currentValue = uiState.game?.status,
+            onSelect = viewModel::selectStatus,
+            onDismiss = viewModel::dismissStatusPicker
+        )
+    }
+
+    AnimatedVisibility(
+        visible = uiState.showMissingDiscPrompt,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        MissingDiscModal(
+            missingDiscNumbers = uiState.missingDiscNumbers,
+            onDismiss = viewModel::dismissMissingDiscPrompt
+        )
+    }
+
+    AnimatedVisibility(
+        visible = uiState.showExtractionFailedPrompt && uiState.extractionFailedInfo != null,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        uiState.extractionFailedInfo?.let { info ->
+            ExtractionFailedModal(
+                info = info,
+                focusIndex = uiState.extractionPromptFocusIndex,
+                onRetry = viewModel::confirmExtractionPromptSelection,
+                onRedownload = {
+                    viewModel.moveExtractionPromptFocus(1)
+                    viewModel.confirmExtractionPromptSelection()
+                },
+                onDismiss = viewModel::dismissExtractionPrompt
+            )
+        }
+    }
+
+    val siblingChoiceState by viewModel.siblingChoiceState.collectAsState()
+    com.nendo.argosy.ui.screens.common.SiblingChoiceModalHost(
+        state = siblingChoiceState,
+        onMove = viewModel::moveSiblingChoiceFocus,
+        onFocus = viewModel::setSiblingChoiceFocus,
+        onConfirm = viewModel::confirmSiblingChoice,
+        onDismiss = viewModel::dismissSiblingChoice
+    )
+
+    SaveChannelModal(
+        state = uiState.saveChannel,
+        savePath = uiState.saveChannel.savePath,
+        onRenameTextChange = viewModel::updateRenameText,
+        onRenameConfirm = viewModel::confirmRename,
+        onRenameCancel = viewModel::dismissRenameDialog,
+        onSlotClick = viewModel::tapSaveSlot,
+        onHistoryClick = viewModel::tapSaveHistory,
+        onTabSwitch = viewModel::switchSaveTab,
+        onStateClick = viewModel::tapSaveState,
+        onDismissScreenshotPreview = viewModel::dismissScreenshotPreview,
+        onSlotPickerClick = viewModel::tapSlotPickerItem,
+        onHintClick = { button ->
+            when (button) {
+                InputButton.A -> inputHandler.onConfirm()
+                InputButton.B -> inputHandler.onBack()
+                InputButton.X -> inputHandler.onContextMenu()
+                InputButton.Y -> inputHandler.onSecondaryAction()
+                else -> Unit
+            }
+        },
+        onDismiss = viewModel::dismissSaveCacheDialog,
+        coverPath = com.nendo.argosy.ui.common.rememberResolvedCoverPath(game.id, game.coverPath),
+        snapshotActions = viewModel.snapshotViewActions
+    )
+
+    PermissionRequiredModal(
+        isVisible = uiState.showPermissionModal,
+        onGrantPermission = viewModel::openAllFilesAccessSettings,
+        onDisableSync = viewModel::disableSaveSync,
+        onDismiss = viewModel::dismissPermissionModal
+    )
+
+    SyncOverlay(
+        syncProgress = if (uiState.isSyncing && uiState.syncOverlayState == null) uiState.syncProgress else null,
+        gameTitle = game.title
+    )
+
+    AnimatedVisibility(
+        visible = uiState.showScreenshotViewer,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        ScreenshotViewerOverlay(
+            screenshots = game.screenshots,
+            currentIndex = uiState.viewerScreenshotIndex,
+            onNavigate = viewModel::moveViewerIndex,
+            onDismiss = viewModel::closeScreenshotViewer,
+            onSetBackground = viewModel::setCurrentScreenshotAsBackground
+        )
+    }
+
+    AnimatedVisibility(
+        visible = uiState.showAddToCollectionModal,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        AddToCollectionModal(
+            collections = uiState.collections.map { c ->
+                CollectionItem(c.id, c.name, c.isInCollection)
+            },
+            focusIndex = uiState.collectionModalFocusIndex,
+            showCreateOption = true,
+            onToggleCollection = viewModel::toggleGameInCollection,
+            onCreate = viewModel::showCreateCollectionFromModal,
+            onDismiss = viewModel::dismissAddToCollectionModal
+        )
+    }
+
+    com.nendo.argosy.ui.common.GameConfirmHost(viewModel.gameConfirm)
+
+    if (uiState.showCreateCollectionDialog) {
+        CreateCollectionDialog(
+            onDismiss = viewModel::hideCreateCollectionDialog,
+            onCreate = { name ->
+                viewModel.createCollectionFromModal(name)
+                viewModel.hideCreateCollectionDialog()
+            }
+        )
+    }
+}
+
+
+@Composable
+private fun CocoonSheetBackdrop() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(com.nendo.argosy.ui.theme.CocoonSurface.Background)
+    ) {
+        val still = com.nendo.argosy.ui.cocoon.CocoonBackdrop.image.value
+        if (still != null) {
+            // the folder the sheet was opened from, blurred, as Cocoon shows it
+            androidx.compose.foundation.Image(
+                bitmap = still,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().blur(14.dp)
+            )
+        } else {
+            com.nendo.argosy.ui.theme.CocoonWallpaper(animated = false)
+        }
+        Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f)))
+    }
+}

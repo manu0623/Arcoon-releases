@@ -1,0 +1,178 @@
+package com.nendo.argosy.ui.screens.gamedetail.delegates
+
+import android.content.Context
+import com.nendo.argosy.data.emulator.LaunchResult
+import com.nendo.argosy.data.preferences.UserPreferencesRepository
+import com.nendo.argosy.data.repository.GameRepository
+import com.nendo.argosy.data.repository.RetroAchievementsRepository
+import com.nendo.argosy.domain.usecase.game.LaunchGameUseCase
+import com.nendo.argosy.domain.usecase.save.GetUnifiedSavesUseCase
+import com.nendo.argosy.ui.input.SoundFeedbackManager
+import com.nendo.argosy.core.input.SoundType
+import com.nendo.argosy.ui.screens.gamedetail.modals.PlayOptionAction
+import com.nendo.argosy.ui.screens.gamedetail.modals.buildPlayOptions
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+data class PlayOptionsState(
+    val showPlayOptions: Boolean = false,
+    val playOptionsFocusIndex: Int = 0,
+    val hasCasualSaves: Boolean = false,
+    val hasHardcoreSave: Boolean = false,
+    val hasRASupport: Boolean = false,
+    val isRALoggedIn: Boolean = false,
+    val isOnline: Boolean = false,
+    val secureSaves: Boolean = true,
+    val statesAvailable: Boolean = false
+) {
+    /** Hardcore requires a RetroAchievements login and Secure Saves. */
+    val hardcoreAvailable: Boolean get() = hasRASupport && isRALoggedIn && secureSaves
+
+    /**
+     * Continue-in-hardcore is offered whenever hardcore is available and there is any resumable
+     * save. RESUME_HARDCORE loads the latest hardcore save if present, else falls back to the
+     * active SRAM -- so a casual save can be continued in a hardcore session.
+     */
+    val showResumeHardcore: Boolean get() = hardcoreAvailable && (hasCasualSaves || hasHardcoreSave)
+}
+
+class PlayOptionsDelegate @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val gameRepository: GameRepository,
+    private val getUnifiedSavesUseCase: GetUnifiedSavesUseCase,
+    private val raRepository: RetroAchievementsRepository,
+    private val launchGameUseCase: LaunchGameUseCase,
+    private val soundManager: SoundFeedbackManager,
+    private val userPreferencesRepository: UserPreferencesRepository,
+    private val emulatorResolver: com.nendo.argosy.data.emulator.EmulatorResolver,
+    private val stateSupportResolver: com.nendo.argosy.data.emulator.StateSupportResolver
+) {
+    private val _state = MutableStateFlow(PlayOptionsState())
+    val state: StateFlow<PlayOptionsState> = _state.asStateFlow()
+
+    fun reset() {
+        _state.value = PlayOptionsState()
+    }
+
+    /**
+     * Opens the play-options modal. Save existence (Continue vs New) comes from the unified
+     * local+server view so a server-only cloud save still offers Continue, but the server fetch is
+     * skipped when offline to avoid the sync client's connect timeout.
+     */
+    fun showPlayOptions(scope: CoroutineScope, gameId: Long, hasAchievements: Boolean) {
+        scope.launch {
+            val isOnline = com.nendo.argosy.util.NetworkUtils.isOnline(context)
+            val entries = getUnifiedSavesUseCase(gameId, expandHistory = false, includeServer = isOnline)
+            val hasCasualSaves = entries.any { !it.isHardcore }
+            val hasHardcoreSave = entries.any { it.isHardcore }
+            val isRALoggedIn = raRepository.isLoggedIn()
+            val secureSaves = userPreferencesRepository.preferences.first().secureSaves
+            val defaultToHardcore = isDefaultToHardcore()
+            val game = gameRepository.getById(gameId)
+            val statesAvailable = game != null && stateSupportResolver.supportsStates(
+                emulatorId = emulatorResolver.getEmulatorIdForGame(
+                    gameId, game.platformId, game.platformSlug
+                ),
+                gameId = gameId,
+                platformId = game.platformId,
+                platformSlug = game.platformSlug
+            )
+
+            val newState = PlayOptionsState(
+                showPlayOptions = true,
+                hasCasualSaves = hasCasualSaves,
+                hasHardcoreSave = hasHardcoreSave,
+                hasRASupport = hasAchievements,
+                isRALoggedIn = isRALoggedIn,
+                isOnline = isOnline,
+                secureSaves = secureSaves,
+                statesAvailable = statesAvailable
+            )
+            openModal(newState, PlayOptionAction.ResumeHardcore.takeIf { defaultToHardcore && newState.hardcoreAvailable })
+        }
+    }
+
+    /**
+     * The play options shown, in display order -- drives the modal's focus bounds and confirm
+     * mapping. Derived from the same [buildPlayOptions] source of truth the modal renders from, so
+     * focus index and row layout cannot diverge. `canSkipSync` mirrors the screen's wiring
+     * (`canSkipSync = isOnline`).
+     */
+    private fun visibleActions(state: PlayOptionsState): List<PlayOptionAction> =
+        buildPlayOptions(
+            hasSaves = state.hasCasualSaves,
+            hasHardcoreSave = state.hasHardcoreSave,
+            hasRASupport = state.hasRASupport,
+            hardcoreAvailable = state.hardcoreAvailable,
+            isOnline = state.isOnline,
+            canSkipSync = state.isOnline,
+            statesAvailable = state.statesAvailable
+        ).map { it.action }
+
+    /** Show the play-options modal, pre-focusing [preferred] if present (else the first row). */
+    private fun openModal(state: PlayOptionsState, preferred: PlayOptionAction?) {
+        val focusIndex = preferred?.let { visibleActions(state).indexOf(it).coerceAtLeast(0) } ?: 0
+        _state.value = state.copy(playOptionsFocusIndex = focusIndex)
+        soundManager.play(SoundType.OPEN_MODAL)
+    }
+
+    fun dismissPlayOptions() {
+        _state.update { it.copy(showPlayOptions = false) }
+        soundManager.play(SoundType.CLOSE_MODAL)
+    }
+
+    fun movePlayOptionsFocus(delta: Int) {
+        _state.update {
+            val maxIndex = (visibleActions(it).size - 1).coerceAtLeast(0)
+            it.copy(playOptionsFocusIndex = (it.playOptionsFocusIndex + delta).coerceIn(0, maxIndex))
+        }
+    }
+
+    fun confirmPlayOptionSelection(): PlayOptionAction? {
+        val state = _state.value
+        val action = visibleActions(state).getOrNull(state.playOptionsFocusIndex) ?: return null
+        if (action == PlayOptionAction.NewHardcore && !state.isOnline) return null
+        return action
+    }
+
+    suspend fun shouldShowModeSelection(
+        gameId: Long,
+        isBuiltInEmulator: Boolean,
+        hasAchievements: Boolean
+    ): Boolean {
+        if (!isBuiltInEmulator || !hasAchievements) return false
+        if (!raRepository.isLoggedIn()) return false
+        if (!userPreferencesRepository.preferences.first().secureSaves) return false
+        val pref = userPreferencesRepository.getBuiltinEmulatorSettings().first().defaultToHardcore
+        if (pref != "ask") return false
+        val isOnline = com.nendo.argosy.util.NetworkUtils.isOnline(context)
+        return getUnifiedSavesUseCase(gameId, expandHistory = false, includeServer = isOnline).isEmpty()
+    }
+
+    fun showFreshGameModeSelection(scope: CoroutineScope, gameId: Long) {
+        scope.launch {
+            val isOnline = com.nendo.argosy.util.NetworkUtils.isOnline(context)
+            val secureSaves = userPreferencesRepository.preferences.first().secureSaves
+            val newState = PlayOptionsState(
+                showPlayOptions = true,
+                hasCasualSaves = false,
+                hasHardcoreSave = false,
+                hasRASupport = true,
+                isRALoggedIn = true,
+                isOnline = isOnline,
+                secureSaves = secureSaves
+            )
+            openModal(newState, PlayOptionAction.NewHardcore.takeIf { isDefaultToHardcore() && isOnline && secureSaves })
+        }
+    }
+
+    private suspend fun isDefaultToHardcore(): Boolean =
+        userPreferencesRepository.getBuiltinEmulatorSettings().first().defaultToHardcore == "hardcore"
+}

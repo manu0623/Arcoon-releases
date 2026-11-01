@@ -1,0 +1,78 @@
+package com.nendo.argosy.data.sync.strategy
+
+import com.nendo.argosy.data.local.dao.GameDao
+import com.nendo.argosy.data.local.dao.PendingSyncQueueDao
+import com.nendo.argosy.data.local.dao.SaveCacheDao
+import com.nendo.argosy.data.local.dao.SaveSyncDao
+import com.nendo.argosy.data.local.entity.SyncType
+import com.nendo.argosy.data.repository.SaveSyncApiClient
+import com.nendo.argosy.util.Logger
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class ConflictAutoResolver @Inject constructor(
+    private val gameDao: GameDao,
+    private val saveSyncDao: SaveSyncDao,
+    private val saveCacheDao: SaveCacheDao,
+    private val pendingSyncQueueDao: PendingSyncQueueDao,
+    private val syncPreferencesRepository: com.nendo.argosy.data.preferences.SyncPreferencesRepository
+) {
+    suspend fun classify(
+        operation: ReconcileOperation,
+        clientHash: String? = null
+    ): Resolution {
+        if (operation.action != ReconcileAction.CONFLICT) {
+            return Resolution.AsIs
+        }
+
+        val gameRow = gameDao.getByRommId(operation.romId)
+        val gameId = gameRow?.id
+        val ownerUserId = syncPreferencesRepository.getRommUserId()
+
+        if (gameId != null && saveCacheDao.hasActiveSaveApplied(gameId, ownerUserId)) {
+            Logger.debug(TAG, "rule 1: activeSaveApplied=true for romId=${operation.romId} -> KEEP_LOCAL")
+            return Resolution.KeepLocal("user-restored")
+        }
+
+        if (gameId != null) {
+            val queued = pendingSyncQueueDao.getByGameIdForOwner(gameId, ownerUserId)
+                .any { it.syncType == SyncType.SAVE_FILE }
+            if (queued) {
+                Logger.debug(TAG, "rule 2: queued upload exists for romId=${operation.romId} -> KEEP_LOCAL")
+                return Resolution.KeepLocal("queued-upload")
+            }
+        }
+
+        val syncRow = gameId?.let { gid ->
+            operation.emulator?.takeIf { it.isNotBlank() }?.let { emu ->
+                saveSyncDao.getByGameEmulatorAndChannel(gid, emu, SaveSyncApiClient.syncKeyOf(operation.slot), ownerUserId)
+            }
+        }
+        val localAnchor = syncRow?.localContentHash
+        val serverAnchor = syncRow?.lastUploadedHash
+
+        if (localAnchor != null && clientHash != null && serverAnchor != null) {
+            if (clientHash == localAnchor && operation.serverContentHash != null && operation.serverContentHash != serverAnchor) {
+                Logger.debug(TAG, "rule 3: local unchanged, server moved -> KEEP_SERVER")
+                return Resolution.KeepServer("local-unchanged")
+            }
+            if (operation.serverContentHash == serverAnchor && clientHash != localAnchor) {
+                Logger.debug(TAG, "rule 4: server unchanged, local moved -> KEEP_LOCAL")
+                return Resolution.KeepLocal("server-unchanged")
+            }
+        }
+
+        return Resolution.AsIs
+    }
+
+    sealed class Resolution {
+        data object AsIs : Resolution()
+        data class KeepLocal(val ruleId: String) : Resolution()
+        data class KeepServer(val ruleId: String) : Resolution()
+    }
+
+    companion object {
+        private const val TAG = "ConflictAutoResolver"
+    }
+}

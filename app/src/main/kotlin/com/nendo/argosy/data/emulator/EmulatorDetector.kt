@@ -1,0 +1,213 @@
+package com.nendo.argosy.data.emulator
+
+import android.content.Context
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.util.Log
+import com.nendo.argosy.data.platform.PlatformDefinitions
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
+
+private const val TAG = "EmulatorDetector"
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface EmulatorDetectorEntryPoint {
+    fun emulatorDetector(): EmulatorDetector
+}
+
+fun getSharedEmulatorDetector(context: Context): EmulatorDetector =
+    EntryPointAccessors.fromApplication(context.applicationContext, EmulatorDetectorEntryPoint::class.java)
+        .emulatorDetector()
+
+data class InstalledEmulator(
+    val def: EmulatorDef,
+    val versionName: String?,
+    val versionCode: Long
+)
+
+@Singleton
+class EmulatorDetector @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
+    private val _installedEmulators = MutableStateFlow<List<InstalledEmulator>>(emptyList())
+    val installedEmulators: StateFlow<List<InstalledEmulator>> = _installedEmulators.asStateFlow()
+
+    private val packageManager: PackageManager = context.packageManager
+
+    suspend fun detectEmulators(): List<InstalledEmulator> = withContext(Dispatchers.IO) {
+        val installed = mutableListOf<InstalledEmulator>()
+        val detectedPackages = mutableSetOf<String>()
+
+        for (emulatorDef in EmulatorRegistry.getAll()) {
+            if (emulatorDef.packageName in detectedPackages) continue
+
+            if (emulatorDef.packageName == EmulatorRegistry.BUILTIN_PACKAGE) {
+                installed.add(createBuiltinEmulator(emulatorDef))
+                detectedPackages.add(emulatorDef.packageName)
+                continue
+            }
+
+            try {
+                val packageInfo = packageManager.getPackageInfo(emulatorDef.packageName, 0)
+                val matchedDef = resolveEmulatorVariant(emulatorDef, packageInfo)
+                installed.add(createInstalledEmulator(matchedDef, packageInfo))
+                detectedPackages.add(emulatorDef.packageName)
+            } catch (_: PackageManager.NameNotFoundException) {
+            }
+        }
+
+        detectEmulatorFamilies(installed, detectedPackages)
+
+        _installedEmulators.value = installed
+        installed
+    }
+
+    private fun createBuiltinEmulator(def: EmulatorDef): InstalledEmulator =
+        InstalledEmulator(
+            def = def,
+            versionName = null,
+            versionCode = 0
+        )
+
+    private fun detectEmulatorFamilies(
+        installed: MutableList<InstalledEmulator>,
+        detectedPackages: MutableSet<String>
+    ) {
+        @Suppress("DEPRECATION")
+        val allPackages = try {
+            packageManager.getInstalledPackages(0)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get installed packages", e)
+            return
+        }
+
+        for (packageInfo in allPackages) {
+            val packageName = packageInfo.packageName
+            if (packageName in detectedPackages) continue
+
+            val family = EmulatorRegistry.findFamilyForPackage(packageName)
+            if (family != null) {
+                val def = EmulatorRegistry.createDefFromFamily(family, packageName)
+                installed.add(createInstalledEmulator(def, packageInfo))
+                detectedPackages.add(packageName)
+            }
+        }
+    }
+
+    private fun resolveEmulatorVariant(def: EmulatorDef, packageInfo: PackageInfo): EmulatorDef {
+        val alternatives = EmulatorRegistry.getAlternatives(def.packageName)
+        if (alternatives.size <= 1) return def
+
+        val label = try {
+            packageInfo.applicationInfo?.let {
+                packageManager.getApplicationLabel(it).toString().trim()
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+        if (!label.isNullOrEmpty()) {
+            val exactMatches = alternatives.filter { it.displayName.equals(label, ignoreCase = true) }
+            if (exactMatches.size == 1) {
+                val candidate = exactMatches[0]
+                val couldOverlap = alternatives.any { other ->
+                    other != candidate &&
+                        (other.displayName.startsWith(label, ignoreCase = true) ||
+                            label.startsWith(other.displayName, ignoreCase = true))
+                }
+                if (!couldOverlap) {
+                    Log.d(TAG, "Resolved ${def.packageName} to ${candidate.id} by label '$label'")
+                    return candidate
+                }
+            }
+        }
+
+        val version = packageInfo.versionName ?: return def
+        val parts = version.split(".")
+
+        if (def.packageName == "info.cemu.cemu") {
+            return if (parts.size >= 3) {
+                alternatives.find { it.id == "cemu_dualscreen" } ?: def
+            } else {
+                alternatives.find { it.id == "cemu" } ?: def
+            }
+        }
+
+        return def
+    }
+
+    private fun createInstalledEmulator(def: EmulatorDef, packageInfo: PackageInfo): InstalledEmulator {
+        val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            packageInfo.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            packageInfo.versionCode.toLong()
+        }
+        return InstalledEmulator(
+            def = def,
+            versionName = packageInfo.versionName,
+            versionCode = versionCode
+        )
+    }
+
+    fun isInstalled(packageName: String): Boolean {
+        return try {
+            packageManager.getPackageInfo(packageName, 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
+
+    fun getInstalledForPlatform(platformId: String): List<InstalledEmulator> {
+        val canonical = PlatformDefinitions.getCanonicalSlug(platformId)
+        return _installedEmulators.value.filter { canonical in it.def.supportedPlatforms }
+    }
+
+    fun getPreferredEmulator(platformId: String, builtinEnabled: Boolean = true): InstalledEmulator? {
+        val canonical = PlatformDefinitions.getCanonicalSlug(platformId)
+        val installed = getInstalledForPlatform(canonical).let { list ->
+            if (builtinEnabled) list else list.filterNot { it.def.id == EmulatorRegistry.BUILTIN_ID }
+        }
+        if (installed.isEmpty()) return null
+
+        val recommended = EmulatorRegistry.getRecommendedEmulators()[canonical]
+        if (recommended != null) {
+            val filteredRecommended = if (builtinEnabled) recommended else recommended.filter { it != EmulatorRegistry.BUILTIN_ID }
+            for (emulatorId in filteredRecommended) {
+                val match = installed.find { it.def.id == emulatorId }
+                if (match != null) return match
+            }
+        }
+
+        val dominated = setOf("retroarch", "retroarch_64", "retroarch_32", "lemuroid")
+        val standalone = installed.filterNot { it.def.id in dominated }
+        return standalone.firstOrNull() ?: installed.first()
+    }
+
+    fun hasAnyEmulator(platformId: String): Boolean {
+        val canonical = PlatformDefinitions.getCanonicalSlug(platformId)
+        return _installedEmulators.value.any { canonical in it.def.supportedPlatforms }
+    }
+
+    fun getByPackage(packageName: String): EmulatorDef? {
+        EmulatorRegistry.getByPackage(packageName)?.let { return it }
+
+        _installedEmulators.value
+            .find { it.def.packageName == packageName }
+            ?.let { return it.def }
+
+        return null
+    }
+}

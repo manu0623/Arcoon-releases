@@ -1,0 +1,119 @@
+package com.nendo.argosy.data.local.dao
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+import com.nendo.argosy.data.local.entity.PlatformEntity
+import com.nendo.argosy.data.platform.LocalPlatformIds
+import kotlinx.coroutines.flow.Flow
+
+internal const val PLATFORM_ENABLED_SQL = "isVisible = 1 AND syncEnabled = 1"
+
+@Dao
+interface PlatformDao {
+
+    @Query("SELECT * FROM platforms WHERE $PLATFORM_ENABLED_SQL AND gameCount > 0 ORDER BY sortOrder ASC, name ASC")
+    fun observeVisiblePlatforms(): Flow<List<PlatformEntity>>
+
+    @Query("SELECT * FROM platforms ORDER BY sortOrder ASC, name ASC")
+    fun observeAllPlatforms(): Flow<List<PlatformEntity>>
+
+    @Query("SELECT * FROM platforms WHERE id = :id")
+    suspend fun getById(id: Long): PlatformEntity?
+
+    @Query("SELECT * FROM platforms WHERE slug = :slug LIMIT 1")
+    suspend fun getBySlug(slug: String): PlatformEntity?
+
+    @Query("SELECT * FROM platforms WHERE slug = :slug AND (fsSlug = :fsSlug OR (fsSlug IS NULL AND :fsSlug IS NULL)) LIMIT 1")
+    suspend fun getBySlugAndFsSlug(slug: String, fsSlug: String?): PlatformEntity?
+
+    @Query("SELECT * FROM platforms WHERE slug IN (:slugs)")
+    suspend fun getAllBySlugs(slugs: Collection<String>): List<PlatformEntity>
+
+    @Query("SELECT * FROM platforms WHERE gameCount > 0 AND $PLATFORM_ENABLED_SQL ORDER BY sortOrder ASC, name ASC")
+    fun observePlatformsWithGames(): Flow<List<PlatformEntity>>
+
+    @Query("SELECT * FROM platforms WHERE gameCount > 0 AND $PLATFORM_ENABLED_SQL ORDER BY sortOrder ASC, name ASC")
+    suspend fun getPlatformsWithGames(): List<PlatformEntity>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(platform: PlatformEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(platforms: List<PlatformEntity>)
+
+    @Update
+    suspend fun update(platform: PlatformEntity)
+
+    @Query("UPDATE platforms SET gameCount = :count WHERE id = :platformId")
+    suspend fun updateGameCount(platformId: Long, count: Int)
+
+    @Query("UPDATE platforms SET sortOrder = :order WHERE id = :platformId")
+    suspend fun updateSortOrder(platformId: Long, order: Int)
+
+    @Query("UPDATE platforms SET isVisible = :visible WHERE id = :platformId")
+    suspend fun updateVisibility(platformId: Long, visible: Boolean)
+
+    @Query("UPDATE platforms SET logoPath = :path WHERE id = :platformId")
+    suspend fun updateLogoPath(platformId: Long, path: String)
+
+    @Query("UPDATE platforms SET logoPath = NULL WHERE id = :platformId")
+    suspend fun clearLogoPath(platformId: Long)
+
+    @Query("SELECT * FROM platforms WHERE logoPath LIKE 'http%'")
+    suspend fun getPlatformsWithRemoteLogos(): List<PlatformEntity>
+
+    @Query("UPDATE platforms SET syncEnabled = :enabled WHERE id = :platformId")
+    suspend fun updateSyncEnabled(platformId: Long, enabled: Boolean)
+
+    @Query("UPDATE platforms SET customRomPath = :path WHERE id = :platformId")
+    suspend fun updateCustomRomPath(platformId: Long, path: String?)
+
+    @Query("UPDATE platforms SET combineContent = :enabled WHERE id = :platformId")
+    suspend fun updateCombineContent(platformId: Long, enabled: Boolean)
+
+    @Query("SELECT combineContent FROM platforms WHERE id = :platformId")
+    suspend fun getCombineContent(platformId: Long): Boolean?
+
+    @Query("UPDATE platforms SET skipFullSync = :skip WHERE id = :platformId")
+    suspend fun updateSkipFullSync(platformId: Long, skip: Boolean)
+
+    @Query("SELECT * FROM platforms WHERE syncEnabled = 1 ORDER BY sortOrder ASC, name ASC")
+    suspend fun getSyncEnabledPlatforms(): List<PlatformEntity>
+
+    @Query("SELECT * FROM platforms ORDER BY sortOrder ASC, name ASC")
+    fun observeConfigurablePlatforms(): Flow<List<PlatformEntity>>
+
+    @Query("DELETE FROM platforms WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    /**
+     * Android is exempt: it is the only platform whose own settings screen is how a user adds
+     * games to it, so removing it when empty would take away the way to fill it.
+     */
+    @Query(
+        """
+        DELETE FROM platforms
+        WHERE id NOT IN (SELECT DISTINCT platformId FROM games)
+        AND id != ${LocalPlatformIds.ANDROID}
+        """
+    )
+    suspend fun deleteEmptyPlatforms()
+
+    @Query("SELECT * FROM platforms")
+    suspend fun getAllPlatforms(): List<PlatformEntity>
+
+    @Query("SELECT * FROM platforms ORDER BY sortOrder ASC, name ASC")
+    suspend fun getAllPlatformsOrdered(): List<PlatformEntity>
+
+    @Query("SELECT COUNT(*) FROM platforms")
+    suspend fun getTotalPlatformCount(): Int
+
+    @Query("SELECT slug FROM platforms GROUP BY slug HAVING COUNT(*) > 1")
+    suspend fun getAmbiguousSlugs(): List<String>
+
+    @Query("SELECT slug FROM platforms GROUP BY slug HAVING COUNT(*) > 1")
+    fun observeAmbiguousSlugs(): Flow<List<String>>
+}

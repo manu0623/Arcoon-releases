@@ -1,0 +1,890 @@
+package com.nendo.argosy.data.download
+
+import android.util.Log
+import com.nendo.argosy.data.emulator.M3uManager
+import com.nendo.argosy.data.platform.PlatformDefinitions
+import com.nendo.argosy.util.FileNames
+import org.apache.commons.compress.archivers.sevenz.SevenZFile
+import org.apache.commons.compress.archivers.zip.ZipFile
+import java.io.File
+
+private const val TAG = "ZipExtractor"
+
+data class ExtractedFolderRom(
+    val primaryFile: File?,
+    val discFiles: List<File>,
+    val m3uFile: File?,
+    val gameFolder: File,
+    val allFiles: List<File>,
+    val romExtensions: Set<String> = emptySet()
+) {
+    val launchPath: String
+        get() {
+            m3uFile?.absolutePath?.let { return it }
+
+            val cueGdiFile = discFiles.find { it.extension.lowercase() in setOf("cue", "gdi") }
+            if (cueGdiFile != null) return cueGdiFile.absolutePath
+
+            val chdFile = discFiles.find { it.extension.lowercase() == "chd" }
+            if (chdFile != null) return chdFile.absolutePath
+
+            if (primaryFile != null) return primaryFile.absolutePath
+            if (discFiles.isNotEmpty()) return discFiles.first().absolutePath
+
+            val allDiscFiles = allFiles.filter {
+                it.extension.lowercase() in DISC_EXTENSIONS && !it.name.startsWith("._")
+            }
+            val nestedCueGdi = allDiscFiles.find { it.extension.lowercase() in setOf("cue", "gdi") }
+            if (nestedCueGdi != null) return nestedCueGdi.absolutePath
+            val nestedChd = allDiscFiles.find { it.extension.lowercase() == "chd" }
+            if (nestedChd != null) return nestedChd.absolutePath
+            if (allDiscFiles.isNotEmpty()) return allDiscFiles.first().absolutePath
+
+            val realFiles = allFiles.filter { !it.name.startsWith("._") }
+            nestedRomFile(realFiles)?.let { return it.absolutePath }
+            realFiles.filter { it.parentFile?.absolutePath == gameFolder.absolutePath }
+                .maxByOrNull { it.length() }
+                ?.let { return it.absolutePath }
+            if (realFiles.size == 1) return realFiles[0].absolutePath
+
+            return gameFolder.absolutePath
+        }
+
+    private fun nestedRomFile(files: List<File>): File? = files
+        .filter { it.extension.lowercase() in romExtensions }
+        .minWithOrNull(
+            compareBy<File> { it.extension.lowercase() in ARCHIVE_ROM_EXTENSIONS }
+                .thenBy { it.relativeTo(gameFolder).path.count { c -> c == File.separatorChar } }
+                .thenBy { it.name }
+        )
+}
+
+private val ARCHIVE_ROM_EXTENSIONS = setOf("zip", "7z")
+
+private val NSW_UPDATE_EXTENSIONS = setOf("nsp")
+private val NSW_PLATFORM_SLUGS = setOf("switch", "nsw")
+private val UPDATE_FILENAME_PATTERNS = listOf("[UPD]", "[UPDATE]")
+private val DLC_FILENAME_PATTERNS = listOf("[DLC]")
+private val DISC_EXTENSIONS = setOf(
+    "bin", "cue", "chd", "iso", "img", "mdf", "gdi", "cdi", "pbp", "cso", "zso", "gcm", "gcz", "rvz", "ciso", "wia", "wbfs"
+)
+private const val MAC_METADATA_FOLDER = "__MACOSX"
+private val DISC_LAYOUT_FOLDERS = setOf("ps3_game", "psp_game", "usrdir")
+private val ZIP_MAGIC_BYTES = byteArrayOf(0x50, 0x4B, 0x03, 0x04)
+private val SEVEN_Z_MAGIC_BYTES = byteArrayOf(0x37, 0x7A, 0xBC.toByte(), 0xAF.toByte(), 0x27, 0x1C)
+private val CHD_MAGIC_BYTES = "MComprHD".toByteArray(Charsets.US_ASCII)
+
+private val PACKAGED_ROM_EXTENSIONS = setOf("apk", "jar")
+
+private val ZIP_AS_ROM_PLATFORMS = setOf(
+    "arcade", "mame", "fbneo", "fba",
+    "neogeo", "neogeoaes", "neogeomvs", "neogeocd",
+    "cps1", "cps2", "cps3",
+    "naomi", "naomi2", "atomiswave",
+    "model2", "model3",
+    "hyperneogeo64", "hyper-neo-geo-64",
+    "gameandwatch",
+    "vita", "psvita",
+    "dos"
+)
+
+// Modern and disc-based platforms where zip is never the playable format.
+// Disc images (CHD/RVZ/ISO) are already compressed, and modern console emulators
+// do not accept zipped ROMs the way RetroArch cores for 8/16-bit consoles do.
+private val ALWAYS_EXTRACT_ZIP_PLATFORMS = setOf(
+    "switch", "nsw",
+    "ps2",
+    "ps3",
+    "psp",
+    "3ds", "nintendo-3ds",
+    "ds", "nds", "nintendo-ds",
+    "wii",
+    "wiiu", "wii-u",
+    "gc", "gamecube", "nintendo-gamecube",
+    "dc", "dreamcast",
+    "saturn",
+    "psx", "ps1", "ps", "playstation"
+)
+
+data class PlatformExtractConfig(
+    val platformSlugs: Set<String>,
+    val gameExtensions: Set<String>,
+    val updateExtensions: Set<String>,
+    val dlcExtensions: Set<String>,
+    val updateFolder: String,
+    val dlcFolder: String
+)
+
+// RomM uses standardized folder names: update, dlc, hack, mod, patch, manual, demo, translation, prototype
+private val PLATFORM_CONFIGS = listOf(
+    PlatformExtractConfig(
+        platformSlugs = setOf("switch", "nsw"),
+        gameExtensions = setOf("xci", "nsp", "nca", "nro", "nsz", "xcz"),
+        updateExtensions = setOf("nsp"),
+        dlcExtensions = setOf("nsp"),
+        updateFolder = "update",
+        dlcFolder = "dlc"
+    ),
+    PlatformExtractConfig(
+        platformSlugs = setOf("vita", "psvita"),
+        gameExtensions = setOf("vpk", "zip"),
+        updateExtensions = setOf("vpk"),
+        dlcExtensions = setOf("vpk"),
+        updateFolder = "update",
+        dlcFolder = "dlc"
+    ),
+    PlatformExtractConfig(
+        platformSlugs = setOf("wiiu"),
+        gameExtensions = setOf("wua", "wud", "wux", "wup", "rpx"),
+        updateExtensions = setOf("wup"),
+        dlcExtensions = setOf("wup"),
+        updateFolder = "update",
+        dlcFolder = "dlc"
+    ),
+    PlatformExtractConfig(
+        platformSlugs = setOf("wii"),
+        gameExtensions = setOf("wbfs", "iso", "ciso", "wia", "rvz"),
+        updateExtensions = setOf("wad"),
+        dlcExtensions = setOf("wad"),
+        updateFolder = "update",
+        dlcFolder = "dlc"
+    )
+)
+
+object ZipExtractor {
+
+    const val EXTCONTENT_FOLDER = "extcontent"
+
+    val ADDON_SOURCE_FOLDERS = setOf("update", "updates", "dlc", "dlcs")
+
+    val ADDON_FOLDERS = ADDON_SOURCE_FOLDERS + EXTCONTENT_FOLDER
+
+    fun addonFolderNames(category: String?): List<String> = buildList {
+        add(EXTCONTENT_FOLDER)
+        category?.lowercase()?.takeIf { it.isNotBlank() }?.let {
+            add(it)
+            add("${it}s")
+        }
+    }.distinct()
+
+    fun findAddonFile(gameFolder: File, fileName: String, category: String?): File? =
+        addonFolderNames(category)
+            .asSequence()
+            .map { File(File(gameFolder, it), fileName) }
+            .firstOrNull { it.isFile }
+            ?: File(gameFolder, fileName).takeIf { it.isFile }
+
+    fun isNswPlatform(platformSlug: String): Boolean {
+        val lower = platformSlug.lowercase()
+        if (lower in NSW_PLATFORM_SLUGS) return true
+        return PlatformDefinitions.getCanonicalSlug(lower) in NSW_PLATFORM_SLUGS
+    }
+
+    fun usesZipAsRomFormat(platformSlug: String): Boolean {
+        val lower = platformSlug.lowercase()
+        if (lower in ZIP_AS_ROM_PLATFORMS) return true
+        return PlatformDefinitions.getCanonicalSlug(lower) in ZIP_AS_ROM_PLATFORMS
+    }
+
+    fun getPlatformConfig(platformSlug: String): PlatformExtractConfig? {
+        val slug = platformSlug.lowercase()
+        val canonical = PlatformDefinitions.getCanonicalSlug(slug)
+        return PLATFORM_CONFIGS.find { slug in it.platformSlugs || canonical in it.platformSlugs }
+    }
+
+    fun hasUpdateSupport(platformSlug: String): Boolean {
+        return getPlatformConfig(platformSlug) != null
+    }
+
+    fun isZipFile(file: File): Boolean {
+        if (!file.isFile || file.length() < 4) return false
+        return file.inputStream().use { stream ->
+            val header = ByteArray(4)
+            stream.read(header) == 4 && header.contentEquals(ZIP_MAGIC_BYTES)
+        }
+    }
+
+    fun isSevenZFile(file: File): Boolean {
+        if (!file.isFile || file.length() < 6) return false
+        return file.inputStream().use { stream ->
+            val header = ByteArray(6)
+            stream.read(header) == 6 && header.contentEquals(SEVEN_Z_MAGIC_BYTES)
+        }
+    }
+
+    fun isArchiveFile(file: File): Boolean =
+        !isPackagedRom(file) && (isZipFile(file) || isSevenZFile(file))
+
+    /**
+     * Zip-based formats that emulators load as-is, so unpacking one destroys the rom.
+     */
+    fun isPackagedRom(file: File): Boolean =
+        file.extension.lowercase() in PACKAGED_ROM_EXTENSIONS
+
+    /**
+     * Sniff magic bytes and return the canonical ROM extension ("chd", ...) if the
+     * content is a known ready-to-play ROM format masquerading under another
+     * extension. Used to recover when RomM advertises a download as a folder rom
+     * but streams the nested file's raw bytes without zip-wrapping.
+     */
+    fun detectRomFormatByMagic(file: File): String? {
+        if (!file.isFile || file.length() < 8) return null
+        return file.inputStream().use { stream ->
+            val header = ByteArray(8)
+            if (stream.read(header) != 8) return@use null
+            when {
+                header.contentEquals(CHD_MAGIC_BYTES) -> "chd"
+                else -> null
+            }
+        }
+    }
+
+    /**
+     * Files a rom folder carries that are not part of the game: scene notes, checksums, cover
+     * art, and any m3u the archive supplied, which is regenerated from the discs that survive.
+     *
+     * Every entry other than m3u is absent from [PlatformDefinitions]' extension sets, so none
+     * can be the rom a platform launches. png is deliberately not here: a PICO-8 cart is a png.
+     */
+    private val COMPANION_EXTENSIONS = setOf(
+        "m3u", "nfo", "sfv", "md5", "sha1", "diz", "url", "jpg", "jpeg"
+    )
+
+    fun isCompanionFileName(fileName: String): Boolean =
+        fileName.substringAfterLast('.', "").lowercase() in COMPANION_EXTENSIONS
+
+    private fun isPrunableCompanionFile(file: File): Boolean =
+        isCompanionFileName(file.name)
+
+    sealed class ArchiveValidationResult {
+        data object Valid : ArchiveValidationResult()
+        data class Invalid(val reason: String) : ArchiveValidationResult()
+    }
+
+    /**
+     * [expectedSize] is only meaningful when the bytes on disk are the file the server measured.
+     * A server-built zip is neither: it is deflated and carries entries the server added, so
+     * comparing it to a sum of raw file sizes passes or fails on how compressible the folder
+     * happened to be. Pass 0 for those and let the central directory decide.
+     */
+    fun validateArchive(file: File, expectedSize: Long = 0): ArchiveValidationResult {
+        if (!file.exists()) {
+            return ArchiveValidationResult.Invalid("File does not exist")
+        }
+
+        if (!isArchiveFile(file)) {
+            return ArchiveValidationResult.Invalid("File is not a valid archive")
+        }
+
+        if (expectedSize > 0 && file.length() < expectedSize) {
+            val percent = (file.length() * 100 / expectedSize).toInt()
+            return ArchiveValidationResult.Invalid(
+                "Download incomplete ($percent% - ${file.length()} of $expectedSize bytes)"
+            )
+        }
+
+        return when {
+            isZipFile(file) -> validateZipInternal(file)
+            isSevenZFile(file) -> validateSevenZInternal(file)
+            else -> ArchiveValidationResult.Invalid("Unknown archive format")
+        }
+    }
+
+    private fun validateZipInternal(file: File): ArchiveValidationResult {
+        return try {
+            ZipFile.builder().setFile(file).get().use { zip ->
+                val entries = zip.entries
+                var entryCount = 0
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    zip.getInputStream(entry).use { stream ->
+                        val buffer = ByteArray(1)
+                        stream.read(buffer)
+                    }
+                    entryCount++
+                }
+                if (entryCount == 0) {
+                    ArchiveValidationResult.Invalid("ZIP archive is empty")
+                } else {
+                    ArchiveValidationResult.Valid
+                }
+            }
+        } catch (e: java.util.zip.ZipException) {
+            ArchiveValidationResult.Invalid("ZIP file is corrupted: ${e.message}")
+        } catch (e: Exception) {
+            ArchiveValidationResult.Invalid("Failed to validate ZIP: ${e.message}")
+        }
+    }
+
+    private fun validateSevenZInternal(file: File): ArchiveValidationResult {
+        return try {
+            SevenZFile.builder().setFile(file).get().use { sevenZ ->
+                var entryCount = 0
+                var entry = sevenZ.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        entryCount++
+                    }
+                    entry = sevenZ.nextEntry
+                }
+                if (entryCount == 0) {
+                    ArchiveValidationResult.Invalid("7z archive is empty")
+                } else {
+                    ArchiveValidationResult.Valid
+                }
+            }
+        } catch (e: Exception) {
+            ArchiveValidationResult.Invalid("Failed to validate 7z: ${e.message}")
+        }
+    }
+
+    fun shouldExtractArchive(archiveFile: File, platformSlug: String? = null): Boolean {
+        if (isPackagedRom(archiveFile)) return false
+
+        val slug = platformSlug?.lowercase()
+        val canonical = slug?.let { PlatformDefinitions.getCanonicalSlug(it) }
+        val zipIsRomFormat = slug != null &&
+            (slug in ZIP_AS_ROM_PLATFORMS || canonical in ZIP_AS_ROM_PLATFORMS)
+        val alwaysExtract = slug != null &&
+            (slug in ALWAYS_EXTRACT_ZIP_PLATFORMS || canonical in ALWAYS_EXTRACT_ZIP_PLATFORMS)
+
+        return when {
+            isSevenZFile(archiveFile) -> {
+                if (!zipIsRomFormat) true else shouldExtractSevenZInternal(archiveFile)
+            }
+            isZipFile(archiveFile) -> when {
+                zipIsRomFormat -> false
+                alwaysExtract -> true
+                else -> shouldExtractZipInternal(archiveFile)
+            }
+            else -> false
+        }
+    }
+
+    private fun shouldExtractZipInternal(zipFile: File): Boolean {
+        return try {
+            ZipFile.builder().setFile(zipFile).get().use { zip ->
+                val entries = zip.entries.toList().filter { !it.isDirectory }
+                val hasMultipleFiles = entries.size > 1
+                val hasFolderStructure = entries.any { it.name.contains("/") || it.name.contains("\\") }
+                hasMultipleFiles || hasFolderStructure
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to inspect zip: ${e.message}")
+            false
+        }
+    }
+
+    private fun shouldExtractSevenZInternal(sevenZFile: File): Boolean {
+        return try {
+            SevenZFile.builder().setFile(sevenZFile).get().use { sevenZ ->
+                var fileCount = 0
+                var hasFolderStructure = false
+                var entry = sevenZ.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        fileCount++
+                        if (entry.name.contains("/") || entry.name.contains("\\")) {
+                            hasFolderStructure = true
+                        }
+                    }
+                    entry = sevenZ.nextEntry
+                }
+                fileCount > 1 || hasFolderStructure
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to inspect 7z: ${e.message}")
+            false
+        }
+    }
+
+    private fun generateM3uFile(gameFolder: File, gameTitle: String, discFiles: List<File>): File {
+        val m3uFile = File(gameFolder, "$gameTitle.m3u")
+        val sortedDiscs = discFiles
+            .filter { it.extension.lowercase() !in setOf("cue", "gdi") || discFiles.none { other ->
+                other.nameWithoutExtension == it.nameWithoutExtension && other.extension.lowercase() in setOf("bin", "img")
+            }}
+            .sortedWith(compareBy(
+                { extractDiscNumber(it.name) ?: Int.MAX_VALUE },
+                { it.name }
+            ))
+
+        val content = sortedDiscs.joinToString("\n") { it.name }
+        m3uFile.writeText(content, Charsets.US_ASCII)
+        return m3uFile
+    }
+
+    private fun extractDiscNumber(fileName: String): Int? {
+        val patterns = listOf(
+            Regex("""[Dd]isc\s*(\d+)"""),
+            Regex("""[Dd]isk\s*(\d+)"""),
+            Regex("""[Cc][Dd]\s*(\d+)"""),
+            Regex("""\((\d+)\s*of\s*\d+\)""")
+        )
+        for (pattern in patterns) {
+            pattern.find(fileName)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        }
+        return null
+    }
+
+    fun organizeNswSingleFile(
+        romFile: File,
+        gameTitle: String,
+        platformDir: File
+    ): File {
+        val sanitizedTitle = sanitizeFileName(gameTitle)
+        val gameFolder = File(platformDir, sanitizedTitle).apply { mkdirs() }
+
+        val extension = romFile.name.substringAfterLast('.', "").lowercase()
+        val targetFileName = if (romFile.name.startsWith(sanitizedTitle)) {
+            romFile.name
+        } else {
+            "$sanitizedTitle.${extension}"
+        }
+
+        val targetFile = File(gameFolder, targetFileName)
+
+        if (romFile.absolutePath != targetFile.absolutePath && !romFile.renameTo(targetFile)) {
+            romFile.copyTo(targetFile, overwrite = true)
+            romFile.delete()
+        }
+
+        return targetFile
+    }
+
+    fun getUpdatesFolder(localPath: String, platformSlug: String? = null): File? {
+        val romFile = File(localPath)
+        if (!romFile.exists()) return null
+
+        val gameFolder = romFile.parentFile ?: return null
+        val config = platformSlug?.let { getPlatformConfig(it) }
+        val folderName = config?.updateFolder ?: "update"
+
+        val candidates = listOf(folderName, "${folderName}s").distinct()
+        for (name in candidates) {
+            val folder = File(gameFolder, name)
+            if (folder.exists() && folder.isDirectory) {
+                return folder
+            }
+        }
+        return null
+    }
+
+    fun getDlcFolder(localPath: String, platformSlug: String? = null): File? {
+        val romFile = File(localPath)
+        if (!romFile.exists()) return null
+
+        val gameFolder = romFile.parentFile ?: return null
+        val config = platformSlug?.let { getPlatformConfig(it) }
+        val folderName = config?.dlcFolder ?: "dlc"
+
+        val candidates = listOf(folderName, "${folderName}s").distinct()
+        for (name in candidates) {
+            val folder = File(gameFolder, name)
+            if (folder.exists() && folder.isDirectory) {
+                return folder
+            }
+        }
+        return null
+    }
+
+    fun listUpdateFiles(localPath: String, platformSlug: String? = null): List<File> {
+        val config = platformSlug?.let { getPlatformConfig(it) }
+        val updatesFolder = getUpdatesFolder(localPath, platformSlug) ?: return emptyList()
+        val updateExtensions = config?.updateExtensions
+
+        return updatesFolder.listFiles()
+            ?.filter { file ->
+                file.isFile && !file.name.startsWith("._") &&
+                    (updateExtensions == null || file.extension.lowercase() in updateExtensions)
+            }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+    }
+
+    fun listDlcFiles(localPath: String, platformSlug: String? = null): List<File> {
+        val config = platformSlug?.let { getPlatformConfig(it) }
+        val dlcFolder = getDlcFolder(localPath, platformSlug) ?: return emptyList()
+        val dlcExtensions = config?.dlcExtensions
+
+        return dlcFolder.listFiles()
+            ?.filter { file ->
+                file.isFile && !file.name.startsWith("._") &&
+                    (dlcExtensions == null || file.extension.lowercase() in dlcExtensions)
+            }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+    }
+
+    fun listAllUpdateFiles(localPath: String, platformSlug: String? = null): List<File> {
+        val config = platformSlug?.let { getPlatformConfig(it) }
+        val gameFolder = File(localPath).parentFile ?: return emptyList()
+        val results = mutableSetOf<File>()
+
+        results.addAll(listUpdateFiles(localPath, platformSlug))
+
+        val updateExtensions = config?.updateExtensions
+
+        listExtcontentFiles(gameFolder, updateExtensions)?.let { results.addAll(it) }
+
+        gameFolder.listFiles()
+            ?.filter { file ->
+                file.isFile &&
+                    !file.name.startsWith("._") &&
+                    (updateExtensions == null || file.extension.lowercase() in updateExtensions) &&
+                    UPDATE_FILENAME_PATTERNS.any { file.name.contains(it, ignoreCase = true) }
+            }
+            ?.let { results.addAll(it) }
+
+        return results.sortedBy { it.name }
+    }
+
+    fun listAllDlcFiles(localPath: String, platformSlug: String? = null): List<File> {
+        val config = platformSlug?.let { getPlatformConfig(it) }
+        val gameFolder = File(localPath).parentFile ?: return emptyList()
+        val results = mutableSetOf<File>()
+
+        results.addAll(listDlcFiles(localPath, platformSlug))
+
+        val dlcExtensions = config?.dlcExtensions
+
+        listExtcontentFiles(gameFolder, dlcExtensions)?.let { results.addAll(it) }
+
+        gameFolder.listFiles()
+            ?.filter { file ->
+                file.isFile &&
+                    !file.name.startsWith("._") &&
+                    (dlcExtensions == null || file.extension.lowercase() in dlcExtensions) &&
+                    DLC_FILENAME_PATTERNS.any { file.name.contains(it, ignoreCase = true) }
+            }
+            ?.let { results.addAll(it) }
+
+        return results.sortedBy { it.name }
+    }
+
+    private fun listExtcontentFiles(gameFolder: File, extensions: Set<String>?): List<File>? {
+        val extcontent = File(gameFolder, EXTCONTENT_FOLDER)
+        if (!extcontent.isDirectory) return null
+        return extcontent.listFiles()?.filter { file ->
+            file.isFile && !file.name.startsWith("._") &&
+                (extensions == null || file.extension.lowercase() in extensions)
+        }
+    }
+
+    fun extractFolderRom(
+        archiveFilePath: File,
+        gameTitle: String,
+        platformDir: File,
+        platformSlug: String,
+        onProgress: ((bytesWritten: Long, totalBytes: Long) -> Unit)? = null
+    ): ExtractedFolderRom {
+        val validExtensions = PlatformDefinitions.definitionFor(platformSlug)?.extensions ?: emptySet()
+        val sanitizedTitle = sanitizeFileName(gameTitle)
+        val existingPlaylistFolder = File(platformDir, "$sanitizedTitle.m3u")
+        val gameFolder = if (existingPlaylistFolder.isDirectory) {
+            existingPlaylistFolder
+        } else {
+            File(platformDir, sanitizedTitle)
+        }
+
+        Log.d(TAG, "=== Folder ROM Extraction Start ===")
+        Log.d(TAG, "Archive file: ${archiveFilePath.absolutePath}")
+        Log.d(TAG, "Archive exists: ${archiveFilePath.exists()}, size: ${archiveFilePath.length()}")
+        Log.d(TAG, "Game folder: ${gameFolder.absolutePath}")
+
+        val extension = if (isSevenZFile(archiveFilePath)) "7z" else "zip"
+        val actualArchiveFile = if (archiveFilePath.absolutePath == gameFolder.absolutePath) {
+            val renamedArchive = File(platformDir, "${sanitizedTitle}.$extension")
+            Log.d(TAG, "Archive path collides with game folder, renaming to: ${renamedArchive.absolutePath}")
+            if (!archiveFilePath.renameTo(renamedArchive)) {
+                archiveFilePath.copyTo(renamedArchive, overwrite = true)
+                archiveFilePath.delete()
+            }
+            renamedArchive
+        } else {
+            archiveFilePath
+        }
+
+        gameFolder.mkdirs()
+
+        val extractionResult = when {
+            isSevenZFile(actualArchiveFile) -> extractSevenZInternal(actualArchiveFile, gameFolder, validExtensions, onProgress)
+            else -> extractZipInternal(actualArchiveFile, gameFolder, validExtensions, onProgress)
+        }
+
+        if (actualArchiveFile != archiveFilePath && actualArchiveFile.exists()) {
+            Log.d(TAG, "Cleaning up renamed archive: ${actualArchiveFile.absolutePath}")
+            actualArchiveFile.delete()
+        }
+
+        Log.d(TAG, "=== Folder ROM Extraction Complete ===")
+        Log.d(TAG, "Primary file: ${extractionResult.primaryFile?.absolutePath}")
+        Log.d(TAG, "Root disc files: ${extractionResult.rootDiscFiles.size}")
+        Log.d(TAG, "Existing M3U: ${extractionResult.existingM3u?.absolutePath}")
+        Log.d(TAG, "Total extracted: ${extractionResult.allFiles.size}")
+
+        val launchableDiscFiles = filterToLaunchableDiscs(extractionResult.rootDiscFiles)
+        Log.d(TAG, "Launchable disc files: ${launchableDiscFiles.size}")
+
+        extractionResult.allFiles
+            .filter { isPrunableCompanionFile(it) }
+            .forEach { if (it.delete()) Log.d(TAG, "Pruned companion file: ${it.name}") }
+
+        val m3uFile = when {
+            !M3uManager.supportsM3u(platformSlug) -> null
+            launchableDiscFiles.size <= 1 -> null
+            else -> generateM3uFile(gameFolder, sanitizedTitle, launchableDiscFiles)
+        }
+
+        val allFiles = extractionResult.allFiles.filterNot { isPrunableCompanionFile(it) }
+
+        if (m3uFile == null) {
+            return ExtractedFolderRom(
+                primaryFile = extractionResult.primaryFile,
+                discFiles = extractionResult.rootDiscFiles.sortedBy { it.name },
+                m3uFile = null,
+                gameFolder = gameFolder,
+                allFiles = allFiles,
+                romExtensions = validExtensions
+            )
+        }
+
+        val playlistFolder = conformToPlaylistFolder(gameFolder, sanitizedTitle) ?: gameFolder
+
+        return ExtractedFolderRom(
+            primaryFile = extractionResult.primaryFile?.let { rebase(it, gameFolder, playlistFolder) },
+            discFiles = extractionResult.rootDiscFiles.map { rebase(it, gameFolder, playlistFolder) }
+                .sortedBy { it.name },
+            m3uFile = rebase(m3uFile, gameFolder, playlistFolder),
+            gameFolder = playlistFolder,
+            allFiles = allFiles.map { rebase(it, gameFolder, playlistFolder) },
+            romExtensions = validExtensions
+        )
+    }
+
+    /**
+     * Renames a multi-disc folder to `<title>.m3u` so ES-DE collapses it to a single entry.
+     *
+     * ES-DE treats a directory as one game only when its name matches a playlist file inside
+     * it; without this it lists the folder and the user has to descend into it to launch.
+     * Returns null when the rename cannot be done, leaving the caller on the original folder.
+     */
+    private fun conformToPlaylistFolder(gameFolder: File, sanitizedTitle: String): File? {
+        val target = File(gameFolder.parentFile ?: return null, "$sanitizedTitle.m3u")
+        if (target.absolutePath == gameFolder.absolutePath) return gameFolder
+        if (target.exists()) {
+            Log.w(TAG, "Playlist folder already occupied, keeping ${gameFolder.name}")
+            return null
+        }
+        if (!gameFolder.renameTo(target)) {
+            Log.w(TAG, "Could not rename ${gameFolder.name} to ${target.name}")
+            return null
+        }
+        Log.d(TAG, "Conformed multi-disc folder to ${target.name}")
+        return target
+    }
+
+    internal fun wrapperFolderOf(entryPaths: List<String>): String? {
+        val tops = entryPaths
+            .map { it.replace('\\', '/') }
+            .filterNot { isRootJunk(it.substringBefore('/')) }
+            .map { it.substringBefore('/', missingDelimiterValue = "") }
+        val top = tops.firstOrNull() ?: return null
+        if (top.isEmpty() || tops.any { it != top }) return null
+        val folder = top.lowercase()
+        if (folder in ADDON_FOLDERS || folder in DISC_LAYOUT_FOLDERS) return null
+        return top
+    }
+
+    private fun isRootJunk(rootName: String): Boolean =
+        rootName.startsWith(".") || rootName == MAC_METADATA_FOLDER
+
+    internal fun withoutWrapper(entryPath: String, wrapper: String?): String {
+        if (wrapper == null) return entryPath
+        val normalized = entryPath.replace('\\', '/')
+        return if (normalized.startsWith("$wrapper/")) normalized.removePrefix("$wrapper/") else entryPath
+    }
+
+    private fun rebase(file: File, from: File, to: File): File {
+        if (from.absolutePath == to.absolutePath) return file
+        val prefix = from.absolutePath + File.separator
+        val path = file.absolutePath
+        if (!path.startsWith(prefix)) return file
+        return File(to, path.removePrefix(prefix))
+    }
+
+    private data class RawExtractionResult(
+        val allFiles: List<File>,
+        val rootDiscFiles: List<File>,
+        val primaryFile: File?,
+        val existingM3u: File?
+    )
+
+    private fun extractZipInternal(
+        zipFile: File,
+        gameFolder: File,
+        validExtensions: Set<String>,
+        onProgress: ((bytesWritten: Long, totalBytes: Long) -> Unit)?
+    ): RawExtractionResult {
+        val allFiles = mutableListOf<File>()
+        val rootDiscFiles = mutableListOf<File>()
+        var primaryFile: File? = null
+        var existingM3u: File? = null
+
+        ZipFile.builder().setFile(zipFile).get().use { zip ->
+            val entries = zip.entries.toList().filter { !it.isDirectory }
+            val wrapper = wrapperFolderOf(entries.map { FileNames.sanitizeRelativePath(it.name) })
+            val totalBytes = entries.sumOf { it.size }
+            var bytesWritten = 0L
+            var lastReportedBytes = 0L
+            val progressThreshold = 1024 * 1024L
+
+            Log.d(TAG, "Total entries found: ${entries.size}, total bytes: $totalBytes")
+
+            entries.forEach { entry ->
+                val entryPath = withoutWrapper(FileNames.sanitizeRelativePath(entry.name), wrapper)
+                val fileName = File(entryPath).name
+                val ext = fileName.substringAfterLast('.', "").lowercase()
+                val isRootFile = !entryPath.contains("/") && !entryPath.contains("\\")
+
+                val targetFile = File(gameFolder, entryPath)
+                targetFile.parentFile?.mkdirs()
+
+                Log.d(TAG, "Extracting: $entryPath -> ${targetFile.absolutePath}, size: ${entry.size}")
+
+                zip.getInputStream(entry).buffered().use { input ->
+                    targetFile.outputStream().buffered().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var bytes = input.read(buffer)
+                        while (bytes >= 0) {
+                            output.write(buffer, 0, bytes)
+                            bytesWritten += bytes
+                            if (bytesWritten - lastReportedBytes >= progressThreshold) {
+                                onProgress?.invoke(bytesWritten, totalBytes)
+                                lastReportedBytes = bytesWritten
+                            }
+                            bytes = input.read(buffer)
+                        }
+                    }
+                }
+
+                Log.d(TAG, "Extracted: $fileName, expected=${entry.size}, actual=${targetFile.length()}")
+
+                if (targetFile.length() == 0L && entry.size > 0) {
+                    Log.e(TAG, "ERROR: File $fileName extracted as 0 bytes but expected ${entry.size}")
+                }
+
+                allFiles.add(targetFile)
+                classifyExtractedFile(fileName, ext, isRootFile, targetFile, rootDiscFiles, validExtensions, { primaryFile = it }, { existingM3u = it }) {
+                    primaryFile == null
+                }
+            }
+        }
+
+        return RawExtractionResult(allFiles, rootDiscFiles, primaryFile, existingM3u)
+    }
+
+    private fun extractSevenZInternal(
+        sevenZFile: File,
+        gameFolder: File,
+        validExtensions: Set<String>,
+        onProgress: ((bytesWritten: Long, totalBytes: Long) -> Unit)?
+    ): RawExtractionResult {
+        val allFiles = mutableListOf<File>()
+        val rootDiscFiles = mutableListOf<File>()
+        var primaryFile: File? = null
+        var existingM3u: File? = null
+
+        SevenZFile.builder().setFile(sevenZFile).get().use { sevenZ ->
+            val fileEntries = sevenZ.entries.filter { !it.isDirectory }
+            val wrapper = wrapperFolderOf(fileEntries.map { FileNames.sanitizeRelativePath(it.name) })
+            val totalBytes = fileEntries.sumOf { it.size }
+            var bytesWritten = 0L
+            var lastReportedBytes = 0L
+            val progressThreshold = 1024 * 1024L
+            var entryCount = 0
+
+            Log.d(TAG, "7z archive: $totalBytes bytes uncompressed")
+
+            var entry = sevenZ.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory) {
+                    entryCount++
+                    val entryPath = withoutWrapper(FileNames.sanitizeRelativePath(entry.name), wrapper)
+                    val fileName = File(entryPath).name
+                    val ext = fileName.substringAfterLast('.', "").lowercase()
+                    val isRootFile = !entryPath.contains("/") && !entryPath.contains("\\")
+
+                    val targetFile = File(gameFolder, entryPath)
+                    targetFile.parentFile?.mkdirs()
+
+                    Log.d(TAG, "Extracting: $entryPath -> ${targetFile.absolutePath}, size: ${entry.size}")
+
+                    targetFile.outputStream().buffered().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        val inputStream = sevenZ.getInputStream(entry)
+                        var bytes = inputStream.read(buffer)
+                        while (bytes >= 0) {
+                            output.write(buffer, 0, bytes)
+                            bytesWritten += bytes
+                            if (bytesWritten - lastReportedBytes >= progressThreshold) {
+                                onProgress?.invoke(bytesWritten, totalBytes)
+                                lastReportedBytes = bytesWritten
+                            }
+                            bytes = inputStream.read(buffer)
+                        }
+                    }
+
+                    Log.d(TAG, "Extracted: $fileName, expected=${entry.size}, actual=${targetFile.length()}")
+
+                    if (targetFile.length() == 0L && entry.size > 0) {
+                        Log.e(TAG, "ERROR: File $fileName extracted as 0 bytes but expected ${entry.size}")
+                    }
+
+                    allFiles.add(targetFile)
+                    classifyExtractedFile(fileName, ext, isRootFile, targetFile, rootDiscFiles, validExtensions, { primaryFile = it }, { existingM3u = it }) {
+                        primaryFile == null
+                    }
+                }
+                entry = sevenZ.nextEntry
+            }
+
+            Log.d(TAG, "Total entries extracted: $entryCount, bytes written: $bytesWritten")
+        }
+
+        return RawExtractionResult(allFiles, rootDiscFiles, primaryFile, existingM3u)
+    }
+
+    private inline fun classifyExtractedFile(
+        fileName: String,
+        extension: String,
+        isRootFile: Boolean,
+        targetFile: File,
+        rootDiscFiles: MutableList<File>,
+        validExtensions: Set<String>,
+        setPrimaryFile: (File) -> Unit,
+        setExistingM3u: (File) -> Unit,
+        isPrimaryFileNull: () -> Boolean
+    ) {
+        val isMacOsResourceFork = fileName.startsWith("._")
+        when {
+            isMacOsResourceFork -> { }
+            extension == "m3u" && isRootFile -> setExistingM3u(targetFile)
+            extension in DISC_EXTENSIONS && isRootFile -> rootDiscFiles.add(targetFile)
+            isPrimaryFileNull() && extension in validExtensions && isRootFile -> setPrimaryFile(targetFile)
+        }
+    }
+
+    private fun filterToLaunchableDiscs(discFiles: List<File>): List<File> {
+        val cueGdiFiles = discFiles.filter { it.extension.lowercase() in setOf("cue", "gdi") }
+        val chdFiles = discFiles.filter { it.extension.lowercase() == "chd" }
+
+        return when {
+            chdFiles.isNotEmpty() -> chdFiles
+            cueGdiFiles.isNotEmpty() -> cueGdiFiles
+            else -> discFiles.filter { it.extension.lowercase() != "mdf" }
+        }
+    }
+
+    private fun sanitizeFileName(name: String): String = FileNames.gameFolderName(name)
+}

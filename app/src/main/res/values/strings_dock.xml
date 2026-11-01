@@ -1,0 +1,16 @@
+<resources>
+    <string name="dock_reorder_save_failed">Couldn’t save dock order. Please try again.</string>
+    <!-- Footer hint on a focused dock app: holding the button opens that app's menu -->
+    <string name="dock_hint_options">Hold for options</string>
+    <string name="dock_reorder_move_left">Move left</string>
+    <string name="dock_reorder_move_right">Move right</string>
+    <string name="dock_accessibility_label">Dock</string>
+    <!-- Footer hint while a dock app is held for reordering: moves it left or right -->
+    <string name="dock_hint_move">Move</string>
+    <!-- Footer hint and TalkBack action that drops a held dock app back where it started -->
+    <string name="dock_hint_cancel">Cancel</string>
+    <!-- TalkBack long-press label on one dock app: picks it up to change its position -->
+    <string name="dock_reorder_action">Reorder</string>
+    <!-- Dock app menu row that starts moving this app to a new place in the dock. Verb. -->
+    <string name="dock_menu_reorder">Reorder</string>
+</resources>

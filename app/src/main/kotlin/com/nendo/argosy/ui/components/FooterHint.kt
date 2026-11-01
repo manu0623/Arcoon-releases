@@ -1,0 +1,572 @@
+package com.nendo.argosy.ui.components
+
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import com.nendo.argosy.ui.util.clickableNoFocus
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.nendo.argosy.ui.icons.InputIcons
+import com.nendo.argosy.ui.input.LocalABIconsSwapped
+import com.nendo.argosy.ui.input.LocalXYIconsSwapped
+import com.nendo.argosy.ui.input.LocalSwapStartSelect
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import com.nendo.argosy.ui.theme.Dimens
+import com.nendo.argosy.ui.theme.LocalUiScale
+import com.nendo.argosy.ui.theme.Motion
+import com.nendo.argosy.ui.theme.generated.ComponentDefaults
+import com.nendo.argosy.ui.theme.generated.TypographyTokens
+import kotlin.math.roundToInt
+
+data class FooterStyleConfig(
+    val useAccentColor: Boolean = false
+)
+
+val LocalFooterStyle = staticCompositionLocalOf { FooterStyleConfig() }
+
+private val footerTextStyle
+    @Composable get() = chromeTextStyle(
+        MaterialTheme.typography.bodySmall,
+        TypographyTokens.bodySmall,
+        ComponentDefaults.FrostedSurface.footerLabelFontSizeSp.sp
+    )
+
+data class FooterHintItem(
+    val button: InputButton,
+    val action: String,
+    val enabled: Boolean = true
+)
+
+enum class InputButton {
+    A, B, X, Y,
+    DPAD, DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT, DPAD_HORIZONTAL, DPAD_VERTICAL,
+    LB, RB, LB_RB, LT, RT, LT_RT,
+    RIGHT_STICK_VERTICAL,
+    START, SELECT
+}
+
+private enum class HintCategory { DPAD, BUMPER, SHOULDER_MENU, FACE }
+
+private fun InputButton.category(): HintCategory = when (this) {
+    InputButton.DPAD, InputButton.DPAD_UP, InputButton.DPAD_DOWN,
+    InputButton.DPAD_LEFT, InputButton.DPAD_RIGHT,
+    InputButton.DPAD_HORIZONTAL, InputButton.DPAD_VERTICAL -> HintCategory.DPAD
+    InputButton.LB, InputButton.RB, InputButton.LB_RB -> HintCategory.BUMPER
+    InputButton.LT, InputButton.RT, InputButton.LT_RT, InputButton.RIGHT_STICK_VERTICAL,
+    InputButton.START, InputButton.SELECT -> HintCategory.SHOULDER_MENU
+    InputButton.A, InputButton.B, InputButton.X, InputButton.Y -> HintCategory.FACE
+}
+
+/**
+ * The single icon-side resolution of A/B, X/Y and Start/Select swaps. Call this; never copy the
+ * mapping and never encode a swap by choosing a different InputButton.
+ */
+@Composable
+fun InputButton.toPainter(): Painter? {
+    val abIconsSwapped = LocalABIconsSwapped.current
+    val xyIconsSwapped = LocalXYIconsSwapped.current
+    val swapStartSelect = LocalSwapStartSelect.current
+    return when (this) {
+        InputButton.A -> if (abIconsSwapped) InputIcons.FaceRight else InputIcons.FaceBottom
+        InputButton.B -> if (abIconsSwapped) InputIcons.FaceBottom else InputIcons.FaceRight
+        InputButton.X -> if (xyIconsSwapped) InputIcons.FaceTop else InputIcons.FaceLeft
+        InputButton.Y -> if (xyIconsSwapped) InputIcons.FaceLeft else InputIcons.FaceTop
+        InputButton.DPAD -> InputIcons.Dpad
+        InputButton.DPAD_UP -> InputIcons.DpadUp
+        InputButton.DPAD_DOWN -> InputIcons.DpadDown
+        InputButton.DPAD_LEFT -> InputIcons.DpadLeft
+        InputButton.DPAD_RIGHT -> InputIcons.DpadRight
+        InputButton.DPAD_HORIZONTAL -> InputIcons.DpadHorizontal
+        InputButton.DPAD_VERTICAL -> InputIcons.DpadVertical
+        InputButton.LB -> InputIcons.BumperLeft
+        InputButton.RB -> InputIcons.BumperRight
+        InputButton.LB_RB -> null
+        InputButton.LT -> InputIcons.TriggerLeft
+        InputButton.RT -> InputIcons.TriggerRight
+        InputButton.LT_RT -> null
+        InputButton.RIGHT_STICK_VERTICAL -> InputIcons.RightStickVertical
+        InputButton.START -> if (swapStartSelect) InputIcons.Options else InputIcons.Menu
+        InputButton.SELECT -> if (swapStartSelect) InputIcons.Menu else InputIcons.Options
+    }
+}
+
+private fun InputButton.isComposite(): Boolean = this == InputButton.LB_RB || this == InputButton.LT_RT
+
+private fun InputButton.isDpadButton(): Boolean = when (this) {
+    InputButton.DPAD, InputButton.DPAD_UP, InputButton.DPAD_DOWN,
+    InputButton.DPAD_LEFT, InputButton.DPAD_RIGHT,
+    InputButton.DPAD_HORIZONTAL, InputButton.DPAD_VERTICAL -> true
+    else -> false
+}
+
+@Composable
+fun FooterHint(
+    button: InputButton,
+    action: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val footerStyle = LocalFooterStyle.current
+    val disabledAlpha = 0.38f
+    val iconColor = if (footerStyle.useAccentColor) {
+        contrastingFrostedContent(MaterialTheme.colorScheme.primary)
+    } else {
+        MaterialTheme.colorScheme.primary
+    }.let { if (enabled) it else it.copy(alpha = disabledAlpha) }
+    val textColor = if (footerStyle.useAccentColor) {
+        contrastingFrostedContent(MaterialTheme.colorScheme.primary)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }.let { if (enabled) it else it.copy(alpha = disabledAlpha) }
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (button.isComposite()) {
+            CompositeButtonIcon(button, iconColor)
+        } else {
+            button.toPainter()?.let { painter ->
+                Icon(
+                    painter = painter,
+                    contentDescription = button.name,
+                    tint = iconColor,
+                    modifier = Modifier.size(Dimens.iconSm + Dimens.borderMedium)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(Dimens.spacingXs))
+        Text(
+            text = action,
+            style = footerTextStyle,
+            color = textColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun CompositeButtonIcon(button: InputButton, iconColor: Color) {
+    when (button) {
+        InputButton.LB_RB -> {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    painter = InputIcons.BumperLeft,
+                    contentDescription = "LB",
+                    tint = iconColor,
+                    modifier = Modifier.size(Dimens.iconSm + Dimens.borderMedium)
+                )
+                Text(
+                    text = "/",
+                    style = footerTextStyle,
+                    color = iconColor,
+                    modifier = Modifier.padding(horizontal = Dimens.borderMedium)
+                )
+                Icon(
+                    painter = InputIcons.BumperRight,
+                    contentDescription = "RB",
+                    tint = iconColor,
+                    modifier = Modifier.size(Dimens.iconSm + Dimens.borderMedium)
+                )
+            }
+        }
+        InputButton.LT_RT -> {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    painter = InputIcons.TriggerLeft,
+                    contentDescription = "LT",
+                    tint = iconColor,
+                    modifier = Modifier.size(Dimens.iconSm + Dimens.borderMedium)
+                )
+                Text(
+                    text = "/",
+                    style = footerTextStyle,
+                    color = iconColor,
+                    modifier = Modifier.padding(horizontal = Dimens.borderMedium)
+                )
+                Icon(
+                    painter = InputIcons.TriggerRight,
+                    contentDescription = "RT",
+                    tint = iconColor,
+                    modifier = Modifier.size(Dimens.iconSm + Dimens.borderMedium)
+                )
+            }
+        }
+        else -> {}
+    }
+}
+
+@Composable
+private fun <T> filterHintsByWidth(
+    hints: List<T>,
+    measuredWidth: Int,
+    trailingWidth: Int = 0,
+    tappable: Boolean,
+    buttonOf: (T) -> InputButton,
+    labelOf: (T) -> String,
+    priorityOf: (T) -> Int
+): List<T> {
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    val textStyle = footerTextStyle
+    val iconSize = Dimens.iconSm + Dimens.borderMedium
+    val iconPadding = Dimens.spacingXs
+    val compositePadding = Dimens.borderMedium * 2
+    val gap = with(density) { Dimens.spacingLg.roundToPx() }
+    val padding = with(density) { (Dimens.spacingMd * 2).roundToPx() }
+    val windowWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
+    val available = (measuredWidth.takeIf { it > 0 } ?: windowWidth) - padding - trailingWidth -
+        if (trailingWidth > 0) gap else 0
+    val widths = hints.map { hint ->
+        val textWidth = textMeasurer.measure(labelOf(hint), textStyle, softWrap = false).size.width
+        val glyphWidth = with(density) {
+            if (buttonOf(hint).isComposite()) {
+                (iconSize * 2 + compositePadding).roundToPx() +
+                    textMeasurer.measure("/", textStyle).size.width
+            } else {
+                iconSize.roundToPx()
+            }
+        }
+        (textWidth + glyphWidth + with(density) { iconPadding.roundToPx() })
+            .coerceAtLeast(if (tappable) with(density) { minimumTouchTarget.roundToPx() } else 0)
+    }
+    return fittingFooterHintIndices(widths, hints.map(priorityOf), available, gap).map(hints::get)
+}
+
+internal fun fittingFooterHintIndices(
+    widths: List<Int>,
+    priorities: List<Int>,
+    available: Int,
+    gap: Int
+): List<Int> {
+    val sorted = widths.indices.sortedByDescending { priorities[it] }
+    var used = 0
+    val fitting = mutableListOf<Int>()
+    for (index in sorted) {
+        val width = widths[index] + if (fitting.isEmpty()) 0 else gap
+        if (used + width > available) break
+        used += width
+        fitting += index
+    }
+    return fitting.ifEmpty { sorted.take(1) }.sorted()
+}
+
+private fun InputButton.faceButtonPriority(): Int = when (this) {
+    InputButton.Y -> 0
+    InputButton.X -> 1
+    InputButton.B -> 2
+    InputButton.A -> 3
+    else -> 0
+}
+
+private fun InputButton.hidePriority(): Int = when (this) {
+    InputButton.X, InputButton.Y -> 4
+    InputButton.LB, InputButton.RB, InputButton.LB_RB,
+    InputButton.LT, InputButton.RT, InputButton.LT_RT, InputButton.RIGHT_STICK_VERTICAL -> 3
+    InputButton.START, InputButton.SELECT -> 2
+    InputButton.A, InputButton.B -> 1
+    else -> 0
+}
+
+/**
+ * Whether the focused control already communicates this hint, so the bar can collapse.
+ *
+ * Keyed on the button alone, never on the label: every caller pairs "Back", "Select" and
+ * "Close" with A, B or the d-pad anyway, and a translated label would match nothing.
+ */
+internal fun isObviousHint(button: InputButton): Boolean =
+    button == InputButton.A || button == InputButton.B || button.isDpadButton()
+
+@Composable
+private fun footerCollapseProgress(quiet: Boolean): Float {
+    val progress by animateFloatAsState(
+        targetValue = if (quiet) 1f else 0f,
+        animationSpec = tween(durationMillis = Motion.durationContent, easing = Motion.argosyEase),
+        label = "footerCollapse"
+    )
+    return progress
+}
+
+private fun Modifier.footerCollapse(progress: Float): Modifier =
+    layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, (placeable.height * (1f - progress)).roundToInt()) {
+            if (progress < 1f) placeable.placeRelative(0, 0)
+        }
+    }.graphicsLayer { alpha = 1f - progress }
+
+@Composable
+private fun footerSurfaceColor(): Color = if (LocalFooterStyle.current.useAccentColor) {
+    MaterialTheme.colorScheme.primary
+} else {
+    frostedSurfaceColor()
+}
+
+private val footerVerticalPadding
+    @Composable get() = if (LocalUiScale.current.compactFooter) Dimens.spacingXs else Dimens.spacingSm
+
+@Composable
+fun FooterBar(
+    hints: List<Pair<InputButton, String>>,
+    modifier: Modifier = Modifier,
+    onHintClick: ((InputButton) -> Unit)? = null,
+    trailingContent: @Composable (() -> Unit)? = null
+) {
+    val backgroundColor = footerSurfaceColor()
+    var measuredWidth by remember { mutableIntStateOf(0) }
+    var trailingWidth by remember { mutableIntStateOf(0) }
+
+    val quiet = hints.all { isObviousHint(it.first) }
+    var displayHints by remember { mutableStateOf(hints) }
+    if (!quiet) displayHints = hints
+    val collapseProgress = footerCollapseProgress(quiet)
+
+    val filteredHints = filterHintsByWidth(
+        displayHints,
+        measuredWidth = measuredWidth,
+        trailingWidth = if (trailingContent != null) trailingWidth else 0,
+        tappable = onHintClick != null,
+        buttonOf = { it.first },
+        labelOf = { it.second },
+        priorityOf = { it.first.hidePriority() }
+    )
+
+    val dpadHints = filteredHints.filter { it.first.category() == HintCategory.DPAD }
+    val bumperHints = filteredHints.filter { it.first.category() == HintCategory.BUMPER }
+    val shoulderHints = filteredHints.filter { it.first.category() == HintCategory.SHOULDER_MENU }
+    val faceHints = filteredHints.filter { it.first.category() == HintCategory.FACE }
+        .sortedBy { it.first.faceButtonPriority() }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .onSizeChanged { measuredWidth = it.width }
+            .footerCollapse(collapseProgress)
+            .heightIn(min = Dimens.footerHeight)
+            .frostedSurface(
+                shape = RectangleShape,
+                color = backgroundColor
+            )
+            .padding(horizontal = Dimens.spacingMd),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingLg)) {
+            dpadHints.forEach { (button, action) ->
+                TappableFooterHint(button, action, onHintClick)
+            }
+            bumperHints.forEach { (button, action) ->
+                TappableFooterHint(button, action, onHintClick)
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Dimens.spacingLg),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            shoulderHints.forEach { (button, action) ->
+                TappableFooterHint(button, action, onHintClick)
+            }
+            faceHints.forEach { (button, action) ->
+                TappableFooterHint(button, action, onHintClick)
+            }
+            if (trailingContent != null) {
+                Box(Modifier.onSizeChanged { trailingWidth = it.width }) { trailingContent() }
+            }
+        }
+    }
+}
+
+@Composable
+fun FooterBarWithState(
+    hints: List<FooterHintItem>,
+    modifier: Modifier = Modifier,
+    onHintClick: ((InputButton) -> Unit)? = null,
+    trailingContent: @Composable (() -> Unit)? = null,
+    forceVisible: Boolean = false
+) {
+    val backgroundColor = footerSurfaceColor()
+    var measuredWidth by remember { mutableIntStateOf(0) }
+    var trailingWidth by remember { mutableIntStateOf(0) }
+
+    val quiet = !forceVisible && hints.all { isObviousHint(it.button) }
+    var displayHints by remember { mutableStateOf(hints) }
+    if (!quiet) displayHints = hints
+    val collapseProgress = footerCollapseProgress(quiet)
+
+    val filteredHints = filterHintsByWidth(
+        displayHints,
+        measuredWidth = measuredWidth,
+        trailingWidth = if (trailingContent != null) trailingWidth else 0,
+        tappable = onHintClick != null,
+        buttonOf = { it.button },
+        labelOf = { it.action },
+        priorityOf = { it.button.hidePriority() }
+    )
+
+    val dpadHints = filteredHints.filter { it.button.category() == HintCategory.DPAD }
+    val bumperHints = filteredHints.filter { it.button.category() == HintCategory.BUMPER }
+    val shoulderHints = filteredHints.filter { it.button.category() == HintCategory.SHOULDER_MENU }
+    val faceHints = filteredHints.filter { it.button.category() == HintCategory.FACE }
+        .sortedBy { it.button.faceButtonPriority() }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .onSizeChanged { measuredWidth = it.width }
+            .footerCollapse(collapseProgress)
+            .heightIn(min = Dimens.footerHeight)
+            .frostedSurface(
+                shape = RectangleShape,
+                color = backgroundColor
+            )
+            .padding(horizontal = Dimens.spacingMd),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingLg)) {
+            dpadHints.forEach { hint ->
+                TappableFooterHint(hint.button, hint.action, onHintClick, hint.enabled)
+            }
+            bumperHints.forEach { hint ->
+                TappableFooterHint(hint.button, hint.action, onHintClick, hint.enabled)
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Dimens.spacingLg),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            shoulderHints.forEach { hint ->
+                TappableFooterHint(hint.button, hint.action, onHintClick, hint.enabled)
+            }
+            faceHints.forEach { hint ->
+                TappableFooterHint(hint.button, hint.action, onHintClick, hint.enabled)
+            }
+            if (trailingContent != null) {
+                Box(Modifier.onSizeChanged { trailingWidth = it.width }) { trailingContent() }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TappableFooterHint(
+    button: InputButton,
+    action: String,
+    onHintClick: ((InputButton) -> Unit)?,
+    enabled: Boolean = true
+) {
+    val tappable = onHintClick != null && enabled
+    val tracker = LocalFooterHintTracker.current
+    val trackKey = remember { Any() }
+    DisposableEffect(tracker, tappable) {
+        onDispose { tracker?.untrackTappableHint(trackKey) }
+    }
+    val clickModifier = if (tappable) {
+        Modifier
+            .onGloballyPositioned { tracker?.trackTappableHint(trackKey, it) }
+            .clickableNoFocus { onHintClick?.invoke(button) }
+            .sizeIn(minWidth = minimumTouchTarget, minHeight = minimumTouchTarget)
+    } else {
+        Modifier
+    }
+
+    FooterHint(
+        button = button,
+        action = action,
+        modifier = clickModifier.padding(vertical = footerVerticalPadding),
+        enabled = enabled
+    )
+}
+
+@Composable
+fun SubtleFooterBar(
+    hints: List<Pair<InputButton, String>>,
+    modifier: Modifier = Modifier,
+    onHintClick: ((InputButton) -> Unit)? = null
+) {
+    var measuredWidth by remember { mutableIntStateOf(0) }
+    val quiet = hints.all { isObviousHint(it.first) }
+    var displayHints by remember { mutableStateOf(hints) }
+    if (!quiet) displayHints = hints
+    val collapseProgress = footerCollapseProgress(quiet)
+
+    val filteredHints = filterHintsByWidth(
+        displayHints,
+        measuredWidth = measuredWidth,
+        tappable = onHintClick != null,
+        buttonOf = { it.first },
+        labelOf = { it.second },
+        priorityOf = { it.first.hidePriority() }
+    )
+
+    val dpadHints = filteredHints.filter { it.first.category() == HintCategory.DPAD }
+    val faceHints = filteredHints.filter { it.first.category() == HintCategory.FACE }
+        .sortedBy { it.first.faceButtonPriority() }
+
+    val backgroundColor = footerSurfaceColor()
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .onSizeChanged { measuredWidth = it.width }
+            .footerCollapse(collapseProgress)
+            .heightIn(min = Dimens.footerHeight)
+            .frostedSurface(
+                shape = RectangleShape,
+                color = backgroundColor
+            )
+            .padding(horizontal = Dimens.spacingMd),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingLg)) {
+            dpadHints.forEach { (button, action) ->
+                TappableFooterHint(button, action, onHintClick)
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.spacingLg)) {
+            faceHints.forEach { (button, action) ->
+                TappableFooterHint(button, action, onHintClick)
+            }
+        }
+    }
+}

@@ -1,0 +1,308 @@
+package com.nendo.argosy.data.remote.romm
+
+import com.nendo.argosy.data.local.entity.PlatformEntity
+import com.nendo.argosy.data.model.ArtSlot
+import com.nendo.argosy.data.model.ServerArt
+import com.nendo.argosy.data.preferences.UserPreferencesRepository
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class RomMRepository @Inject constructor(
+    private val connectionManager: RomMConnectionManager,
+    private val apiClient: RomMApiClient,
+    private val librarySyncService: RomMLibrarySyncService,
+    private val collectionSyncService: RomMCollectionSyncService,
+    private val userPropertyService: RomMUserPropertyService,
+    private val achievementService: RomMAchievementService,
+    private val userPreferencesRepository: UserPreferencesRepository
+) {
+    val syncProgress: StateFlow<SyncProgress> get() = librarySyncService.syncProgress
+
+    val connectionState: StateFlow<ConnectionState> get() = connectionManager.connectionState
+
+    fun isConnected(): Boolean = connectionManager.isConnected()
+
+    suspend fun isReachable(): Boolean = connectionManager.isReachable()
+
+    fun responseMark(): Long = connectionManager.responseMark()
+
+    fun answeredSince(mark: Long): Boolean = connectionManager.answeredSince(mark)
+
+    fun isVersionAtLeast(minVersion: String): Boolean = connectionManager.isVersionAtLeast(minVersion)
+
+    // --- Connection ---
+
+    suspend fun initialize(reprobe: Boolean = false) {
+        val connectedNow = connectionManager.initialize(reprobe)
+        if (connectedNow && connectionManager.isConnected()) {
+            val prefs = userPreferencesRepository.preferences.first()
+            val hasRAAuth = !prefs.raUsername.isNullOrBlank() && !prefs.raToken.isNullOrBlank()
+            if (prefs.rommToken != null && !hasRAAuth) {
+                achievementService.refreshRAProgressionOnStartup()
+            }
+        }
+        librarySyncService.populateVirtualCollectionsIfNeeded()
+    }
+
+    fun onAppResumed() {
+        achievementService.onAppResumed()
+    }
+
+    suspend fun connect(url: String, token: String? = null): RomMResult<String> =
+        connectionManager.connect(url, token)
+
+    suspend fun probeServerVersion(url: String): RomMResult<String> =
+        connectionManager.probeServerVersion(url)
+
+    suspend fun connectWithToken(url: String, token: String): RomMResult<String> =
+        connectionManager.connectWithToken(url, token)
+
+    suspend fun exchangePairingCode(url: String, code: String): RomMResult<String> =
+        connectionManager.exchangePairingCode(url, code)
+
+    suspend fun beginDeviceAuth(url: String): RomMResult<RomMDeviceAuthInitResponse> =
+        connectionManager.beginDeviceAuth(url)
+
+    suspend fun pollDeviceAuthOnce(deviceCode: String, activateOnSuccess: Boolean = true): DeviceAuthPoll =
+        connectionManager.pollDeviceAuthOnce(deviceCode, activateOnSuccess)
+
+    fun cancelDeviceAuth() = connectionManager.cancelDeviceAuth()
+
+    fun disconnect() = connectionManager.disconnect()
+
+    suspend fun signOut(discardUnflushed: Boolean = false) =
+        connectionManager.signOut(discardUnflushed)
+
+    suspend fun checkConnection() = connectionManager.checkConnection()
+
+    /**
+     * The address the live session is on right now; empty while disconnected.
+     */
+    fun getBaseUrl(): String = connectionManager.getBaseUrl()
+
+    suspend fun validateAddress(url: String): RomMResult<String> =
+        connectionManager.validateAddress(url)
+
+    suspend fun reconnectWithStoredAddresses(): RomMResult<String> =
+        connectionManager.reconnectWithStoredAddresses()
+
+    fun getCurrentDeviceId(): String? = connectionManager.getDeviceId()
+
+    suspend fun getRegisteredDevices(): List<RomMDevice> {
+        val api = connectionManager.getApi() ?: return emptyList()
+        return try {
+            val response = api.getDevices()
+            if (response.isSuccessful) response.body().orEmpty() else emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    // --- API Client ---
+
+    fun buildMediaUrlPublic(path: String?): String? = apiClient.buildMediaUrl(path)
+
+    /**
+     * The bearer header for [url], or none when [url] is not on the connected server's
+     * scheme, host and port. Empty while disconnected or without a token.
+     */
+    fun mediaAuthHeaders(url: String, token: String?): Map<String, String> =
+        RomMMusicLibraryService.bearerHeaders(url, connectionManager.getBaseUrl(), token)
+
+    fun buildCoverUrls(rom: RomMRom): List<String> = apiClient.buildCoverUrls(rom)
+
+    fun buildResourceUrlPublic(path: String?): String? = apiClient.buildResourceUrl(path)
+
+    suspend fun openResource(url: String): okhttp3.ResponseBody? = runCatching {
+        apiClient.api?.downloadRaw(url)?.takeIf { it.isSuccessful }?.body()
+    }.getOrNull()
+
+    suspend fun getDocumentProgress(romId: Long, fileId: Long): RomMDocumentProgress? =
+        runCatching {
+            apiClient.api?.getDocumentProgress(romId, fileId)?.takeIf { it.isSuccessful }?.body()
+        }.getOrNull()
+
+    suspend fun updateDocumentProgress(
+        romId: Long,
+        fileId: Long,
+        progress: Float,
+        lastPage: Int?
+    ): Boolean = runCatching {
+        apiClient.api?.updateDocumentProgress(
+            romId,
+            fileId,
+            RomMDocumentProgressUpdate(progress = progress, lastPage = lastPage)
+        )?.isSuccessful == true
+    }.getOrDefault(false)
+
+    suspend fun getRom(romId: Long): RomMResult<RomMRom> = apiClient.getRom(romId)
+
+    suspend fun downloadRom(
+        romId: Long,
+        fileName: String,
+        rangeHeader: String? = null,
+        fileIds: String? = null
+    ): RomMResult<DownloadResponse> = apiClient.downloadRom(romId, fileName, rangeHeader, fileIds)
+
+    suspend fun downloadRomFile(
+        fileId: Long,
+        fileName: String,
+        rangeHeader: String? = null
+    ): RomMResult<DownloadResponse> = apiClient.downloadRomFile(fileId, fileName, rangeHeader)
+
+    suspend fun getMusicTracks(params: Map<String, String>): RomMResult<RomMMusicTrackPage> =
+        apiClient.getMusicTracks(params)
+
+    suspend fun getMusicFacet(
+        facet: RomMMusicFacet,
+        params: Map<String, String>
+    ): RomMResult<RomMMusicFacetPage> = apiClient.getMusicFacet(facet, params)
+
+    fun buildMusicQueryParams(
+        search: String? = null,
+        artist: String? = null,
+        album: String? = null,
+        genre: String? = null,
+        platformId: Long? = null,
+        minDuration: Double? = null,
+        maxDuration: Double? = null,
+        orderBy: String = "title",
+        orderDir: String = "asc",
+        limit: Int = 50,
+        offset: Int = 0
+    ): Map<String, String> = apiClient.buildMusicQueryParams(
+        search, artist, album, genre, platformId, minDuration, maxDuration, orderBy, orderDir, limit, offset
+    )
+
+    suspend fun getCurrentUser(): RomMResult<RomMUser> = apiClient.getCurrentUser()
+
+    suspend fun getLibrarySummary(): RomMResult<Pair<Int, Int>> = apiClient.getLibrarySummary()
+
+    suspend fun getPlatformCount(): RomMResult<Int> = apiClient.getPlatformCount()
+
+    suspend fun searchCovers(
+        searchTerm: String,
+        artType: RomMCoverArtType
+    ): RomMResult<List<RomMCoverResource>> = apiClient.searchCovers(searchTerm, artType)
+
+    suspend fun getServerArt(romId: Long, slot: ArtSlot): RomMResult<List<ServerArt>> =
+        when (val rom = apiClient.getRom(romId)) {
+            is RomMResult.Success -> RomMResult.Success(apiClient.serverArt(rom.data, slot))
+            is RomMResult.Error -> rom
+        }
+
+    fun getCapabilities(): RomMCapabilities = apiClient.getCapabilities()
+
+    suspend fun fetchAndStorePlatforms(
+        defaultSyncEnabled: Boolean = true
+    ): RomMResult<List<PlatformEntity>> = apiClient.fetchAndStorePlatforms(defaultSyncEnabled)
+
+    suspend fun updateRomUserProps(
+        rommId: Long,
+        userRating: Int? = null,
+        userDifficulty: Int? = null,
+        completion: Int? = null,
+        userStatus: String? = null,
+        hidden: Boolean? = null
+    ): Boolean = apiClient.updateRomUserProps(
+        rommId = rommId,
+        userRating = userRating,
+        userDifficulty = userDifficulty,
+        completion = completion,
+        userStatus = userStatus,
+        hidden = hidden
+    )
+
+    // --- Library Sync ---
+
+    suspend fun syncLibrary(
+        onProgress: ((current: Int, total: Int, platformName: String) -> Unit)? = null
+    ): SyncResult = librarySyncService.syncLibrary(onProgress)
+
+    suspend fun syncLibraryChanges(since: java.time.Instant): SyncResult =
+        librarySyncService.syncLibraryChanges(since)
+
+    suspend fun syncPlatform(platformId: Long): SyncResult = librarySyncService.syncPlatform(platformId)
+
+    suspend fun pruneServerRemovedGames(): Int = librarySyncService.pruneServerRemovedGames()
+
+    suspend fun syncPlatformsOnly(): Result<Int> = librarySyncService.syncPlatformsOnly()
+
+    suspend fun syncSingleRom(romId: Long): RomMResult<com.nendo.argosy.data.local.entity.GameEntity> =
+        librarySyncService.syncSingleRom(romId)
+
+    // --- Collections ---
+
+    suspend fun syncCollections(): RomMResult<Unit> = collectionSyncService.syncCollections()
+
+    suspend fun syncAutoCollections(): RomMResult<Unit> = collectionSyncService.syncAutoCollections()
+
+    suspend fun syncFavorites(): RomMResult<Unit> = collectionSyncService.syncFavorites()
+
+    suspend fun refreshFavoritesIfNeeded(): RomMResult<Unit> = collectionSyncService.refreshFavoritesIfNeeded()
+
+    suspend fun toggleFavoriteWithSync(gameId: Long, rommId: Long, isFavorite: Boolean): RomMResult<Unit> =
+        collectionSyncService.toggleFavoriteWithSync(gameId, rommId, isFavorite)
+
+    suspend fun syncFavorite(rommId: Long, isFavorite: Boolean): Boolean =
+        collectionSyncService.syncFavorite(rommId, isFavorite)
+
+    suspend fun createCollectionWithSync(name: String, description: String? = null): RomMResult<Long> =
+        collectionSyncService.createCollectionWithSync(name, description)
+
+    suspend fun updateCollectionWithSync(collectionId: Long, name: String, description: String?): RomMResult<Unit> =
+        collectionSyncService.updateCollectionWithSync(collectionId, name, description)
+
+    suspend fun deleteCollectionWithSync(collectionId: Long): RomMResult<Unit> =
+        collectionSyncService.deleteCollectionWithSync(collectionId)
+
+    suspend fun addGameToCollectionWithSync(gameId: Long, collectionId: Long): RomMResult<Unit> =
+        collectionSyncService.addGameToCollectionWithSync(gameId, collectionId)
+
+    suspend fun removeGameFromCollectionWithSync(gameId: Long, collectionId: Long): RomMResult<Unit> =
+        collectionSyncService.removeGameFromCollectionWithSync(gameId, collectionId)
+
+    // --- User Properties ---
+
+    suspend fun updateUserRating(gameId: Long, rating: Int): RomMResult<Unit> =
+        userPropertyService.updateUserRating(gameId, rating)
+
+    suspend fun updateUserDifficulty(gameId: Long, difficulty: Int): RomMResult<Unit> =
+        userPropertyService.updateUserDifficulty(gameId, difficulty)
+
+    suspend fun updateCompletion(gameId: Long, completion: Int): RomMResult<Unit> =
+        userPropertyService.updateCompletion(gameId, completion)
+
+    suspend fun updateUserStatus(gameId: Long, status: String?): RomMResult<Unit> =
+        userPropertyService.updateUserStatus(gameId, status)
+
+    suspend fun updateHidden(gameId: Long, hidden: Boolean): RomMResult<Unit> =
+        userPropertyService.updateHidden(gameId, hidden)
+
+    suspend fun refreshUserProps(gameId: Long): RomMResult<Unit> =
+        userPropertyService.refreshUserProps(gameId)
+
+    suspend fun refreshGameData(gameId: Long): RomMResult<Unit> =
+        userPropertyService.refreshGameData(gameId)
+
+    suspend fun fetchLogo(gameId: Long): String? = userPropertyService.fetchLogo(gameId)
+
+    suspend fun ensureSoundtrackFiles(gameId: Long): Boolean =
+        userPropertyService.ensureSoundtrackFiles(gameId)
+
+    suspend fun fetchUserScreenshots(rommId: Long): List<String> =
+        userPropertyService.fetchUserScreenshots(rommId)
+
+    // --- Achievements ---
+
+    fun getEarnedBadgeIds(raGameId: Long): Set<String> = achievementService.getEarnedBadgeIds(raGameId)
+
+    fun getEarnedAchievements(raGameId: Long): List<RomMEarnedAchievement> =
+        achievementService.getEarnedAchievements(raGameId)
+
+    suspend fun refreshRAProgressionIfNeeded(force: Boolean = false): RomMResult<Unit> =
+        achievementService.refreshRAProgressionIfNeeded(force)
+}

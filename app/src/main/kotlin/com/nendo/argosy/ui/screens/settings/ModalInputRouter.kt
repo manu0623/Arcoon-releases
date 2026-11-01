@@ -1,0 +1,572 @@
+package com.nendo.argosy.ui.screens.settings
+
+import com.nendo.argosy.ui.components.TextEntryRow
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.core.input.SoundType
+
+internal enum class InputMethod {
+    UP, DOWN, LEFT, RIGHT, CONFIRM, LONG_CONFIRM, BACK, CONTEXT_MENU, SECONDARY_ACTION,
+    PREV_SECTION, NEXT_SECTION, PREV_TRIGGER, NEXT_TRIGGER,
+    MENU, SELECT, LEFT_STICK_CLICK, RIGHT_STICK_CLICK
+}
+
+internal class ModalInputRouter(private val viewModel: SettingsViewModel) {
+
+    fun intercept(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (state.builtinControls.showControllerOrderModal ||
+            state.builtinControls.showInputMappingModal ||
+            state.builtinControls.showHotkeysModal ||
+            state.display.showGripControllerModal ||
+            state.controls.shortcutCaptureTarget != null
+        ) return null
+
+        interceptNavRingModal(state, method)?.let { return it }
+        interceptGpuDriverPrompt(state, method)?.let { return it }
+        interceptDriverPicker(state, method)?.let { return it }
+        interceptDriverDownload(state, method)?.let { return it }
+        interceptAppPickerModal(state, method)?.let { return it }
+        interceptLaunchArgsModal(state, method)?.let { return it }
+        interceptSavePathModal(state, method)?.let { return it }
+        interceptMemcardPicker(state, method)?.let { return it }
+        interceptPlatformSettingsModal(state, method)?.let { return it }
+        interceptSoundPicker(state, method)?.let { return it }
+        interceptRegionPriority(state, method)?.let { return it }
+        interceptRegionPicker(state, method)?.let { return it }
+        interceptPlatformFiltersModal(state, method)?.let { return it }
+        interceptSyncFiltersModal(state, method)?.let { return it }
+        interceptForceSyncConfirm(state, method)?.let { return it }
+        interceptAddressVerifyPrompt(state, method)?.let { return it }
+        interceptAddressEditor(state, method)?.let { return it }
+        interceptAddressMenu(state, method)?.let { return it }
+        interceptRAWebApiKeyEditor(state, method)?.let { return it }
+        interceptUpdateModal(state, method)?.let { return it }
+        interceptVariantPicker(state, method)?.let { return it }
+        interceptSteamVariantPicker(state, method)?.let { return it }
+        interceptGameNativeFoldersModal(state, method)?.let { return it }
+        interceptEmulatorPicker(state, method)?.let { return it }
+        interceptDownloadDefaultsModal(state, method)?.let { return it }
+        interceptShaderReorder(method)?.let { return it }
+        interceptPlatformReorder(state, method)?.let { return it }
+        interceptShaderPicker(method)?.let { return it }
+        interceptScreenRoleModal(state, method)?.let { return it }
+        interceptInstallerVariantPicker(state, method)?.let { return it }
+        interceptInstallerAddModal(state, method)?.let { return it }
+
+        return null
+    }
+
+    private fun interceptNavRingModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.controls.showNavRingModal) return null
+        val holding = state.controls.navRingHeld != null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveNavRingFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveNavRingFocus(1); InputResult.HANDLED }
+            InputMethod.SECONDARY_ACTION -> {
+                viewModel.toggleNavRingLift()
+                InputResult.handled(SoundType.SELECT)
+            }
+            InputMethod.CONFIRM -> {
+                viewModel.confirmNavRing()
+                InputResult.handled(if (holding) SoundType.SELECT else SoundType.TOGGLE)
+            }
+            InputMethod.BACK -> {
+                viewModel.backNavRing()
+                InputResult.handled(if (holding) SoundType.SILENT else SoundType.CLOSE_MODAL)
+            }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptInstallerVariantPicker(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.managedInstallers.showVariantPicker) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveInstallerVariantFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveInstallerVariantFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmInstallerVariant(); InputResult.HANDLED }
+            InputMethod.BACK -> {
+                viewModel.dismissInstallerVariantPicker()
+                InputResult.handled(SoundType.CLOSE_MODAL)
+            }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptInstallerAddModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.managedInstallers.showAddModal) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveInstallerAddRow(TextEntryRow.FIELD); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveInstallerAddRow(TextEntryRow.BUTTONS); InputResult.HANDLED }
+            InputMethod.LEFT -> { viewModel.moveInstallerAddButton(-1); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.moveInstallerAddButton(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmInstallerAdd(); InputResult.HANDLED }
+            InputMethod.BACK -> {
+                viewModel.dismissInstallerAddModal()
+                InputResult.handled(SoundType.CLOSE_MODAL)
+            }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptScreenRoleModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.display.screenRoleModalOpen) return null
+        return when (method) {
+            InputMethod.UP, InputMethod.LEFT -> { viewModel.moveScreenRoleFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN, InputMethod.RIGHT -> { viewModel.moveScreenRoleFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> {
+                val index = state.display.screenRoleModalFocus
+                viewModel.assignScreenRole(com.nendo.argosy.domain.model.ScreenRole.entries[index])
+                InputResult.HANDLED
+            }
+            InputMethod.BACK -> { viewModel.closeScreenRoleModal(); InputResult.handled(SoundType.BACK) }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptDownloadDefaultsModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.platformDetail.showDownloadDefaults) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.movePlatformDownloadDefaultsFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.movePlatformDownloadDefaultsFocus(1); InputResult.HANDLED }
+            InputMethod.LEFT -> { viewModel.setFocusedPlatformDownloadDefault(false); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.setFocusedPlatformDownloadDefault(true); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.activatePlatformDownloadDefaultsRow(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.dismissPlatformDownloadDefaults(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptGpuDriverPrompt(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.bios.showGpuDriverPrompt) return null
+        val isInstalling = state.bios.gpuDriverInfo?.isInstalling == true
+        return when (method) {
+            InputMethod.UP -> if (!isInstalling) { viewModel.moveGpuDriverPromptFocus(-1); InputResult.HANDLED } else InputResult.HANDLED
+            InputMethod.DOWN -> if (!isInstalling) { viewModel.moveGpuDriverPromptFocus(1); InputResult.HANDLED } else InputResult.HANDLED
+            InputMethod.CONFIRM -> if (!isInstalling) {
+                when (state.bios.gpuDriverPromptFocusIndex) {
+                    0 -> viewModel.installGpuDriver()
+                    1 -> viewModel.openGpuDriverFilePicker()
+                    2 -> viewModel.dismissGpuDriverPrompt()
+                }
+                InputResult.HANDLED
+            } else InputResult.HANDLED
+            InputMethod.BACK -> if (!isInstalling) { viewModel.dismissGpuDriverPrompt(); InputResult.HANDLED } else InputResult.HANDLED
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptDriverDownload(state: SettingsUiState, method: InputMethod): InputResult? {
+        val download = state.drivers.activeDownload ?: return null
+        val terminal = download.isComplete || download.error != null
+        return when (method) {
+            InputMethod.CONFIRM, InputMethod.BACK -> if (terminal) {
+                viewModel.dismissDriverDownload(); InputResult.HANDLED
+            } else InputResult.HANDLED
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptDriverPicker(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (state.drivers.pickerGroupIndex == null) return null
+        if (state.drivers.activeDownload != null) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveDriverPickerFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveDriverPickerFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.downloadSelectedDriverRelease(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.dismissDriverPicker(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptAppPickerModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.emulators.showAppPickerModal) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveAppPickerFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveAppPickerFocus(1); InputResult.HANDLED }
+            InputMethod.PREV_SECTION -> { viewModel.moveAppPickerFocus(-5); InputResult.HANDLED }
+            InputMethod.NEXT_SECTION -> { viewModel.moveAppPickerFocus(5); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmAppPickerSelection(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.closeAppPickerModal(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptLaunchArgsModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.emulators.showLaunchArgsModal) return null
+        val modal = state.emulators.launchArgsModalState ?: return null
+        if (modal.showCustomExtrasInput) return InputResult.HANDLED
+        val rows = launchArgsModalRows(modal)
+        val focusedRow = rows.getOrNull(modal.focusIndex)
+        val isCycleable = focusedRow is LaunchArgsRow.DataBinding ||
+            focusedRow is LaunchArgsRow.ExtraBinding ||
+            focusedRow is LaunchArgsRow.ClipDataBinding ||
+            focusedRow is LaunchArgsRow.MimeType
+
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveLaunchArgsFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveLaunchArgsFocus(1); InputResult.HANDLED }
+            InputMethod.LEFT -> if (isCycleable) {
+                cycleLaunchArgsRow(viewModel, focusedRow, -1); InputResult.HANDLED
+            } else InputResult.HANDLED
+            InputMethod.RIGHT -> if (isCycleable) {
+                cycleLaunchArgsRow(viewModel, focusedRow, 1); InputResult.HANDLED
+            } else InputResult.HANDLED
+            InputMethod.CONFIRM -> {
+                when (focusedRow) {
+                    is LaunchArgsRow.DataBinding -> viewModel.cycleLaunchArgsDataBinding()
+                    is LaunchArgsRow.ExtraBinding -> viewModel.cycleLaunchArgsExtraBinding()
+                    is LaunchArgsRow.ClipDataBinding -> viewModel.cycleLaunchArgsClipDataBinding()
+                    is LaunchArgsRow.Flag -> viewModel.toggleLaunchArgsFlag(focusedRow.bit)
+                    is LaunchArgsRow.MimeType -> viewModel.cycleLaunchArgsMimeType()
+                    is LaunchArgsRow.CustomExtras -> viewModel.openLaunchArgsCustomExtras()
+                    is LaunchArgsRow.LockedBinding -> {}
+                    null -> {}
+                }
+                InputResult.HANDLED
+            }
+            InputMethod.SECONDARY_ACTION -> { viewModel.resetLaunchArgsFocused(); InputResult.HANDLED }
+            InputMethod.LONG_CONFIRM -> { viewModel.resetLaunchArgsFocused(); InputResult.HANDLED }
+            InputMethod.CONTEXT_MENU -> { viewModel.resetAllLaunchArgs(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.closeLaunchArgsModal(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun cycleLaunchArgsRow(vm: SettingsViewModel, row: LaunchArgsRow?, direction: Int) {
+        when (row) {
+            is LaunchArgsRow.DataBinding -> vm.cycleLaunchArgsDataBinding(direction)
+            is LaunchArgsRow.ExtraBinding -> vm.cycleLaunchArgsExtraBinding(direction)
+            is LaunchArgsRow.ClipDataBinding -> vm.cycleLaunchArgsClipDataBinding(direction)
+            is LaunchArgsRow.MimeType -> vm.cycleLaunchArgsMimeType(direction)
+            else -> {}
+        }
+    }
+
+    private fun interceptSavePathModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.emulators.showSavePathModal) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveSavePathModalFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveSavePathModalFocus(1); InputResult.HANDLED }
+            InputMethod.LEFT -> { viewModel.moveSavePathModalButtonFocus(1); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.moveSavePathModalButtonFocus(-1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmSavePathModalSelection(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.dismissSavePathModal(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptMemcardPicker(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.emulators.showMemcardPicker) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveMemcardPickerFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveMemcardPickerFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> {
+                val info = state.emulators.memcardPickerInfo
+                val card = info?.cards?.getOrNull(state.emulators.memcardPickerFocusIndex)
+                if (card != null) viewModel.confirmMemcardSelection(card.path)
+                InputResult.HANDLED
+            }
+            InputMethod.BACK -> { viewModel.dismissMemcardPicker(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptPlatformSettingsModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (state.storage.platformSettingsModalId == null) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.movePlatformSettingsFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.movePlatformSettingsFocus(1); InputResult.HANDLED }
+            InputMethod.LEFT -> {
+                val focusIdx = state.storage.platformSettingsFocusIndex
+                if (focusIdx in 1..3) viewModel.movePlatformSettingsButtonFocus(1)
+                InputResult.HANDLED
+            }
+            InputMethod.RIGHT -> {
+                val focusIdx = state.storage.platformSettingsFocusIndex
+                if (focusIdx in 1..3) viewModel.movePlatformSettingsButtonFocus(-1)
+                InputResult.HANDLED
+            }
+            InputMethod.CONFIRM -> { viewModel.selectPlatformSettingsOption(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.closePlatformSettingsModal(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptSoundPicker(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.sounds.showSoundPicker) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveSoundPickerFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveSoundPickerFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmSoundPickerSelection(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.dismissSoundPicker(); InputResult.HANDLED }
+            InputMethod.CONTEXT_MENU -> InputResult.handled(SoundType.SILENT)
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptRegionPicker(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.syncSettings.showRegionPicker) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveRegionPickerFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveRegionPickerFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmRegionPickerSelection(); InputResult.handled(SoundType.TOGGLE) }
+            InputMethod.BACK -> { viewModel.dismissRegionPicker(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptRegionPriority(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.syncSettings.showRegionPriority) return null
+        val holding = state.syncSettings.regionPriorityHeld != null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveRegionPriorityFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveRegionPriorityFocus(1); InputResult.HANDLED }
+            InputMethod.SECONDARY_ACTION -> {
+                if (holding) viewModel.dropRegionPriority() else viewModel.liftRegionPriority()
+                InputResult.handled(SoundType.SELECT)
+            }
+            InputMethod.CONFIRM -> if (holding) {
+                viewModel.dropRegionPriority()
+                InputResult.handled(SoundType.SELECT)
+            } else {
+                InputResult.handled(SoundType.SILENT)
+            }
+            InputMethod.BACK -> { viewModel.backRegionPriority(); InputResult.handled(SoundType.SILENT) }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptPlatformFiltersModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.syncSettings.showPlatformFiltersModal) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.platformFiltersUp(); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.platformFiltersDown(); InputResult.HANDLED }
+            InputMethod.LEFT -> { viewModel.platformFiltersLeft(); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.platformFiltersRight(); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.platformFiltersConfirm(); InputResult.handled(SoundType.TOGGLE) }
+            InputMethod.BACK -> { viewModel.platformFiltersBack(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptSyncFiltersModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.syncSettings.showSyncFiltersModal) return null
+        val onRegionModeRow = state.syncSettings.syncFiltersModalFocusIndex == 1
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveSyncFiltersModalFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveSyncFiltersModalFocus(1); InputResult.HANDLED }
+            InputMethod.LEFT, InputMethod.RIGHT -> {
+                if (onRegionModeRow) viewModel.toggleRegionMode()
+                InputResult.HANDLED
+            }
+            InputMethod.CONFIRM -> {
+                if (onRegionModeRow) {
+                    viewModel.requestEnumPicker(SYNC_REGION_MODE_PICKER_KEY)
+                    InputResult.handled(SoundType.OPEN_MODAL)
+                } else {
+                    viewModel.confirmSyncFiltersModalSelection()
+                    InputResult.handled(SoundType.TOGGLE)
+                }
+            }
+            InputMethod.BACK -> { viewModel.dismissSyncFiltersModal(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptForceSyncConfirm(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.syncSettings.showForceSyncConfirm) return null
+        return when (method) {
+            InputMethod.LEFT -> { viewModel.moveSyncConfirmFocus(-1); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.moveSyncConfirmFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> {
+                if (state.syncSettings.syncConfirmButtonIndex == 0) {
+                    viewModel.cancelSyncSaves()
+                } else {
+                    viewModel.confirmSyncSaves()
+                }
+                InputResult.HANDLED
+            }
+            InputMethod.BACK -> { viewModel.cancelSyncSaves(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptAddressVerifyPrompt(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (state.server.rommAddressVerifyPrompt == null) return null
+        return when (method) {
+            InputMethod.LEFT -> { viewModel.moveRommAddressVerifyFocus(-1); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.moveRommAddressVerifyFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> {
+                if (state.server.rommAddressVerifyFocusIndex == 0) {
+                    viewModel.cancelUnverifiedRommAddress()
+                } else {
+                    viewModel.keepUnverifiedRommAddress()
+                }
+                InputResult.HANDLED
+            }
+            InputMethod.BACK -> { viewModel.cancelUnverifiedRommAddress(); InputResult.handled(SoundType.CLOSE_MODAL) }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptAddressEditor(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (state.server.rommAddressEditor == null) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveRommAddressEditorRow(TextEntryRow.FIELD); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveRommAddressEditorRow(TextEntryRow.BUTTONS); InputResult.HANDLED }
+            InputMethod.LEFT -> { viewModel.moveRommAddressEditorButton(-1); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.moveRommAddressEditorButton(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmRommAddressEditor(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.closeRommAddressEditor(); InputResult.handled(SoundType.CLOSE_MODAL) }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptRAWebApiKeyEditor(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (state.retroAchievements.webApiKeyEditor == null) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveRAWebApiKeyRow(TextEntryRow.FIELD); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveRAWebApiKeyRow(TextEntryRow.BUTTONS); InputResult.HANDLED }
+            InputMethod.LEFT -> { viewModel.moveRAWebApiKeyButton(-1); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.moveRAWebApiKeyButton(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmRAWebApiKeyEditor(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.closeRAWebApiKeyEditor(); InputResult.handled(SoundType.CLOSE_MODAL) }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptAddressMenu(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (state.server.rommAddressMenu == null) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveRommAddressMenuFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveRommAddressMenuFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.selectRommAddressAction(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.closeRommAddressMenu(); InputResult.handled(SoundType.CLOSE_MODAL) }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptUpdateModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        val modal = state.emulators.updateModal ?: return null
+        return when (modal.state) {
+            is UpdateModalState.SelectVariant -> when (method) {
+                InputMethod.UP -> { viewModel.moveUpdateModalFocus(-1); InputResult.HANDLED }
+                InputMethod.DOWN -> { viewModel.moveUpdateModalFocus(1); InputResult.HANDLED }
+                InputMethod.CONFIRM -> { viewModel.selectUpdateModalVariant(); InputResult.HANDLED }
+                InputMethod.BACK -> { viewModel.dismissUpdateModal(); InputResult.HANDLED }
+                else -> InputResult.HANDLED
+            }
+            is UpdateModalState.Installed -> when (method) {
+                InputMethod.CONFIRM, InputMethod.BACK -> { viewModel.dismissUpdateModal(); InputResult.HANDLED }
+                else -> InputResult.HANDLED
+            }
+            is UpdateModalState.Failed -> when (method) {
+                InputMethod.BACK, InputMethod.CONFIRM -> { viewModel.dismissUpdateModal(); InputResult.HANDLED }
+                else -> InputResult.HANDLED
+            }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptVariantPicker(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.emulators.showVariantPicker) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveVariantPickerFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveVariantPickerFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.selectVariant(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.dismissVariantPicker(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptSteamVariantPicker(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (state.steam.variantPickerInfo == null) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveSteamVariantFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveSteamVariantFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmSteamVariantSelection(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.dismissSteamVariantPicker(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptGameNativeFoldersModal(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.steam.showGameNativeFoldersModal) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveGameNativeFoldersFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveGameNativeFoldersFocus(1); InputResult.HANDLED }
+            InputMethod.LEFT -> { viewModel.moveGameNativeFoldersActionFocus(-1); InputResult.HANDLED }
+            InputMethod.RIGHT -> { viewModel.moveGameNativeFoldersActionFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> {
+                val opensPicker = state.steam.gameNativeFoldersActionIndex == 0
+                viewModel.confirmGameNativeFoldersRow()
+                if (opensPicker) InputResult.handled(SoundType.OPEN_MODAL) else InputResult.HANDLED
+            }
+            InputMethod.BACK -> { viewModel.dismissGameNativeFoldersModal(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptEmulatorPicker(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.emulators.showEmulatorPicker) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveEmulatorPickerFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveEmulatorPickerFocus(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmEmulatorPickerSelection(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.dismissEmulatorPicker(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun interceptShaderReorder(method: InputMethod): InputResult? {
+        if (!viewModel.shaderChainManager.shaderStack.isReordering) return null
+        return when (method) {
+            InputMethod.LEFT -> moveHeldShader(-1)
+            InputMethod.RIGHT -> moveHeldShader(1)
+            InputMethod.CONFIRM, InputMethod.SECONDARY_ACTION -> {
+                viewModel.dropShader()
+                InputResult.handled(SoundType.SELECT)
+            }
+            InputMethod.BACK -> {
+                viewModel.cancelShaderLift()
+                InputResult.handled(SoundType.BACK)
+            }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun moveHeldShader(delta: Int): InputResult =
+        if (viewModel.moveHeldShader(delta)) InputResult.HANDLED else InputResult.handled(SoundType.BOUNDARY)
+
+    private fun interceptPlatformReorder(state: SettingsUiState, method: InputMethod): InputResult? {
+        if (!state.emulators.isReorderingPlatforms) return null
+        return when (method) {
+            InputMethod.UP -> moveHeldPlatform(-1)
+            InputMethod.DOWN -> moveHeldPlatform(1)
+            InputMethod.CONFIRM, InputMethod.SECONDARY_ACTION -> {
+                viewModel.dropPlatform()
+                InputResult.handled(SoundType.SELECT)
+            }
+            InputMethod.BACK -> {
+                viewModel.cancelPlatformLift()
+                InputResult.handled(SoundType.BACK)
+            }
+            else -> InputResult.HANDLED
+        }
+    }
+
+    private fun moveHeldPlatform(delta: Int): InputResult =
+        if (viewModel.moveHeldPlatform(delta)) InputResult.HANDLED else InputResult.handled(SoundType.BOUNDARY)
+
+    private fun interceptShaderPicker(method: InputMethod): InputResult? {
+        if (!viewModel.shaderChainManager.shaderStack.showShaderPicker) return null
+        return when (method) {
+            InputMethod.UP -> { viewModel.moveShaderPickerFocus(-1); InputResult.HANDLED }
+            InputMethod.DOWN -> { viewModel.moveShaderPickerFocus(1); InputResult.HANDLED }
+            InputMethod.LEFT, InputMethod.PREV_SECTION -> { viewModel.jumpShaderPickerSection(-1); InputResult.HANDLED }
+            InputMethod.RIGHT, InputMethod.NEXT_SECTION -> { viewModel.jumpShaderPickerSection(1); InputResult.HANDLED }
+            InputMethod.CONFIRM -> { viewModel.confirmShaderPickerSelection(); InputResult.HANDLED }
+            InputMethod.BACK -> { viewModel.dismissShaderPicker(); InputResult.HANDLED }
+            else -> InputResult.HANDLED
+        }
+    }
+}

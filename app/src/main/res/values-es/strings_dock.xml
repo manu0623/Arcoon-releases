@@ -1,0 +1,11 @@
+<resources>
+    <string name="dock_reorder_save_failed">No se pudo guardar el orden del dock. Inténtalo de nuevo.</string>
+    <string name="dock_hint_options">Mantén pulsado para opciones</string>
+    <string name="dock_reorder_move_left">Mover a la izquierda</string>
+    <string name="dock_reorder_move_right">Mover a la derecha</string>
+    <string name="dock_accessibility_label">Dock</string>
+    <string name="dock_hint_move">Mover</string>
+    <string name="dock_hint_cancel">Cancelar</string>
+    <string name="dock_reorder_action">Reordenar</string>
+    <string name="dock_menu_reorder">Reordenar</string>
+</resources>

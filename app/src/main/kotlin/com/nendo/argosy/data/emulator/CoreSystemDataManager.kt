@@ -1,0 +1,192 @@
+package com.nendo.argosy.data.emulator
+
+import android.content.Context
+import com.nendo.argosy.BuildConfig
+import com.nendo.argosy.util.Logger
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.zip.ZipInputStream
+import com.nendo.argosy.util.FileNames
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class CoreSystemDataManager @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val fetcher: SystemDataFetcher
+) {
+    @Volatile
+    private var armsx2FetchFailedThisSession = false
+
+    suspend fun ensureCoreSystemData(coreId: String, systemDir: File): Boolean {
+        return when (coreId) {
+            "dolphin" -> ensureDolphinSysData(systemDir)
+            "ppsspp" -> ensurePpssppSysData(systemDir)
+            "armsx2" -> ensureArmsx2Resources(systemDir)
+            else -> true
+        }
+    }
+
+    fun needsSystemData(coreId: String, systemDir: File): Boolean {
+        return when (coreId) {
+            "dolphin" -> isVersionStale(
+                File(systemDir, "$DOLPHIN_SYS_PATH/$VERSION_MARKER"),
+                BuildConfig.DOLPHIN_SYS_VERSION
+            )
+            "ppsspp" -> isVersionStale(
+                File(systemDir, "$PPSSPP_SYS_PATH/$VERSION_MARKER"),
+                BuildConfig.PPSSPP_SYS_VERSION
+            )
+            "armsx2" -> isVersionStale(
+                File(systemDir, "$ARMSX2_RESOURCES_PATH/$VERSION_MARKER"),
+                BuildConfig.ARMSX2_SYS_VERSION
+            )
+            else -> false
+        }
+    }
+
+    private fun isVersionStale(versionFile: File, expected: Int): Boolean {
+        if (!versionFile.exists()) return true
+        val installed = versionFile.readText().trim().toIntOrNull()
+        return installed != expected
+    }
+
+    private suspend fun ensureDolphinSysData(systemDir: File): Boolean = withContext(Dispatchers.IO) {
+        val targetDir = File(systemDir, DOLPHIN_SYS_PATH)
+        val versionFile = File(targetDir, VERSION_MARKER)
+        val currentVersion = BuildConfig.DOLPHIN_SYS_VERSION
+
+        if (versionFile.exists()) {
+            val installed = versionFile.readText().trim().toIntOrNull()
+            if (installed == currentVersion) return@withContext true
+        }
+
+        Logger.info(TAG, "Downloading Dolphin Sys data (version $currentVersion)")
+
+        try {
+            downloadAndExtract(DOLPHIN_SYS_URL, systemDir)
+        } catch (e: Exception) {
+            Logger.error(TAG, "Failed to download Dolphin Sys data: ${e.message}")
+            return@withContext false
+        }
+
+        versionFile.parentFile?.mkdirs()
+        versionFile.writeText(currentVersion.toString())
+        Logger.info(TAG, "Dolphin Sys data installed successfully")
+        true
+    }
+
+    private suspend fun ensurePpssppSysData(systemDir: File): Boolean = withContext(Dispatchers.IO) {
+        val targetDir = File(systemDir, PPSSPP_SYS_PATH)
+        val versionFile = File(targetDir, VERSION_MARKER)
+        val currentVersion = BuildConfig.PPSSPP_SYS_VERSION
+
+        if (versionFile.exists()) {
+            val installed = versionFile.readText().trim().toIntOrNull()
+            if (installed == currentVersion) return@withContext true
+        }
+
+        Logger.info(TAG, "Downloading PPSSPP assets (version $currentVersion)")
+
+        try {
+            downloadAndExtract(PPSSPP_SYS_URL, systemDir)
+        } catch (e: Exception) {
+            Logger.error(TAG, "Failed to download PPSSPP assets: ${e.message}")
+            return@withContext false
+        }
+
+        versionFile.parentFile?.mkdirs()
+        versionFile.writeText(currentVersion.toString())
+        Logger.info(TAG, "PPSSPP assets installed successfully")
+        true
+    }
+
+    private suspend fun ensureArmsx2Resources(systemDir: File): Boolean = withContext(Dispatchers.IO) {
+        val targetDir = File(systemDir, ARMSX2_RESOURCES_PATH)
+        val versionFile = File(targetDir, VERSION_MARKER)
+        val currentVersion = BuildConfig.ARMSX2_SYS_VERSION
+        if (!isVersionStale(versionFile, currentVersion)) return@withContext true
+        if (armsx2FetchFailedThisSession) {
+            Logger.debug(TAG, "ARMSX2 resources failed to download earlier this session; launching without them")
+            return@withContext true
+        }
+
+        Logger.info(TAG, "Downloading ARMSX2 resources (version $currentVersion)")
+        val complete = ARMSX2_RESOURCE_FILES.all { (source, target) ->
+            try {
+                downloadFile(source, File(targetDir, target))
+                true
+            } catch (e: Exception) {
+                Logger.warn(TAG, "Failed to download ARMSX2 resource $source: ${e.message}")
+                false
+            }
+        }
+        if (complete) {
+            versionFile.writeText(currentVersion.toString())
+            Logger.info(TAG, "ARMSX2 resources installed successfully")
+        } else {
+            armsx2FetchFailedThisSession = true
+        }
+        true
+    }
+
+    private fun downloadFile(url: String, target: File) {
+        target.parentFile?.mkdirs()
+        val partial = File(target.parentFile, "${target.name}.part")
+        try {
+            fetcher.fetch(url) { input -> partial.outputStream().use { out -> input.copyTo(out) } }
+            if (!partial.renameTo(target)) {
+                partial.copyTo(target, overwrite = true)
+            }
+        } finally {
+            partial.delete()
+        }
+    }
+
+    private fun downloadAndExtract(url: String, destDir: File) {
+        fetcher.fetch(url) { input ->
+            ZipInputStream(input).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null) {
+                    val outFile = File(destDir, entry.name)
+                    if (!FileNames.isWithin(outFile, destDir)) {
+                        throw SecurityException("Zip entry outside target: ${entry.name}")
+                    }
+                    if (entry.isDirectory) {
+                        outFile.mkdirs()
+                    } else {
+                        outFile.parentFile?.mkdirs()
+                        outFile.outputStream().use { out -> zip.copyTo(out) }
+                    }
+                    zip.closeEntry()
+                    entry = zip.nextEntry
+                }
+            }
+        }
+    }
+
+    companion object {
+        private const val TAG = "CoreSystemData"
+        private const val VERSION_MARKER = ".argosy_version"
+        private const val DOLPHIN_SYS_URL =
+            "https://buildbot.libretro.com/assets/system/Dolphin.zip"
+        private const val DOLPHIN_SYS_PATH = "dolphin-emu/Sys"
+        private const val PPSSPP_SYS_URL =
+            "https://buildbot.libretro.com/assets/system/PPSSPP.zip"
+        private const val PPSSPP_SYS_PATH = "PPSSPP"
+
+        const val ARMSX2_UPSTREAM_COMMIT = "0076b5c389ea7296331ad2d96193c6e8d5d314fa"
+        const val ARMSX2_RAW_BASE = "https://raw.githubusercontent.com/ARMSX2/ARMSX2/$ARMSX2_UPSTREAM_COMMIT"
+        const val ARMSX2_RESOURCES_PATH = "pcsx2/resources"
+
+        const val PCSX2_PATCHES_URL = "https://github.com/PCSX2/pcsx2_patches/releases/download/latest/patches.zip"
+
+        val ARMSX2_RESOURCE_FILES: List<Pair<String, String>> = listOf(
+            "$ARMSX2_RAW_BASE/bin/resources-overlay/armsx2_overrides.yaml" to "armsx2_overrides.yaml",
+            "$ARMSX2_RAW_BASE/bin/resources/fonts/Roboto-Regular.ttf" to "fonts/Roboto-Regular.ttf",
+            PCSX2_PATCHES_URL to "patches.zip"
+        )
+    }
+}

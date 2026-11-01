@@ -1,0 +1,112 @@
+package com.nendo.argosy.data.local.dao
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Upsert
+import com.nendo.argosy.data.local.entity.FirmwareEntity
+import kotlinx.coroutines.flow.Flow
+import java.time.Instant
+
+@Dao
+interface FirmwareDao {
+
+    @Query("SELECT * FROM firmware WHERE platformId = :platformId ORDER BY fileName ASC")
+    suspend fun getByPlatform(platformId: Long): List<FirmwareEntity>
+
+    @Query("SELECT * FROM firmware WHERE platformSlug = :platformSlug ORDER BY fileName ASC")
+    suspend fun getByPlatformSlug(platformSlug: String): List<FirmwareEntity>
+
+    @Query("SELECT * FROM firmware WHERE localPath IS NULL ORDER BY platformSlug, fileName")
+    suspend fun getMissing(): List<FirmwareEntity>
+
+    @Query("SELECT * FROM firmware WHERE localPath IS NOT NULL ORDER BY platformSlug, fileName")
+    suspend fun getDownloaded(): List<FirmwareEntity>
+
+    @Query("SELECT * FROM firmware ORDER BY platformSlug, fileName")
+    suspend fun getAll(): List<FirmwareEntity>
+
+    @Query("SELECT * FROM firmware WHERE platformSlug = :platformSlug AND localPath IS NULL ORDER BY fileName")
+    suspend fun getMissingByPlatformSlug(platformSlug: String): List<FirmwareEntity>
+
+    @Query("SELECT * FROM firmware ORDER BY platformSlug, fileName")
+    fun observeAll(): Flow<List<FirmwareEntity>>
+
+    @Query("SELECT * FROM firmware WHERE platformSlug = :platformSlug ORDER BY fileName")
+    fun observeByPlatformSlug(platformSlug: String): Flow<List<FirmwareEntity>>
+
+    @Query("SELECT COUNT(*) FROM firmware WHERE localPath IS NULL")
+    fun observeMissingCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM firmware WHERE localPath IS NOT NULL")
+    fun observeDownloadedCount(): Flow<Int>
+
+    @Upsert
+    suspend fun upsert(firmware: FirmwareEntity)
+
+    @Upsert
+    suspend fun upsertAll(firmware: List<FirmwareEntity>)
+
+    @Query("SELECT * FROM firmware WHERE localPath IS NOT NULL")
+    suspend fun getAllDownloaded(): List<FirmwareEntity>
+
+    @Query("UPDATE firmware SET localPath = :localPath, downloadedAt = :downloadedAt WHERE id = :id")
+    suspend fun updateLocalPath(id: Long, localPath: String?, downloadedAt: Instant?)
+
+    @Query("UPDATE firmware SET lastVerifiedAt = :verifiedAt WHERE id = :id")
+    suspend fun updateVerifiedAt(id: Long, verifiedAt: Instant)
+
+    @Query("DELETE FROM firmware WHERE platformId = :platformId AND rommId NOT IN (:keepRommIds)")
+    suspend fun deleteRemovedFirmware(platformId: Long, keepRommIds: List<Long>)
+
+    @Query("DELETE FROM firmware WHERE platformId = :platformId")
+    suspend fun deleteByPlatform(platformId: Long)
+
+    @Query("DELETE FROM firmware WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
+    @Query("SELECT * FROM firmware WHERE rommId = :rommId LIMIT 1")
+    suspend fun getByRommId(rommId: Long): FirmwareEntity?
+
+    @Query("SELECT DISTINCT platformSlug FROM firmware WHERE localPath IS NOT NULL")
+    suspend fun getPlatformSlugsWithDownloadedFirmware(): List<String>
+
+    @Query("""
+        SELECT f.* FROM firmware f
+        INNER JOIN platforms p ON f.platformId = p.id
+        WHERE p.syncEnabled = 1 AND f.localPath IS NULL
+        ORDER BY f.platformSlug, f.fileName
+    """)
+    suspend fun getSyncEnabledMissing(): List<FirmwareEntity>
+
+    @Query("""
+        SELECT f.* FROM firmware f
+        INNER JOIN platforms p ON f.platformId = p.id
+        WHERE p.syncEnabled = 1
+        ORDER BY f.platformSlug, f.fileName
+    """)
+    suspend fun getSyncEnabledAll(): List<FirmwareEntity>
+
+    @Query("""
+        SELECT f.* FROM firmware f
+        INNER JOIN platforms p ON f.platformId = p.id
+        WHERE p.syncEnabled = 0 AND f.localPath IS NOT NULL
+        ORDER BY f.platformSlug, f.fileName
+    """)
+    suspend fun getDownloadedForDisabledPlatforms(): List<FirmwareEntity>
+
+    /**
+     * Every firmware file the server offers, whatever the platform's rom sync setting.
+     *
+     * The BIOS screen lists these. Sync governs roms, and a library big enough to turn it off is
+     * exactly the one whose bios a user still wants: with the two tied together, turning off rom
+     * sync for Xbox also hid its bios, with nothing on screen to say why. Bulk download stays on
+     * [getSyncEnabledMissing], so an untracked platform is offered rather than fetched.
+     */
+    @Query("""
+        SELECT f.* FROM firmware f
+        ORDER BY f.platformSlug, f.fileName
+    """)
+    suspend fun getAllFirmware(): List<FirmwareEntity>
+}

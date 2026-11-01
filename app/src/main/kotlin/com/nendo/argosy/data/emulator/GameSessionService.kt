@@ -1,0 +1,865 @@
+package com.nendo.argosy.data.emulator
+
+import android.app.KeyguardManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import android.os.FileObserver
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.net.wifi.WifiManager
+import android.os.PowerManager
+import android.provider.Settings
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
+import androidx.core.app.NotificationCompat
+import com.nendo.argosy.ArgosyActivity
+import com.nendo.argosy.R
+import com.nendo.argosy.core.service.ServiceNotificationIds
+import com.nendo.argosy.core.service.startForegroundServiceSafely
+import com.nendo.argosy.data.local.dao.GameDao
+import com.nendo.argosy.data.preferences.SessionStateStore
+import com.nendo.argosy.data.repository.SaveCacheManager
+import com.nendo.argosy.DualScreenManagerHolder
+import com.nendo.argosy.util.Logger
+import com.nendo.argosy.util.PermissionHelper
+import dagger.hilt.android.AndroidEntryPoint
+import com.nendo.argosy.util.SafeCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.File
+import javax.inject.Inject
+
+@AndroidEntryPoint
+class GameSessionService : Service() {
+
+    override fun attachBaseContext(newBase: Context) {
+        val tag = com.nendo.argosy.data.preferences.SessionStateStore(newBase).getAppLanguage()
+        super.attachBaseContext(com.nendo.argosy.core.locale.LocaleHelper.wrap(newBase, tag))
+    }
+
+    @Inject lateinit var saveCacheManager: SaveCacheManager
+    @Inject lateinit var gameDao: GameDao
+    @Inject lateinit var activeSaveRepository: com.nendo.argosy.data.repository.ActiveSaveRepository
+    @Inject lateinit var screenshotCaptureMonitor: ScreenshotCaptureMonitor
+    @Inject lateinit var saveScreenshotCapture: com.nendo.argosy.hardware.SaveScreenshotCapture
+    @Inject lateinit var playSessionTracker: dagger.Lazy<PlaySessionTracker>
+    @Inject lateinit var activityReporter:
+        com.nendo.argosy.data.social.uploader.RomMActivityReporter
+    @Inject lateinit var permissionHelper: PermissionHelper
+    @Inject lateinit var pspSavePrefixLearner: com.nendo.argosy.data.sync.PspSavePrefixLearner
+    @Inject lateinit var gameSessionManager: GameSessionManager
+
+    private val serviceScope = SafeCoroutineScope(Dispatchers.IO, "GameSessionService")
+    private val handler = Handler(Looper.getMainLooper())
+    private val fileObservers = mutableListOf<FileObserver>()
+    @Volatile
+    private var watchGeneration = 0
+    private val sessionStateStore by lazy { SessionStateStore(this) }
+
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var windowManager: WindowManager? = null
+    private var overlayView: View? = null
+
+    private var activityJob: Job? = null
+    private var presenceJob: Job? = null
+    private var currentGameId: Long = -1
+    private var currentEmulatorId: String? = null
+    private var currentEmulatorPackage: String? = null
+    private var currentSavePath: String? = null
+    private var currentChannelName: String? = null
+    private var currentIsHardcore: Boolean = false
+    private var currentGameTitle: String = "Game"
+    private var sessionStartTime: Long = 0
+    private var isOverlayVisible = false
+    private var isWaitingForDirectory = false
+    private var watchRoot: File? = null
+    private val sessionWrittenFolders = mutableSetOf<String>()
+    private var lastMidGameCacheId: Long = -1
+    private val midGameCacheMutex = Mutex()
+    private var lastOverlayShownAt: Long = 0L
+
+    private var helmIcon: ImageView? = null
+    private var checkIcon: ImageView? = null
+    private var introAnimator: AnimatorSet? = null
+    private var exitAnimator: AnimatorSet? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        acquireWakeLock()
+        ensureNotificationChannel()
+    }
+
+    private fun ensureNotificationChannel() {
+        val channel = android.app.NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.sync_session_channel_name),
+            android.app.NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = getString(R.string.sync_session_channel_description)
+            setShowBadge(false)
+            setSound(null, null)
+            enableVibration(false)
+        }
+        val manager = getSystemService(android.app.NotificationManager::class.java)
+        manager.createNotificationChannel(channel)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> {
+                startForegroundWithNotification(currentGameTitle, NotificationState.PLAYING)
+                awaitingForeground.set(false)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_UPDATE_HARDCORE -> {
+                currentIsHardcore = intent?.getBooleanExtra(EXTRA_IS_HARDCORE, false) ?: false
+                currentChannelName = intent?.getStringExtra(EXTRA_CHANNEL_NAME)
+                Logger.debug(TAG, "Hardcore claim updated for gameId=$currentGameId | hardcore=$currentIsHardcore, channel=$currentChannelName")
+                return START_NOT_STICKY
+            }
+            else -> {
+                val watchPath = intent?.getStringExtra(EXTRA_WATCH_PATH)
+                val gameTitle = intent?.getStringExtra(EXTRA_GAME_TITLE)
+                    ?: getString(R.string.sync_session_game_fallback)
+                val gameId = intent?.getLongExtra(EXTRA_GAME_ID, -1) ?: -1
+                val emulatorId = intent?.getStringExtra(EXTRA_EMULATOR_ID)
+                val savePath = intent?.getStringExtra(EXTRA_SAVE_PATH)
+                val channelName = intent?.getStringExtra(EXTRA_CHANNEL_NAME)
+                val isHardcore = intent?.getBooleanExtra(EXTRA_IS_HARDCORE, false) ?: false
+                val startTime = intent?.getLongExtra(EXTRA_SESSION_START_TIME, 0) ?: 0
+                val emulatorPackage = intent?.getStringExtra(EXTRA_EMULATOR_PACKAGE)
+
+                currentGameTitle = gameTitle
+                currentGameId = gameId
+                currentEmulatorId = emulatorId
+                currentEmulatorPackage = emulatorPackage
+                currentSavePath = savePath
+                currentChannelName = channelName
+                currentIsHardcore = isHardcore
+                sessionStartTime = if (startTime > 0) startTime else System.currentTimeMillis()
+                lastMidGameCacheId = -1
+                lastOverlayShownAt = 0L
+
+                cleanupPresenceKeepalive()
+                startForegroundWithNotification(gameTitle, NotificationState.PLAYING)
+                awaitingForeground.set(false)
+
+                broadcastSaveStateChanged(isDirty = false)
+
+                if (watchPath != null) {
+                    stopWatching()
+                    removeOverlay()
+                    startWatching(watchPath)
+                }
+
+                screenshotCaptureMonitor.start(gameId, emulatorPackage, sessionStartTime)
+                startActivityReporting(gameId)
+                startPresenceWatch(emulatorPackage)
+            }
+        }
+        return START_REDELIVER_INTENT
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        Logger.debug(TAG, "Service destroyed")
+        stopPresenceWatch()
+        stopActivityReporting()
+        activityReporter.clearAsync()
+        cleanupPresenceKeepalive()
+        screenshotCaptureMonitor.stop()
+        stopWatching()
+        removeOverlay()
+        releaseWakeLock()
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        val powerManager = getSystemService(PowerManager::class.java)
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            WAKELOCK_TAG
+        ).apply {
+            acquire(MAX_WAKELOCK_DURATION_MS)
+        }
+
+        @Suppress("DEPRECATION")
+        val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        wifiLock = wifiManager.createWifiLock(
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+            WIFILOCK_TAG
+        ).apply {
+            acquire()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wifiLock?.let {
+            if (it.isHeld) it.release()
+        }
+        wifiLock = null
+
+        wakeLock?.let {
+            if (it.isHeld) it.release()
+        }
+        wakeLock = null
+    }
+
+    private var screenOffReceiver: BroadcastReceiver? = null
+
+    /**
+     * Keeps RomM's live view of this device current for as long as the session runs. Restarted on
+     * each launch so a session that follows another does not inherit the previous game's loop.
+     */
+    private fun startActivityReporting(gameId: Long) {
+        stopActivityReporting()
+        if (gameId <= 0) return
+        activityJob = serviceScope.launch {
+            activityReporter.runHeartbeatLoop(gameId)
+        }
+    }
+
+    private fun stopActivityReporting() {
+        activityJob?.cancel()
+        activityJob = null
+    }
+
+    private fun startPresenceWatch(emulatorPackage: String?) {
+        stopPresenceWatch()
+        if (emulatorPackage == null || emulatorPackage == EmulatorRegistry.BUILTIN_PACKAGE) return
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return
+        if (!permissionHelper.hasUsageStatsPermission(this)) return
+        val tracker = playSessionTracker.get()
+        if (tracker.activeSession.value?.isNetplayGuest == true) return
+        val emulator = EmulatorIdentity(emulatorPackage)
+        val keyguard: KeyguardManager? = getSystemService(KeyguardManager::class.java)
+        val ownPackage = packageName
+        val watchStart = sessionStartTime
+        presenceJob = serviceScope.launch {
+            var carried = emptyMap<String, PresenceEvent>()
+            var misses = 0
+            while (isActive) {
+                delay(PRESENCE_TICK_MS)
+                if (tracker.activeSession.value == null) return@launch
+                val now = System.currentTimeMillis()
+                val windowStart = maxOf(now - PRESENCE_LOOKBACK_MS, watchStart)
+                val events = carried.values + permissionHelper.presenceEvents(this@GameSessionService, windowStart, now)
+                val decision = EmulatorPresenceDecision.decide(
+                    events = events,
+                    emulator = emulator,
+                    ownPackage = ownPackage,
+                    keyguardLocked = keyguard?.isKeyguardLocked == true,
+                    now = now,
+                    wakeGraceMs = PRESENCE_WAKE_GRACE_MS
+                )
+                carried = decision.emulatorActivities
+                misses = if (decision.verdict.countsAsMiss) misses + 1 else 0
+                if (misses < PRESENCE_MISSES_TO_END) continue
+                // Cocoon-style: an external game left in the background stays suspended in its app
+                // until it is resumed or closed from the launcher.
+                val dsm = com.nendo.argosy.DualScreenManagerHolder.instance
+                if (dsm != null && runCatching { dsm.suspendExternalSession() }.getOrDefault(false)) {
+                    Logger.info(TAG, "Emulator left the screen for gameId=$currentGameId, keeping it suspended")
+                    return@launch
+                }
+                Logger.info(TAG, "Emulator left the screen for gameId=$currentGameId, ending session | emulator=${emulator.packageName}")
+                tracker.endSessionInBackground(stopService = false).join()
+                stopSelf()
+                return@launch
+            }
+        }
+    }
+
+    private fun stopPresenceWatch() {
+        presenceJob?.cancel()
+        presenceJob = null
+    }
+
+    private fun cleanupPresenceKeepalive() {
+        screenOffReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
+        }
+        screenOffReceiver = null
+    }
+
+    private fun startWatching(watchPath: String) {
+        val watchDir = File(watchPath)
+        watchRoot = watchDir
+
+        if (!watchDir.exists()) {
+            Logger.debug(TAG, "Save directory doesn't exist yet, polling: ${watchDir.absolutePath}")
+            isWaitingForDirectory = true
+            pollForDirectory(watchDir)
+            return
+        }
+
+        startFileObserver(watchDir)
+    }
+
+    private fun pollForDirectory(watchDir: File) {
+        handler.postDelayed({
+            if (!isWaitingForDirectory) return@postDelayed
+
+            if (watchDir.exists()) {
+                Logger.debug(TAG, "Save directory now exists: ${watchDir.absolutePath}")
+                isWaitingForDirectory = false
+                startFileObserver(watchDir)
+            } else {
+                pollForDirectory(watchDir)
+            }
+        }, POLL_INTERVAL_MS)
+    }
+
+    private fun shouldIgnoreDirectory(dir: File): Boolean {
+        val name = dir.name.lowercase()
+        return IGNORED_DIRECTORY_PATTERNS.any { pattern ->
+            name.contains(pattern)
+        }
+    }
+
+    private fun startFileObserver(watchDir: File) {
+        val generation = watchGeneration
+        serviceScope.launch {
+            val dirsToWatch = mutableListOf(watchDir)
+            watchDir.walkTopDown().maxDepth(3).filter { it.isDirectory }.forEach { dir ->
+                if (dir != watchDir) {
+                    if (shouldIgnoreDirectory(dir)) {
+                        Logger.debug(TAG, "Skipping ignored directory: ${dir.name}")
+                    } else {
+                        dirsToWatch.add(dir)
+                    }
+                }
+            }
+            handler.post {
+                if (generation == watchGeneration) installObservers(dirsToWatch)
+            }
+        }
+    }
+
+    private fun installObservers(dirsToWatch: List<File>) {
+        val elapsedSinceStart = System.currentTimeMillis() - sessionStartTime
+        Logger.debug(TAG, "Starting file watcher on ${dirsToWatch.size} directories (session elapsed: ${elapsedSinceStart}ms)")
+
+        dirsToWatch.forEach { dir ->
+            @Suppress("DEPRECATION")
+            val observer = object : FileObserver(dir.absolutePath, CLOSE_WRITE or MOVED_TO or CREATE or MODIFY) {
+                override fun onEvent(event: Int, path: String?) {
+                    if (path == null) return
+                    if (path.startsWith(".") || path.endsWith(".tmp") || path.endsWith(".bak")) return
+
+                    val elapsed = System.currentTimeMillis() - sessionStartTime
+                    if (elapsed < STARTUP_COOLDOWN_MS) {
+                        if (event and ALL_EVENTS != MODIFY) {
+                            Logger.debug(TAG, "Ignoring early event (${elapsed}ms): $path in ${dir.name}")
+                        }
+                        return
+                    }
+
+                    if (event and ALL_EVENTS == MODIFY) {
+                        handler.post {
+                            recordWrittenFolder(dir, path)
+                            if (!inPlaceWriteSeen) {
+                                inPlaceWriteSeen = true
+                                Logger.debug(TAG, "Save written in place: $path in ${dir.name}")
+                                playSessionTracker.get().reportSaveWritten()
+                            }
+                            onSaveDetected(IN_PLACE_WRITE_QUIET_MS)
+                            scheduleSaveScreenshot()
+                        }
+                        return
+                    }
+
+                    handler.post {
+                        recordWrittenFolder(dir, path)
+                        Logger.debug(TAG, "Save change detected: $path in ${dir.name} (event=$event)")
+                        if (currentGameId != -1L) {
+                            com.nendo.argosy.util.SaveDebugLogger.logLiveCacheObserve(
+                                gameId = currentGameId,
+                                eventType = event,
+                                path = "${dir.name}/$path"
+                            )
+                        }
+                        playSessionTracker.get().reportSaveWritten()
+                        onSaveDetected()
+                        scheduleSaveScreenshot()
+                    }
+                }
+            }
+            observer.startWatching()
+            fileObservers.add(observer)
+        }
+    }
+
+    private fun recordWrittenFolder(dir: File, path: String) {
+        val root = watchRoot ?: return
+        val relative = if (dir == root) path else "${dir.relativeTo(root).path}/$path"
+        relative.substringBefore('/').takeIf { it.isNotEmpty() }?.let { sessionWrittenFolders += it }
+    }
+
+    private fun stopWatching() {
+        watchGeneration++
+        isWaitingForDirectory = false
+        watchRoot = null
+        sessionWrittenFolders.clear()
+        fileObservers.forEach { it.stopWatching() }
+        fileObservers.clear()
+        handler.removeCallbacksAndMessages(null)
+        inPlaceWriteSeen = false
+    }
+
+    private val cacheRunnable = Runnable { performCacheAndNotify() }
+    private var inPlaceWriteSeen = false
+
+    private fun onSaveDetected(quietMs: Long = CACHE_DEBOUNCE_MS) {
+        handler.removeCallbacks(cacheRunnable)
+        handler.postDelayed(cacheRunnable, quietMs)
+    }
+
+    private val screenshotRunnable = Runnable { captureSaveScreenshot() }
+
+    private fun scheduleSaveScreenshot() {
+        if (currentEmulatorPackage == EmulatorRegistry.BUILTIN_PACKAGE) return
+        handler.removeCallbacks(screenshotRunnable)
+        handler.postDelayed(screenshotRunnable, SAVE_SCREENSHOT_DELAY_MS)
+    }
+
+    private fun captureSaveScreenshot() {
+        val gameId = currentGameId.takeIf { it != -1L } ?: return
+        val displayId = com.nendo.argosy.DualScreenManagerHolder.instance?.emulatorDisplayId
+            ?: android.view.Display.DEFAULT_DISPLAY
+        serviceScope.launch { saveScreenshotCapture.capture(gameId, displayId) }
+    }
+
+    private fun performCacheAndNotify() {
+        inPlaceWriteSeen = false
+        val gameId = currentGameId
+        val emulatorId = currentEmulatorId
+        val savePath = currentSavePath
+
+        if (gameId == -1L || emulatorId == null || savePath == null) {
+            Logger.warn(TAG, "Cannot cache save - missing context: gameId=$gameId, emulatorId=$emulatorId, savePath=$savePath")
+            return
+        }
+        com.nendo.argosy.util.SaveDebugLogger.logLiveCacheFire(gameId = gameId, savePath = savePath)
+
+        updateNotification(currentGameTitle, NotificationState.SAVE_DETECTED)
+        val isBuiltin = currentEmulatorPackage == EmulatorRegistry.BUILTIN_PACKAGE
+        if (!isBuiltin) showOverlayBriefly()
+
+        broadcastSaveStateChanged(isDirty = true)
+        val writtenFolders = sessionWrittenFolders.toSet()
+        val channelName = currentChannelName
+        val isHardcore = currentIsHardcore
+
+        serviceScope.launch {
+            midGameCacheMutex.withLock {
+                try {
+                    val previousCacheId = lastMidGameCacheId
+                    val cache = suspend {
+                        saveCacheManager.cacheCurrentSave(
+                            gameId = gameId,
+                            emulatorId = emulatorId,
+                            savePath = savePath,
+                            channelName = channelName,
+                            isLocked = false,
+                            isHardcore = isHardcore,
+                            skipDuplicateCheck = false,
+                            needsRemoteSync = true,
+                            claimNewSaves = true
+                        )
+                    }
+
+                    val first = cache()
+                    val result = if (
+                        first is SaveCacheManager.CacheResult.Failed && isBuiltin &&
+                        pspSavePrefixLearner.adopt(gameId, writtenFolders) != null
+                    ) cache() else first
+
+                    if (result is SaveCacheManager.CacheResult.Created && previousCacheId > 0) {
+                        saveCacheManager.deleteCachedSave(previousCacheId)
+                    }
+                    when (result) {
+                        is SaveCacheManager.CacheResult.Created -> {
+                            lastMidGameCacheId = result.cacheId
+                            Logger.info(TAG, "Live cache created for gameId=$gameId (cacheId=${result.cacheId}), pointing active save at it")
+                            activeSaveRepository.activateCache(gameId, result.cacheId)
+                        }
+                        is SaveCacheManager.CacheResult.Duplicate -> {
+                            Logger.debug(TAG, "Live cache matches cache id=${result.cacheId} for gameId=$gameId, pointing active save at it")
+                            activeSaveRepository.activateCache(gameId, result.cacheId)
+                        }
+                        is SaveCacheManager.CacheResult.Failed -> {
+                            Logger.warn(TAG, "Live cache failed for gameId=$gameId")
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Logger.error(TAG, "Live cache error for gameId=$gameId", e)
+                }
+            }
+        }
+
+        handler.removeCallbacks(resetRunnable)
+        handler.postDelayed(resetRunnable, RESET_DELAY_MS)
+    }
+
+    private val resetRunnable = Runnable {
+        updateNotification(currentGameTitle, NotificationState.PLAYING)
+        hideOverlay()
+    }
+
+    // region Notification
+
+    private enum class NotificationState {
+        PLAYING, SAVE_DETECTED
+    }
+
+    private fun startForegroundWithNotification(gameTitle: String, state: NotificationState) {
+        val notification = buildNotification(gameTitle, state)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun updateNotification(gameTitle: String, state: NotificationState) {
+        val notification = buildNotification(gameTitle, state)
+        val manager = getSystemService(android.app.NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun buildNotification(gameTitle: String, state: NotificationState) = when (state) {
+        NotificationState.PLAYING -> NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_helm)
+            .setContentTitle(getString(R.string.sync_session_notification_playing))
+            .setContentText(gameTitle)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setContentIntent(createContentIntent())
+            .build()
+
+        NotificationState.SAVE_DETECTED -> NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_helm)
+            .setContentTitle(getString(R.string.sync_session_notification_save_detected))
+            .setContentText(gameTitle)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setContentIntent(createContentIntent())
+            .build()
+    }
+
+    private fun createContentIntent(): PendingIntent {
+        val intent = Intent(this, ArgosyActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        return PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    // endregion
+
+    // region Overlay (brief flash on save detection)
+
+    private fun isDarkTheme(): Boolean {
+        return (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+               Configuration.UI_MODE_NIGHT_YES
+    }
+
+    private fun showOverlayBriefly() {
+        if (!Settings.canDrawOverlays(this)) return
+        if (isOverlayVisible) return
+
+        val now = System.currentTimeMillis()
+        if (lastOverlayShownAt != 0L && now - lastOverlayShownAt < OVERLAY_DEBOUNCE_MS) {
+            Logger.debug(TAG, "Overlay suppressed by debounce (${(now - lastOverlayShownAt) / 1000}s since last)")
+            return
+        }
+
+        val dp = { value: Int ->
+            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
+        }
+
+        val helmTint = if (isDarkTheme()) Color.WHITE else Color.parseColor("#1E1E1E")
+        val iconSize = dp(22)
+
+        val shadowPaint = Paint().apply {
+            setShadowLayer(dp(3).toFloat(), 0f, dp(1).toFloat(), Color.argb(140, 0, 0, 0))
+        }
+
+        helmIcon = ImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(iconSize, iconSize)
+            setImageResource(R.drawable.ic_helm)
+            setColorFilter(helmTint)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setLayerType(View.LAYER_TYPE_SOFTWARE, shadowPaint)
+        }
+
+        checkIcon = ImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(iconSize, iconSize)
+            setImageResource(R.drawable.ic_check)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            scaleX = 0f
+            scaleY = 0f
+            setLayerType(View.LAYER_TYPE_SOFTWARE, shadowPaint)
+        }
+
+        overlayView = FrameLayout(this).apply {
+            addView(helmIcon)
+            addView(checkIcon)
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            x = dp(12)
+            y = dp(12)
+        }
+
+        try {
+            windowManager?.addView(overlayView, params)
+            isOverlayVisible = true
+            lastOverlayShownAt = now
+
+            startIntroAnimation()
+            Logger.debug(TAG, "Overlay shown")
+        } catch (e: Exception) {
+            Logger.error(TAG, "Failed to show overlay", e)
+        }
+    }
+
+    private fun startIntroAnimation() {
+        val helm = helmIcon ?: return
+        val check = checkIcon ?: return
+
+        val helmRotation = ObjectAnimator.ofFloat(helm, "rotation", 0f, 900f).apply {
+            duration = 800
+            interpolator = AccelerateInterpolator(2.5f)
+        }
+
+        val helmFadeOut = ObjectAnimator.ofFloat(helm, "alpha", 1f, 0f).apply {
+            duration = 200
+            startDelay = 600
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    helm.visibility = View.GONE
+                }
+            })
+        }
+
+        val checkBounce = ObjectAnimator.ofPropertyValuesHolder(
+            check,
+            PropertyValuesHolder.ofFloat("scaleX", 0f, 1.15f, 1f),
+            PropertyValuesHolder.ofFloat("scaleY", 0f, 1.15f, 1f)
+        ).apply {
+            duration = 300
+            startDelay = 700
+            interpolator = OvershootInterpolator(2f)
+        }
+
+        introAnimator = AnimatorSet().apply {
+            playTogether(helmRotation, helmFadeOut, checkBounce)
+            start()
+        }
+    }
+
+    private fun hideOverlay() {
+        if (!isOverlayVisible) return
+
+        introAnimator?.cancel()
+        introAnimator = null
+
+        val overlay = overlayView ?: return
+
+        val fadeOut = ObjectAnimator.ofFloat(overlay, "alpha", 1f, 0f).apply {
+            duration = 300
+        }
+
+        exitAnimator = AnimatorSet().apply {
+            play(fadeOut)
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    removeOverlay()
+                }
+            })
+            start()
+        }
+    }
+
+    private fun removeOverlay() {
+        introAnimator?.cancel()
+        exitAnimator?.cancel()
+        introAnimator = null
+        exitAnimator = null
+
+        overlayView?.let { view ->
+            try {
+                windowManager?.removeView(view)
+                Logger.debug(TAG, "Overlay removed")
+            } catch (e: Exception) {
+                Logger.error(TAG, "Failed to remove overlay", e)
+            }
+        }
+        overlayView = null
+        helmIcon = null
+        checkIcon = null
+        isOverlayVisible = false
+    }
+
+    // endregion
+
+    private fun broadcastSaveStateChanged(isDirty: Boolean) {
+        sessionStateStore.setSaveDirty(isDirty)
+        DualScreenManagerHolder.instance?.updateCompanionSaveDirty(isDirty)
+    }
+
+    companion object {
+        private const val TAG = "GameSessionService"
+        private const val CHANNEL_ID = "game_session_channel"
+        private const val NOTIFICATION_ID = ServiceNotificationIds.GAME_SESSION
+        private const val ACTION_STOP = "com.nendo.argosy.STOP_GAME_SESSION"
+        private val awaitingForeground = java.util.concurrent.atomic.AtomicBoolean(false)
+        private const val ACTION_UPDATE_HARDCORE = "com.nendo.argosy.UPDATE_GAME_SESSION_HARDCORE"
+        private const val EXTRA_WATCH_PATH = "watch_path"
+        private const val EXTRA_GAME_TITLE = "game_title"
+        private const val EXTRA_GAME_ID = "game_id"
+        private const val EXTRA_EMULATOR_ID = "emulator_id"
+        private const val EXTRA_SAVE_PATH = "save_path"
+        private const val EXTRA_CHANNEL_NAME = "channel_name"
+        private const val EXTRA_IS_HARDCORE = "is_hardcore"
+        private const val EXTRA_SESSION_START_TIME = "session_start_time"
+        private const val EXTRA_EMULATOR_PACKAGE = "emulator_package"
+        private const val WAKELOCK_TAG = "argosy:game_session_wakelock"
+        private const val WIFILOCK_TAG = "argosy:game_session_wifilock"
+        private const val MAX_WAKELOCK_DURATION_MS = 4 * 60 * 60 * 1000L // 4 hours max
+        private const val RESET_DELAY_MS = 1700L
+        private const val OVERLAY_DEBOUNCE_MS = 30 * 1000L
+        private const val POLL_INTERVAL_MS = 2000L
+        private const val PRESENCE_TICK_MS = 2_000L
+        private const val PRESENCE_LOOKBACK_MS = 2 * 60 * 1000L
+        private const val PRESENCE_WAKE_GRACE_MS = 3_000L
+        private const val PRESENCE_MISSES_TO_END = 3
+        private const val STARTUP_COOLDOWN_MS = 20000L
+        private const val CACHE_DEBOUNCE_MS = 250L
+        private const val SAVE_SCREENSHOT_DELAY_MS = 250L
+        private const val IN_PLACE_WRITE_QUIET_MS = 1_500L
+        private val IGNORED_DIRECTORY_PATTERNS = setOf(
+            "cache",
+            "shader",
+            "shaders",
+            "gpu_cache",
+            "temp",
+            "log",
+            "logs",
+        )
+
+        fun start(
+            context: Context,
+            watchPath: String?,
+            savePath: String?,
+            gameId: Long,
+            emulatorId: String?,
+            gameTitle: String,
+            channelName: String?,
+            isHardcore: Boolean,
+            sessionStartTime: Long,
+            emulatorPackage: String? = null
+        ) {
+            Logger.debug(TAG, "Starting service for: $gameTitle (gameId=$gameId, sessionStart=$sessionStartTime)")
+            val intent = Intent(context, GameSessionService::class.java).apply {
+                putExtra(EXTRA_WATCH_PATH, watchPath)
+                putExtra(EXTRA_SAVE_PATH, savePath)
+                putExtra(EXTRA_GAME_ID, gameId)
+                putExtra(EXTRA_EMULATOR_ID, emulatorId)
+                putExtra(EXTRA_GAME_TITLE, gameTitle)
+                putExtra(EXTRA_CHANNEL_NAME, channelName)
+                putExtra(EXTRA_IS_HARDCORE, isHardcore)
+                putExtra(EXTRA_SESSION_START_TIME, sessionStartTime)
+                putExtra(EXTRA_EMULATOR_PACKAGE, emulatorPackage)
+            }
+            awaitingForeground.set(true)
+            if (!context.startForegroundServiceSafely(intent)) awaitingForeground.set(false)
+        }
+
+        /**
+         * Re-tags the running watcher so every live cache it writes from here on carries the
+         * confirmed hardcore flag. Plain startService: the service is already in the foreground,
+         * and a redelivered update must not stand in for the session start intent.
+         */
+        fun updateHardcore(context: Context, isHardcore: Boolean, channelName: String?) {
+            val intent = Intent(context, GameSessionService::class.java).apply {
+                action = ACTION_UPDATE_HARDCORE
+                putExtra(EXTRA_IS_HARDCORE, isHardcore)
+                putExtra(EXTRA_CHANNEL_NAME, channelName)
+            }
+            context.startService(intent)
+        }
+
+        fun stop(context: Context) {
+            Logger.debug(TAG, "Stop requested | awaitingForeground=${awaitingForeground.get()}")
+            if (awaitingForeground.get()) {
+                val intent = Intent(context, GameSessionService::class.java).apply { action = ACTION_STOP }
+                if (context.startForegroundServiceSafely(intent)) return
+            }
+            context.stopService(Intent(context, GameSessionService::class.java))
+        }
+    }
+}

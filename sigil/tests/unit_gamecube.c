@@ -1,0 +1,196 @@
+// SPDX-License-Identifier: MPL-2.0
+#include "sigil.h"
+#include <stdio.h>
+#include <string.h>
+
+#define HD_SEC_SZ 512
+
+#define WII_MAGIC      0x5D1C9EA3u
+#define GC_MAGIC       0xC2339F3Du
+#define WII_MAGIC_OFF  0x18
+#define GC_MAGIC_OFF   0x1C
+#define RVZ_HEADER_OFF 0x58
+
+static void write_be32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
+}
+
+typedef struct { const uint8_t *buf; size_t len; } mem_ctx;
+
+static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
+    mem_ctx *m = (mem_ctx *)ctx;
+    if (off >= m->len) return 0;
+    size_t avail = m->len - (size_t)off;
+    size_t n = len < avail ? len : avail;
+    memcpy(buf, m->buf + off, n);
+    return (int)n;
+}
+static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
+
+static int expect(const uint8_t *buf, size_t len, const char *filename,
+                  const char *want_title, const char *want_raw,
+                  const char *want_save, sigil_source want_source,
+                  const char *label) {
+    mem_ctx ctx = { buf, len };
+    sigil_io io = { mem_read, mem_size, NULL, &ctx };
+    sigil_result r;
+    int rc = sigil_extract_from_io(&io, filename, SIGIL_PLATFORM_GAMECUBE, NULL, &r);
+    if (rc != SIGIL_OK) {
+        fprintf(stderr, "FAIL %s: rc=%d\n", label, rc);
+        return 1;
+    }
+    if (strcmp(r.title_id, want_title) != 0 || strcmp(r.raw_serial, want_raw) != 0) {
+        fprintf(stderr, "FAIL %s: title_id='%s' raw_serial='%s'\n",
+                label, r.title_id, r.raw_serial);
+        return 1;
+    }
+    if (strcmp(r.save_id, want_save) != 0) {
+        fprintf(stderr, "FAIL %s: save_id='%s' (want '%s')\n", label, r.save_id, want_save);
+        return 1;
+    }
+    if (r.usage != SIGIL_USAGE_FILE_PREFIX) {
+        fprintf(stderr, "FAIL %s: usage=%d (want FILE_PREFIX)\n", label, (int)r.usage);
+        return 1;
+    }
+    if (r.source != want_source) {
+        fprintf(stderr, "FAIL %s: source=%d\n", label, (int)r.source);
+        return 1;
+    }
+    return 0;
+}
+
+static int expect_detect(const uint8_t *buf, size_t len, const char *filename,
+                         sigil_platform hint, sigil_platform want_platform,
+                         const char *want_save, sigil_usage want_usage,
+                         const char *label) {
+    mem_ctx ctx = { buf, len };
+    sigil_io io = { mem_read, mem_size, NULL, &ctx };
+    sigil_result r;
+    int rc = sigil_extract_from_io(&io, filename, hint, NULL, &r);
+    if (rc != SIGIL_OK) {
+        fprintf(stderr, "FAIL %s: rc=%d\n", label, rc);
+        return 1;
+    }
+    if (r.platform != want_platform) {
+        fprintf(stderr, "FAIL %s: platform=%d (want %d)\n",
+                label, (int)r.platform, (int)want_platform);
+        return 1;
+    }
+    if (strcmp(r.save_id, want_save) != 0) {
+        fprintf(stderr, "FAIL %s: save_id='%s' (want '%s')\n", label, r.save_id, want_save);
+        return 1;
+    }
+    if (r.usage != want_usage) {
+        fprintf(stderr, "FAIL %s: usage=%d (want %d)\n", label, (int)r.usage, (int)want_usage);
+        return 1;
+    }
+    return 0;
+}
+
+/* Dolphin writes GameCube memory cards as `<maker>-<gameId>-<internal>.gci`
+ * under `<region>/Card A/`, where gameId is the four ASCII characters of the
+ * disc header. A consumer locating one matches on those characters, so save_id
+ * is the ASCII id and not the hex rendering title_id carries. */
+int main(void) {
+    uint8_t buf[2048];
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "GZLE", 4);
+    write_be32(buf + 0x1C, 0xC2339F3Du);
+    if (expect(buf, sizeof(buf), "game.iso", "475A4C45", "GZLE", "GZLE",
+               SIGIL_SOURCE_BINARY, "iso")) {
+        return 1;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "RVZ\x01", 4);
+    memcpy(buf + 0x58, "GAFE", 4);
+    if (expect(buf, sizeof(buf), "game.rvz", "47414645", "GAFE", "GAFE",
+               SIGIL_SOURCE_BINARY, "rvz")) {
+        return 1;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "WBFS", 4);
+    write_be32(buf + 4, 0x1000);
+    buf[8] = 9;
+    buf[9] = 21;
+    memcpy(buf + HD_SEC_SZ, "GM4E", 4);
+    write_be32(buf + HD_SEC_SZ + 0x1C, 0xC2339F3Du);
+    if (expect(buf, sizeof(buf), "game.wbfs", "474D3445", "GM4E", "GM4E",
+               SIGIL_SOURCE_BINARY, "wbfs")) {
+        return 1;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    if (expect(buf, sizeof(buf), "Animal Crossing [GAFE].iso", "47414645", "GAFE", "GAFE",
+               SIGIL_SOURCE_FILENAME, "filename fallback")) {
+        return 1;
+    }
+
+    /* Both consoles ship as `.rvz` and `.wbfs`, so the extension sends either
+     * one here as a Wii disc. Only the header magic separates them, and a
+     * GameCube disc read as a Wii one would lose the ASCII save_id its `.gci`
+     * names carry. A platform the caller names is a different matter: it
+     * stands, magic or no magic, so a consumer that has already classified the
+     * file keeps its answer. Read as Wii, the disc has no ticket to name a
+     * save folder, so save_id is empty. */
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "RVZ\x01", 4);
+    memcpy(buf + RVZ_HEADER_OFF, "GAFE", 4);
+    write_be32(buf + RVZ_HEADER_OFF + GC_MAGIC_OFF, GC_MAGIC);
+    if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_AUTO,
+                      SIGIL_PLATFORM_GAMECUBE, "GAFE", SIGIL_USAGE_FILE_PREFIX,
+                      "unhinted rvz carrying the gamecube magic")) {
+        return 1;
+    }
+    if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_WII,
+                      SIGIL_PLATFORM_WII, "", SIGIL_USAGE_FOLDER_SPLIT,
+                      "a named wii platform outranks the gamecube magic")) {
+        return 1;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "RVZ\x01", 4);
+    memcpy(buf + RVZ_HEADER_OFF, "RZDE", 4);
+    write_be32(buf + RVZ_HEADER_OFF + WII_MAGIC_OFF, WII_MAGIC);
+    if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_AUTO,
+                      SIGIL_PLATFORM_WII, "", SIGIL_USAGE_FOLDER_SPLIT,
+                      "unhinted rvz carrying the wii magic")) {
+        return 1;
+    }
+    if (expect_detect(buf, sizeof(buf), "game.rvz", SIGIL_PLATFORM_GAMECUBE,
+                      SIGIL_PLATFORM_GAMECUBE, "RZDE", SIGIL_USAGE_FILE_PREFIX,
+                      "a named gamecube platform outranks the wii magic")) {
+        return 1;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "GZLE", 4);
+    if (expect_detect(buf, sizeof(buf), "game.iso", SIGIL_PLATFORM_WII,
+                      SIGIL_PLATFORM_WII, "", SIGIL_USAGE_FOLDER_SPLIT,
+                      "unbacked id keeps the named platform")) {
+        return 1;
+    }
+
+    /* Nobody named a platform and the disc does not say, so there is nothing
+     * left to read it off. The extension picked the reader, not the console. */
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "RVZ\x01", 4);
+    memcpy(buf + RVZ_HEADER_OFF, "GAFE", 4);
+    {
+        mem_ctx ctx = { buf, sizeof(buf) };
+        sigil_io io = { mem_read, mem_size, NULL, &ctx };
+        sigil_result r;
+        if (sigil_extract_from_io(&io, "game.rvz", SIGIL_PLATFORM_AUTO, NULL, &r) == SIGIL_OK) {
+            fprintf(stderr, "FAIL unbacked unnamed rvz: accepted platform=%d\n", (int)r.platform);
+            return 1;
+        }
+    }
+
+    printf("ok unit_gamecube\n");
+    return 0;
+}

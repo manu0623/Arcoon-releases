@@ -1,0 +1,43 @@
+build/
+build-*/
+cmake-build-*/
+.cache/
+compile_commands.json
+
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# CLI binary
+cli/sigil
+/sigil
+
+# Test outputs
+tests/build/
+tests/*.bin
+tests/*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Working notes: plans, progress and research kept out of the published docs
+/notes/
+
+# Local sample data
+/local-roms/
+/tests/fixtures/saves/*/files/*
+!/tests/fixtures/saves/*/files/.gitkeep
+.cxx/
+bindings/android/build/
+bindings/android/.cxx/
+bindings/android/.gradle/
+tests/kotlin/.gradle/
+tests/kotlin/build/
+tests/kotlin/.kotlin/
+tests/kotlin/local.properties

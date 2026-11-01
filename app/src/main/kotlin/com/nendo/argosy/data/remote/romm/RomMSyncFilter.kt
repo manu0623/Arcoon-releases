@@ -1,0 +1,161 @@
+package com.nendo.argosy.data.remote.romm
+
+import com.nendo.argosy.data.preferences.RegionFilterMode
+import com.nendo.argosy.data.preferences.SyncFilterPreferences
+import com.nendo.argosy.util.Logger
+
+object RomMSyncFilter {
+
+    private const val TAG = "RomMSyncFilter"
+
+    private val NO_INTRO_HACK_REGEX = Regex("\\[h[0-9a-z ]*\\]")
+    private val HACK_BRACKET_REGEX = Regex("\\[.*\\bhack\\b.*\\]")
+    private val HACK_PAREN_REGEX = Regex("\\(.*\\bhack\\b.*\\)")
+    private val BAD_DUMP_REGEX = Regex("\\[[bopBOP][0-9]*\\]")
+
+    /**
+     * True for the working files a library scan sweeps up beside the games. Mirrors RomM's own
+     * DEFAULT_EXCLUDED_EXTENSIONS plus the save and state sidecars that only appear once files
+     * reach a device. Shared with the sync service so the row filter and the local-pointer
+     * cleanup cannot disagree about what counts as content.
+     */
+    fun isNonGameExtension(extension: String): Boolean {
+        val lower = extension.lowercase()
+        return lower in NON_GAME_EXTENSIONS || NUMBERED_STATE_SUFFIX.matches(lower)
+    }
+
+    private val NUMBERED_STATE_SUFFIX = Regex("""state\d+""")
+
+    private val NON_GAME_EXTENSIONS = setOf(
+        "db", "ini", "tmp", "bak", "lock", "log", "cache", "crdownload",
+        "srm", "sav", "state"
+    )
+
+    fun shouldSyncRom(rom: RomMRom, filters: SyncFilterPreferences): Boolean {
+        val extension = extractExtension(rom)
+        if (!passesExtensionFilter(rom, extension)) {
+            Logger.debug(TAG, "Filtered by extension: ${rom.name} (ext: $extension, platform: ${rom.platformSlug})")
+            return false
+        }
+        if (!passesBadDumpFilter(rom)) {
+            Logger.debug(TAG, "Filtered as bad dump: ${rom.name} (file: ${rom.fileName})")
+            return false
+        }
+        if (!passesRegionFilter(rom, filters)) {
+            Logger.debug(TAG, "Filtered by region: ${rom.name} (regions: ${rom.regions})")
+            return false
+        }
+        if (!passesRevisionFilter(rom, filters)) {
+            Logger.debug(TAG, "Filtered by revision: ${rom.name} (revision: ${rom.revision}, tags: ${rom.tags})")
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Whether a file the server is offering is worth a library row. Refuses only working files,
+     * never deciding from the extension whether something is a game, because which emulator can
+     * open a file is answered later when one is resolved.
+     */
+    private fun passesExtensionFilter(rom: RomMRom, extension: String?): Boolean {
+        if (extension == null) return true
+        return extension !in NON_GAME_EXTENSIONS
+    }
+
+    private fun extractExtension(rom: RomMRom): String? {
+        rom.files
+            ?.filter { !it.filePath.contains('/') }
+            ?.firstOrNull()
+            ?.fileName
+            ?.let { fileName ->
+                extractValidExtension(fileName)?.let { return it }
+            }
+
+        rom.filePath?.let { path ->
+            extractValidExtension(path)?.let { return it }
+        }
+
+        rom.fileName?.let { fileName ->
+            extractValidExtension(fileName)?.let { return it }
+        }
+
+        return null
+    }
+
+    private fun extractValidExtension(name: String): String? {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return if (ext.isNotEmpty() && ext.length <= 10 && !ext.contains(' ') && ext.all { it.isLetterOrDigit() }) {
+            ext
+        } else {
+            null
+        }
+    }
+
+    private fun passesBadDumpFilter(rom: RomMRom): Boolean {
+        val name = rom.name.lowercase()
+        val fileName = rom.fileName?.lowercase() ?: ""
+        if (BAD_DUMP_REGEX.containsMatchIn(name) || BAD_DUMP_REGEX.containsMatchIn(fileName)) return false
+        return true
+    }
+
+    private fun passesRegionFilter(rom: RomMRom, filters: SyncFilterPreferences): Boolean {
+        if (filters.enabledRegions.isEmpty()) return true
+
+        val romRegions = rom.regions
+        if (romRegions.isNullOrEmpty()) return true
+
+        val matchesEnabled = romRegions.any { region ->
+            filters.enabledRegions.any { enabled ->
+                region.equals(enabled, ignoreCase = true)
+            }
+        }
+
+        return when (filters.regionMode) {
+            RegionFilterMode.INCLUDE -> matchesEnabled
+            RegionFilterMode.EXCLUDE -> !matchesEnabled
+        }
+    }
+
+    private fun passesRevisionFilter(rom: RomMRom, filters: SyncFilterPreferences): Boolean {
+        val variant = VariantTags(rom)
+
+        if (filters.excludeBeta && variant.has("beta")) return false
+        if (filters.excludePrototype && variant.has("proto", "debug")) return false
+        if (filters.excludeDemo && variant.has("demo", "sample")) return false
+        if (filters.excludeHack && isHack(rom.name.lowercase(), variant.revision, variant.tags)) {
+            return false
+        }
+        if (filters.excludeUnofficial && variant.has("pirate", "unl", "aftermarket")) return false
+
+        return true
+    }
+
+    /**
+     * The release tags of a rom, read from every field RomM puts them in. A rom matched against
+     * metadata carries the clean IGDB title in `name`, so the parenthesised tags survive only in
+     * `tags` and the file name; reading `name` alone silently matches nothing for most of a
+     * library. Debug builds count as prototypes, both being unreleased internal builds, unlike a
+     * demo, which is a released promotional cut.
+     */
+    private class VariantTags(rom: RomMRom) {
+        val revision = rom.revision?.lowercase() ?: ""
+        val tags = rom.tags?.map { it.lowercase() } ?: emptyList()
+        private val bracketed =
+            "${rom.name.lowercase()} ${rom.fileName?.lowercase() ?: ""}"
+
+        fun has(vararg keywords: String): Boolean = keywords.any { keyword ->
+            revision.contains(keyword) ||
+                tags.any { it.startsWith(keyword) } ||
+                bracketed.contains("($keyword")
+        }
+    }
+
+    private fun isHack(name: String, revision: String, tags: List<String>): Boolean {
+        if (revision.contains("hack")) return true
+        if (tags.any { it.contains("hack") }) return true
+        if (NO_INTRO_HACK_REGEX.containsMatchIn(name)) return true
+        if (HACK_BRACKET_REGEX.containsMatchIn(name)) return true
+        if (HACK_PAREN_REGEX.containsMatchIn(name)) return true
+        return false
+    }
+}

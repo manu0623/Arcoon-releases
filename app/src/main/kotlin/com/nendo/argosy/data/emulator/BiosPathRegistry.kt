@@ -1,0 +1,509 @@
+package com.nendo.argosy.data.emulator
+
+import com.nendo.argosy.data.platform.PlatformDefinitions
+import com.nendo.argosy.data.storage.StoragePathUtils
+
+private const val BUILTIN_EMULATOR_ID = "argosy.builtin.libretro"
+
+data class BiosRequirement(
+    val platformSlug: String,
+    val fileName: String,
+    val md5Hash: String? = null,
+    val description: String,
+    val isRequired: Boolean = true
+)
+
+/**
+ * Where an emulator reads BIOS files from, and which platforms it will accept them for.
+ *
+ * [acceptsAnyPlatform] belongs to emulators that own a flat system directory and take whatever
+ * is put in it: the built-in core host and RetroArch. Every platform a downloaded firmware file
+ * names is one they can be handed, so listing platforms would restate what the firmware rows
+ * already say, and a platform missing from the list gets no BIOS with nothing on screen to say
+ * why. The built-in emulator's [defaultPaths] are empty for a separate reason: its directory is
+ * internal and resolved at runtime by BiosRepository.getLibretroSystemDir.
+ */
+data class BiosPathConfig(
+    val emulatorId: String,
+    val defaultPaths: List<String>,
+    val supportedPlatforms: Set<String>,
+    val acceptsAnyPlatform: Boolean = false,
+    /**
+     * Source file name to the name this emulator insists on. Only for emulators that rename what
+     * the user supplies; the shared md5 and nested-path tables stay global because those names
+     * are not one emulator's private preference.
+     */
+    val fileNameOverrides: Map<String, String> = emptyMap()
+) {
+    fun targetNameFor(fileName: String): String =
+        fileNameOverrides.entries
+            .firstOrNull { it.key.equals(fileName, ignoreCase = true) }
+            ?.value
+            ?: fileName
+
+    fun supports(canonicalSlug: String): Boolean =
+        acceptsAnyPlatform || canonicalSlug in supportedPlatforms
+
+    /**
+     * Whether the app may write or sweep here without being asked, which is narrower than
+     * [supports]. Only a directory with no [defaultPaths] is Argosy's own; every other is shared
+     * with the user, so it stays inside what the emulator declared.
+     */
+    fun actsUnprompted(canonicalSlug: String): Boolean =
+        (acceptsAnyPlatform && defaultPaths.isEmpty()) || canonicalSlug in supportedPlatforms
+}
+
+object BiosPathRegistry {
+
+    // MD5 hash -> RetroArch expected filename mapping
+    // RetroArch cores are strict about filenames, so we rename during distribution
+    private val retroArchBiosNames: Map<String, String> = mapOf(
+        // 3DO - Opera core
+        "f47264dd47fe30f73ab3c010015c155b" to "panafz1.bin",
+        "51f2f43ae2f3508a14d9f56597e2d3ce" to "panafz10.bin",
+        "1477bda80dc33731a65468c1f5bcbee9" to "panafz10-norsa.bin",
+        "a48e6746bd7edec0f40cff078f0bb19f" to "panafz10e-anvil.bin",
+        "cf11bbb5a16d7af9875cca9de9a15e09" to "panafz10e-anvil-norsa.bin",
+        "a496cfdded3da562759be3561317b605" to "panafz1j.bin",
+        "b832da9de7a5621bf1c67e79c9a6de9e" to "panafz1j-norsa.bin",
+        "8639fd5e549bd6238cfee79e3e749114" to "goldstar.bin",
+        "35fa1a1ebaaeea286dc5cd15487c13ea" to "sanyotry.bin",
+        "8970fc987ab89a7f64da9f8a8c4333ff" to "3do_arcade_saot.bin",
+
+        // PlayStation - PCSX ReARMed / Beetle PSX
+        "924e392ed05558ffdb115408c263dccf" to "scph1001.bin",
+        "8dd7d5296a650fac7319bce665a6a53c" to "scph5500.bin",
+        "490f666e1afb15b7362b406ed1cea246" to "scph5501.bin",
+        "32736f17079d0b2b7024407c39bd3050" to "scph5502.bin",
+        "1e68c231d0896b7eadcad1d7d8e76129" to "scph7001.bin",
+        "b9d9a0286c33dc6b7237bb13cd46fdee" to "scph101.bin",
+
+        // Dreamcast - Flycast (goes in dc/ subfolder)
+        "e10c53c2f8b90bab96ead2d368858623" to "dc/dc_boot.bin",
+        "0a93f7940c455905bea6e392dfde92a4" to "dc/dc_flash.bin",
+
+        // Saturn - Beetle Saturn / YabaSanshiro
+        "af5828fdff51384f99b3c4926be27762" to "sega_101.bin",
+        "3240872c70984b6cbfda1586cab68dbe" to "mpr-17933.bin",
+        "85ec9ca47d8f6f9ab5af2d1234c832d4" to "mpr-18811-mx.ic1",
+        "f273555d7d91e8a5a6bfd9bcf066331c" to "mpr-19367-mx.ic1",
+
+        // Sega CD - Genesis Plus GX
+        "2efd74e3232ff260e371b99f84024f7f" to "bios_CD_U.bin",
+        "854b9150240a198070150e4566ae1290" to "bios_CD_U.bin",
+        "e66fa1dc5820d254611fdcdba0662372" to "bios_CD_E.bin",
+        "278a9397d192149e84e820ac621a8edd" to "bios_CD_J.bin",
+
+        // GBA
+        "a860e8c0b6d573d191e4ec7db1b1e4f6" to "gba_bios.bin",
+
+        // NDS - melonDS / DeSmuME
+        "24f67bdea115a2c847c8813a628571b3" to "bios7.bin",
+        "df692a80a5b1bc90728bc3dfc76cd948" to "bios7.bin",
+        "a392174eb3e572fed6447e956bde4b25" to "bios9.bin",
+        "145eaef5bd3037cbc247c213bb3da1b3" to "firmware.bin",
+        "94bc5094607c5e6598d50472c52f27f2" to "firmware.bin",
+
+        "559dae4ea78eb9d67702c56c1d791e81" to "dsi_bios7.bin",
+        "87b665fce118f76251271c3732532777" to "dsi_bios9.bin",
+        "74f23348012d7b3e1cc216c47192ffeb" to "dsi_firmware.bin",
+        "d71edf897ddd06bf335feeb68edeb272" to "dsi_nand.bin",
+
+        // PC Engine CD - Beetle PCE
+        "38179df8f4ac870017db21ebcbf53114" to "syscard3.pce",
+
+        // PC-FX - Beetle PC-FX
+        "08e36edbea28a017f79f8d4f7ff9b6d7" to "pcfx.rom",
+
+        // Atari Lynx
+        "fcd403db69f54290b51035d82f835e7b" to "lynxboot.img",
+
+        // Neo Geo (kept as-is, usually a zip)
+        "dffb72f116d36d025068b23970a4f6df" to "neogeo.zip",
+
+        // Amiga - PUAE (Kickstart filenames per libretro PUAE docs)
+        "0b8442c311caa54fb12ec88eaaa9facf" to "kick31034.A1000",
+        "1fa1f93d3d7b51271dd1356b8b2b45a9" to "kick32034.A1000",
+        "85ad74194e87c08904327de1a9443b7a" to "kick33180.A500",
+        "82a21c1890cae844b3df741f2762d48d" to "kick34005.A500",
+        "dc10d7bdd1b6f450773dfb558477c230" to "kick37175.A500",
+        "465646c9b6729f77eea5314d1f057951" to "kick37350.A600",
+        "e40a5dfb3d017ba8779faba30cbd1c8e" to "kick40063.A600",
+        "b7cc148386aa631136f510cd29e42fc3" to "kick39106.A1200",
+        "646773759326fbac3b2311fd8c8793ee" to "kick40068.A1200",
+        "9b8bdd5a3fd32c2a5a6f5b1aefc799a5" to "kick39106.A4000",
+        "9bdedde6a4f33555b4a270c8ca53297d" to "kick40068.A4000",
+        "89da1838a24460e4b93f4f0c5d92d48d" to "kick34005.CDTV",
+        "5f8924d013dd57a89cf349f4cdedc6b1" to "kick40060.CD32",
+        "bb72565701b1b6faece07d68ea5da639" to "kick40060.CD32.ext",
+        "f2f241bf094168cfb9e7805dc2856433" to "kick40060.CD32"
+    )
+
+    fun getRetroArchBiosName(md5Hash: String?): String? {
+        if (md5Hash == null) return null
+        return retroArchBiosNames[md5Hash.lowercase()]
+    }
+
+    /**
+     * Firmware that belongs in a subdirectory of the system directory rather than at its root,
+     * keyed by file name because the content hash cannot identify it. A MAME romset is a zip of
+     * ROM files: repacking it changes the archive's MD5 while leaving every ROM inside correct, so
+     * an MD5 row would only ever match the one repack we happened to hash. The name is the stable
+     * identifier - MAME resolves a set by archive name, and refuses any other spelling.
+     */
+    private val nestedBiosPaths: Map<String, String> = mapOf(
+        "cdimono1.zip" to "same_cdi/bios/cdimono1.zip",
+        "cdimono2.zip" to "same_cdi/bios/cdimono2.zip",
+        "cdibios.zip" to "same_cdi/bios/cdibios.zip"
+    )
+
+    fun getNestedBiosPath(fileName: String): String? = nestedBiosPaths[fileName.lowercase()]
+
+    private val builtinPlatformBiosDirs: Map<String, String> = mapOf(
+        "ps2" to "pcsx2/bios"
+    )
+
+    /**
+     * The folder under the built-in system directory that holds a platform's BIOS, for cores that
+     * identify a BIOS by its content and accept any file name in that folder.
+     */
+    fun getBuiltinPlatformBiosDir(platformSlug: String): String? =
+        builtinPlatformBiosDirs[PlatformDefinitions.getCanonicalSlug(platformSlug)]
+
+    fun getBuiltinPlatformBiosPath(platformSlug: String, fileName: String): String? =
+        getBuiltinPlatformBiosDir(platformSlug)?.let { "$it/$fileName" }
+
+    /**
+     * The path, relative to an emulator's system directory, that a firmware file is copied to for
+     * an emulator that looks BIOS up by exact name. [builtinPlatformSlug] is set only for the
+     * built-in libretro system directory; [md5Hash] is read only when no name rule applies.
+     */
+    fun exactSystemFileName(
+        fileName: String,
+        builtinPlatformSlug: String?,
+        md5Hash: () -> String?
+    ): String =
+        builtinPlatformSlug?.let { getBuiltinPlatformBiosPath(it, fileName) }
+            ?: getNestedBiosPath(fileName)
+            ?: getRetroArchBiosName(md5Hash())
+            ?: fileName
+
+    private val platformBiosFiles: Map<String, List<BiosRequirement>> = mapOf(
+        "psx" to listOf(
+            BiosRequirement("psx", "scph1001.bin", "924e392ed05558ffdb115408c263dccf", "PlayStation NTSC-U BIOS"),
+            BiosRequirement("psx", "scph5500.bin", "8dd7d5296a650fac7319bce665a6a53c", "PlayStation NTSC-J BIOS"),
+            BiosRequirement("psx", "scph5501.bin", "490f666e1afb15b7362b406ed1cea246", "PlayStation NTSC-U BIOS v3.0"),
+            BiosRequirement("psx", "scph5502.bin", "32736f17079d0b2b7024407c39bd3050", "PlayStation PAL BIOS")
+        ),
+        "saturn" to listOf(
+            BiosRequirement("saturn", "saturn_bios.bin", null, "Sega Saturn BIOS"),
+            BiosRequirement("saturn", "sega_101.bin", null, "Sega Saturn Japan BIOS"),
+            BiosRequirement("saturn", "mpr-17933.bin", null, "Sega Saturn US/EU BIOS")
+        ),
+        "scd" to listOf(
+            BiosRequirement("scd", "bios_CD_U.bin", null, "Sega CD US BIOS"),
+            BiosRequirement("scd", "bios_CD_E.bin", null, "Sega CD EU BIOS"),
+            BiosRequirement("scd", "bios_CD_J.bin", null, "Sega CD Japan BIOS")
+        ),
+        "dreamcast" to listOf(
+            BiosRequirement("dreamcast", "dc_boot.bin", null, "Dreamcast Boot ROM"),
+            BiosRequirement("dreamcast", "dc_flash.bin", null, "Dreamcast Flash ROM")
+        ),
+        "dc" to listOf(
+            BiosRequirement("dc", "dc_boot.bin", null, "Dreamcast Boot ROM"),
+            BiosRequirement("dc", "dc_flash.bin", null, "Dreamcast Flash ROM")
+        ),
+        "neogeo" to listOf(
+            BiosRequirement("neogeo", "neogeo.zip", null, "Neo Geo BIOS pack")
+        ),
+        "3do" to listOf(
+            BiosRequirement("3do", "panafz10.bin", null, "3DO FZ-10 BIOS", isRequired = true)
+        ),
+        "nds" to listOf(
+            BiosRequirement("nds", "bios7.bin", null, "NDS ARM7 BIOS"),
+            BiosRequirement("nds", "bios9.bin", null, "NDS ARM9 BIOS"),
+            BiosRequirement("nds", "firmware.bin", null, "NDS Firmware", isRequired = false)
+        ),
+        "gba" to listOf(
+            BiosRequirement("gba", "gba_bios.bin", null, "GBA BIOS", isRequired = false)
+        ),
+        "tgcd" to listOf(
+            BiosRequirement("tgcd", "syscard3.pce", null, "TurboGrafx-CD System Card 3")
+        ),
+        "pcfx" to listOf(
+            BiosRequirement("pcfx", "pcfx.rom", "08e36edbea28a017f79f8d4f7ff9b6d7", "PC-FX BIOS")
+        ),
+        "cdi" to listOf(
+            BiosRequirement("cdi", "cdimono1.zip", null, "CD-i Mono-I romset"),
+            BiosRequirement("cdi", "cdimono2.zip", null, "CD-i Mono-II romset", isRequired = false),
+            BiosRequirement("cdi", "cdibios.zip", null, "CD-i shared BIOS romset", isRequired = false)
+        ),
+        "lynx" to listOf(
+            BiosRequirement("lynx", "lynxboot.img", null, "Atari Lynx Boot ROM")
+        ),
+        "arcade" to listOf(
+            BiosRequirement("arcade", "neogeo.zip", null, "Neo Geo BIOS for arcade")
+        ),
+        "fbneo" to listOf(
+            BiosRequirement("fbneo", "neogeo.zip", null, "Neo Geo BIOS for FBNeo")
+        ),
+        "mame" to listOf(
+            BiosRequirement("mame", "neogeo.zip", null, "Neo Geo BIOS for MAME")
+        ),
+        "ps2" to listOf(
+            BiosRequirement("ps2", "ps2-bios.bin", null, "PlayStation 2 BIOS", isRequired = true)
+        ),
+        "ps3" to listOf(
+            BiosRequirement(
+                "ps3",
+                "PS3UPDAT.PUP",
+                null,
+                "System software update. Commercial games need it installed, and the emulator " +
+                    "unpacks it itself rather than reading the file in place.",
+                isRequired = true
+            )
+        ),
+        "switch" to listOf(
+            BiosRequirement("switch", "prod.keys", null, "Switch Production Keys", isRequired = true),
+            BiosRequirement("switch", "firmware.zip", null, "Switch Firmware", isRequired = true)
+        ),
+        "xbox" to listOf(
+            BiosRequirement(
+                "xbox",
+                "Complex_4627.bin",
+                null,
+                "Flash ROM. hakuX boots without it and reads it only to re-sign saves copied " +
+                    "from a real console. Also ships as Complex_4627v1.03.bin.",
+                isRequired = false
+            ),
+            BiosRequirement("xbox", "mcpx_1.0.bin", null, "MCPX boot ROM", isRequired = false)
+        ),
+        "amiga" to listOf(
+            BiosRequirement("amiga", "kick34005.A500", "82a21c1890cae844b3df741f2762d48d", "Kickstart v1.3 rev 34.005 (A500)", isRequired = false),
+            BiosRequirement("amiga", "kick37175.A500", "dc10d7bdd1b6f450773dfb558477c230", "Kickstart v2.04 rev 37.175 (A500+)", isRequired = false),
+            BiosRequirement("amiga", "kick40063.A600", "e40a5dfb3d017ba8779faba30cbd1c8e", "Kickstart v3.1 rev 40.063 (A600)", isRequired = false),
+            BiosRequirement("amiga", "kick39106.A1200", "b7cc148386aa631136f510cd29e42fc3", "Kickstart v3.0 rev 39.106 (A1200)", isRequired = false),
+            BiosRequirement("amiga", "kick40068.A1200", "646773759326fbac3b2311fd8c8793ee", "Kickstart v3.1 rev 40.068 (A1200)", isRequired = false),
+            BiosRequirement("amiga", "kick40068.A4000", "9bdedde6a4f33555b4a270c8ca53297d", "Kickstart v3.1 rev 40.068 (A4000)", isRequired = false)
+        ),
+        "amigacd32" to listOf(
+            BiosRequirement("amigacd32", "kick40060.CD32", "5f8924d013dd57a89cf349f4cdedc6b1", "CD32 Kickstart v3.1 rev 40.060", isRequired = false),
+            BiosRequirement("amigacd32", "kick40060.CD32.ext", "bb72565701b1b6faece07d68ea5da639", "CD32 extended ROM rev 40.060", isRequired = false)
+        ),
+        "cdtv" to listOf(
+            BiosRequirement("cdtv", "kick34005.CDTV", "89da1838a24460e4b93f4f0c5d92d48d", "CDTV extended ROM v1.00", isRequired = false)
+        )
+    )
+
+    private val retiredFirmwareNames = setOf("xbox_hdd.qcow2")
+
+    /**
+     * Firmware no supported emulator reads. Argosy neither tracks nor keeps these files, even
+     * when the server offers them.
+     */
+    fun isRetiredFirmware(fileName: String): Boolean =
+        retiredFirmwareNames.any { it.equals(fileName, ignoreCase = true) }
+
+    private val primaryRoot: String get() = StoragePathUtils.primaryExternalRoot
+
+    private val emulatorBiosPaths: Map<String, BiosPathConfig> by lazy {
+        mapOf(
+        "retroarch" to BiosPathConfig(
+            emulatorId = "retroarch",
+            defaultPaths = listOf(
+                "$primaryRoot/RetroArch/system",
+                "$primaryRoot/Android/data/com.retroarch/files/system"
+            ),
+            supportedPlatforms = emptySet(),
+            acceptsAnyPlatform = true
+        ),
+        "retroarch_64" to BiosPathConfig(
+            emulatorId = "retroarch_64",
+            defaultPaths = listOf(
+                "$primaryRoot/RetroArch/system",
+                "$primaryRoot/Android/data/com.retroarch.aarch64/files/system"
+            ),
+            supportedPlatforms = emptySet(),
+            acceptsAnyPlatform = true
+        ),
+        "retroarch_32" to BiosPathConfig(
+            emulatorId = "retroarch_32",
+            defaultPaths = listOf(
+                "$primaryRoot/RetroArch/system",
+                "$primaryRoot/Android/data/com.retroarch.ra32/files/system"
+            ),
+            supportedPlatforms = emptySet(),
+            acceptsAnyPlatform = true
+        ),
+        "duckstation" to BiosPathConfig(
+            emulatorId = "duckstation",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/com.github.stenzek.duckstation/files/bios"
+            ),
+            supportedPlatforms = setOf("psx")
+        ),
+        "hakux" to BiosPathConfig(
+            emulatorId = "hakux",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/com.rfandango.haku_x/files/x1box"
+            ),
+            supportedPlatforms = setOf("xbox"),
+            fileNameOverrides = mapOf(
+                "Complex_4627.bin" to "flash.bin",
+                "Complex_4627v1.03.bin" to "flash.bin",
+                "mcpx_1.0.bin" to "mcpx.bin"
+            )
+        ),
+        "melonds" to BiosPathConfig(
+            emulatorId = "melonds",
+            defaultPaths = listOf(
+                "$primaryRoot/melonDS/bios",
+                "$primaryRoot/Android/data/me.magnum.melonds/files/bios"
+            ),
+            supportedPlatforms = setOf("nds")
+        ),
+        "melondualds" to BiosPathConfig(
+            emulatorId = "melondualds",
+            defaultPaths = listOf(
+                "$primaryRoot/melonDS/bios",
+                "$primaryRoot/Android/data/me.magnum.melondualds/files/bios"
+            ),
+            supportedPlatforms = setOf("nds")
+        ),
+        "flycast" to BiosPathConfig(
+            emulatorId = "flycast",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/com.flycast.emulator/files/data",
+                "$primaryRoot/Flycast/data"
+            ),
+            supportedPlatforms = setOf("dreamcast", "naomi", "atomiswave")
+        ),
+        "redream" to BiosPathConfig(
+            emulatorId = "redream",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/io.recompiled.redream/files"
+            ),
+            supportedPlatforms = setOf("dreamcast", "dc")
+        ),
+        "saturn_emu" to BiosPathConfig(
+            emulatorId = "saturn_emu",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/com.explusalpha.SaturnEmu/files"
+            ),
+            supportedPlatforms = setOf("saturn")
+        ),
+        "pizza_boy_gba" to BiosPathConfig(
+            emulatorId = "pizza_boy_gba",
+            defaultPaths = listOf(
+                "$primaryRoot/PizzaBoyGBA",
+                "$primaryRoot/Android/data/it.dbtecno.pizzaboygba/files"
+            ),
+            supportedPlatforms = setOf("gba")
+        ),
+        "pizza_boy_gba_pro" to BiosPathConfig(
+            emulatorId = "pizza_boy_gba_pro",
+            defaultPaths = listOf(
+                "$primaryRoot/PizzaBoyGBA",
+                "$primaryRoot/Android/data/it.dbtecno.pizzaboygbapro/files"
+            ),
+            supportedPlatforms = setOf("gba")
+        ),
+        "nethersx2" to BiosPathConfig(
+            emulatorId = "nethersx2",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/xyz.aethersx2.android/files/bios"
+            ),
+            supportedPlatforms = setOf("ps2")
+        ),
+        "armsx1" to BiosPathConfig(
+            emulatorId = "armsx1",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/com.nanodata.armsx/files/bios"
+            ),
+            supportedPlatforms = setOf("psx")
+        ),
+        "armsx2_refresh" to BiosPathConfig(
+            emulatorId = "armsx2_refresh",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/com.armsx2/files/bios"
+            ),
+            supportedPlatforms = setOf("ps2")
+        ),
+        "eden" to BiosPathConfig(
+            emulatorId = "eden",
+            defaultPaths = listOf(
+                "$primaryRoot/Android/data/dev.eden.eden_emulator/files"
+            ),
+            supportedPlatforms = setOf("switch")
+        ),
+        BUILTIN_EMULATOR_ID to BiosPathConfig(
+            emulatorId = BUILTIN_EMULATOR_ID,
+            defaultPaths = emptyList(),
+            supportedPlatforms = emptySet(),
+            acceptsAnyPlatform = true
+        )
+        )
+    }
+
+    private val platformsWithBios: Set<String> = platformBiosFiles.keys
+
+    fun getBiosRequirements(platformSlug: String): List<BiosRequirement> {
+        val canonical = PlatformDefinitions.getCanonicalSlug(platformSlug)
+        return platformBiosFiles[canonical] ?: emptyList()
+    }
+
+    fun getRequiredBiosFiles(platformSlug: String): List<BiosRequirement> {
+        return getBiosRequirements(platformSlug).filter { it.isRequired }
+    }
+
+    fun getPlatformsNeedingBios(): Set<String> = platformsWithBios
+
+    fun hasBiosRequirements(platformSlug: String): Boolean {
+        val canonical = PlatformDefinitions.getCanonicalSlug(platformSlug)
+        return platformsWithBios.contains(canonical)
+    }
+
+    fun getEmulatorBiosPaths(emulatorId: String): BiosPathConfig? {
+        return emulatorBiosPaths[emulatorId]
+    }
+
+    fun getEmulatorsForPlatform(platformSlug: String): List<BiosPathConfig> {
+        val canonical = PlatformDefinitions.getCanonicalSlug(platformSlug)
+        return emulatorBiosPaths.values.filter { it.supports(canonical) }
+    }
+
+    fun getUnpromptedEmulatorsForPlatform(platformSlug: String): List<BiosPathConfig> {
+        val canonical = PlatformDefinitions.getCanonicalSlug(platformSlug)
+        return emulatorBiosPaths.values.filter { it.actsUnprompted(canonical) }
+    }
+
+    fun getAllBiosConfigs(): Map<String, BiosPathConfig> = emulatorBiosPaths
+
+    fun matchesBiosFile(fileName: String, requirement: BiosRequirement): Boolean {
+        return fileName.equals(requirement.fileName, ignoreCase = true)
+    }
+
+    fun findMatchingRequirement(fileName: String, platformSlug: String): BiosRequirement? {
+        return getBiosRequirements(platformSlug).find { matchesBiosFile(fileName, it) }
+    }
+
+    fun getAllBiosFiles(): List<BiosRequirement> {
+        return platformBiosFiles.values.flatten().distinctBy { it.fileName.lowercase() }
+    }
+
+    fun getBiosFilesByPlatform(): Map<String, List<BiosRequirement>> = platformBiosFiles
+
+    val EDEN_PACKAGES = listOf(
+        "dev.eden.eden_emulator",
+        "dev.eden.eden_emulator.nightly",
+        "dev.eden.eden_emulator.relWithDebInfo",
+        "dev.eden.eden_emulator.debug",
+        "dev.legacy.eden",
+        "org.eden.emulator",
+        "dev.igawa6.edenduo"
+    )
+
+    fun getEdenDataPath(packageName: String): String {
+        return "$primaryRoot/Android/data/$packageName/files"
+    }
+}

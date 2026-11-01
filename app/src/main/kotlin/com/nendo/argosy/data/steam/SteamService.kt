@@ -1,0 +1,475 @@
+package com.nendo.argosy.data.steam
+
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.Binder
+import android.os.IBinder
+import android.util.Log
+import androidx.annotation.StringRes
+import com.nendo.argosy.R
+import com.nendo.argosy.core.service.ServiceNotificationIds
+import dagger.hilt.android.AndroidEntryPoint
+import `in`.dragonbra.javasteam.enums.EResult
+import `in`.dragonbra.javasteam.networking.steam3.ProtocolTypes
+import `in`.dragonbra.javasteam.steam.steamclient.SteamClient
+import `in`.dragonbra.javasteam.steam.steamclient.callbackmgr.CallbackManager
+import `in`.dragonbra.javasteam.steam.steamclient.callbacks.ConnectedCallback
+import `in`.dragonbra.javasteam.steam.steamclient.callbacks.DisconnectedCallback
+import `in`.dragonbra.javasteam.steam.steamclient.configuration.SteamConfiguration
+import `in`.dragonbra.javasteam.steam.handlers.steamapps.SteamApps
+import `in`.dragonbra.javasteam.steam.handlers.steamuser.SteamUser
+import `in`.dragonbra.javasteam.steam.handlers.steamuser.callback.LoggedOnCallback
+import `in`.dragonbra.javasteam.steam.handlers.steamuser.callback.LoggedOffCallback
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import java.io.Closeable
+import javax.inject.Inject
+
+private const val TAG = "SteamService"
+
+enum class SteamConnectionState {
+    DISCONNECTED,
+    CONNECTING,
+    CONNECTED,
+    LOGGING_IN,
+    LOGGED_IN,
+    LOGGED_OUT
+}
+
+data class SteamServiceState(
+    val connectionState: SteamConnectionState = SteamConnectionState.DISCONNECTED,
+    val username: String? = null,
+    val steamId: Long? = null,
+    val error: String? = null
+)
+
+@AndroidEntryPoint
+class SteamService : Service() {
+
+    override fun attachBaseContext(newBase: Context) {
+        val tag = com.nendo.argosy.data.preferences.SessionStateStore(newBase).getAppLanguage()
+        super.attachBaseContext(com.nendo.argosy.core.locale.LocaleHelper.wrap(newBase, tag))
+    }
+
+    @Inject
+    lateinit var steamAuthManager: SteamAuthManager
+
+    @Inject
+    lateinit var steamLibraryManager: SteamLibraryManager
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var callbackJob: Job? = null
+
+    private var steamClient: SteamClient? = null
+    private var callbackManager: CallbackManager? = null
+    private var steamUser: SteamUser? = null
+    private var steamApps: SteamApps? = null
+
+    private val _state = MutableStateFlow(SteamServiceState())
+    val state: StateFlow<SteamServiceState> = _state.asStateFlow()
+
+    private val subscriptions = mutableListOf<Closeable>()
+    private var isRunning = false
+    private var reconnectAttempt = 0
+    private var javaSteamLogging = false
+
+    inner class LocalBinder : Binder() {
+        fun getService(): SteamService = this@SteamService
+    }
+
+    private val binder = LocalBinder()
+
+    override fun onBind(intent: Intent?): IBinder = binder
+
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "SteamService created")
+        com.nendo.argosy.data.sync.SyncNotificationChannel.create(this)
+        initializeSteamClient()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "SteamService started")
+
+        if (intent?.getBooleanExtra(EXTRA_CONNECT_FOR_AUTH, false) == true) {
+            promoteToForeground(R.string.steam_service_signing_in)
+            observeStateForNotification()
+            stopAfterNextSync(startId)
+            scope.launch {
+                Log.d(TAG, "Connecting for QR auth, stopping reconnect loop")
+                isRunning = false
+                reconnectAttempt = 0
+                kotlinx.coroutines.delay(500)
+                connectForAuth()
+            }
+        } else if (intent?.getBooleanExtra(EXTRA_FORCE_CONNECT, false) == true) {
+            promoteToForeground(R.string.steam_service_connecting)
+            observeStateForNotification()
+            stopAfterNextSync(startId)
+            scope.launch {
+                Log.d(TAG, "Force connecting to Steam (on-demand)")
+                connect()
+            }
+        } else {
+            stopSelf()
+        }
+
+        return START_NOT_STICKY
+    }
+
+    private var stopAfterSyncJob: Job? = null
+
+    private fun stopAfterNextSync(startId: Int) {
+        val settledBefore = steamLibraryManager.settledSyncRuns.value
+        stopAfterSyncJob?.cancel()
+        stopAfterSyncJob = scope.launch {
+            steamLibraryManager.settledSyncRuns.first { it > settledBefore }
+            Log.d(TAG, "Library sync settled, stopping service start $startId")
+            stopSelf(startId)
+        }
+    }
+
+    private var notificationObserverJob: Job? = null
+    private var lastNotificationStatus: Int? = null
+
+    private fun observeStateForNotification() {
+        if (notificationObserverJob?.isActive == true) return
+        notificationObserverJob = scope.launch {
+            _state.collect { state ->
+                when (state.connectionState) {
+                    SteamConnectionState.CONNECTING ->
+                        updateForegroundNotification(R.string.steam_service_connecting)
+                    SteamConnectionState.CONNECTED,
+                    SteamConnectionState.LOGGING_IN ->
+                        updateForegroundNotification(R.string.steam_service_signing_in)
+                    SteamConnectionState.LOGGED_IN,
+                    SteamConnectionState.DISCONNECTED,
+                    SteamConnectionState.LOGGED_OUT -> {
+                        lastNotificationStatus = null
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun updateForegroundNotification(@StringRes status: Int) {
+        if (status == lastNotificationStatus) return
+        lastNotificationStatus = status
+        val notification = buildNotification(status)
+        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        nm.notify(NOTIFICATION_ID, notification)
+    }
+
+    companion object {
+        const val EXTRA_FORCE_CONNECT = "force_connect"
+        const val EXTRA_CONNECT_FOR_AUTH = "connect_for_auth"
+        private const val MAX_RECONNECT_ATTEMPTS = 5
+        private const val NOTIFICATION_ID = ServiceNotificationIds.STEAM
+    }
+
+    private fun promoteToForeground(@StringRes status: Int) {
+        lastNotificationStatus = status
+        val notification = buildNotification(status)
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to promote to foreground: ${e.message}")
+        }
+    }
+
+    private fun buildNotification(@StringRes status: Int): android.app.Notification {
+        return androidx.core.app.NotificationCompat.Builder(
+            this, com.nendo.argosy.data.sync.SyncNotificationChannel.CHANNEL_ID
+        )
+            .setSmallIcon(com.nendo.argosy.R.drawable.ic_helm)
+            .setContentTitle(getString(R.string.steam_service_title))
+            .setContentText(getString(status))
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .build()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "SteamService destroyed")
+        steamLibraryManager.cleanup()
+        disconnect()
+        scope.cancel()
+    }
+
+    private fun initializeSteamClient() {
+        if (com.nendo.argosy.BuildConfig.DEBUG && !javaSteamLogging) {
+            javaSteamLogging = true
+            `in`.dragonbra.javasteam.util.log.LogManager.addListener(
+                `in`.dragonbra.javasteam.util.log.DefaultLogListener()
+            )
+        }
+        val httpClient = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .pingInterval(15, TimeUnit.SECONDS)
+            .build()
+
+        val configuration = SteamConfiguration.create { builder ->
+            builder
+                .withConnectionTimeout(60_000L)
+                .withProtocolTypes(ProtocolTypes.TCP)
+                .withHttpClient(httpClient)
+        }
+
+        val client = SteamClient(configuration)
+        steamClient = client
+        callbackManager = CallbackManager(client)
+        steamUser = client.getHandler(SteamUser::class.java)
+        steamApps = client.getHandler(SteamApps::class.java)
+
+        val cm = callbackManager!!
+        steamLibraryManager.initialize(steamApps!!, cm)
+
+        registerCallbacks()
+    }
+
+    private fun registerCallbacks() {
+        val cm = callbackManager ?: return
+
+        subscriptions += cm.subscribe(ConnectedCallback::class.java) { _ ->
+            Log.d(TAG, "Connected to Steam")
+            _state.update {
+                it.copy(
+                    connectionState = SteamConnectionState.CONNECTED,
+                    error = null
+                )
+            }
+            steamAuthManager.onConnected(steamClient!!, steamUser!!)
+        }
+
+        subscriptions += cm.subscribe(DisconnectedCallback::class.java) { callback ->
+            Log.d(TAG, "Disconnected from Steam, userInitiated=${callback.isUserInitiated}")
+            if (suppressDisconnectError) {
+                Log.d(TAG, "Disconnect suppressed (reconnecting for auth)")
+                return@subscribe
+            }
+            val willReconnect = !callback.isUserInitiated && isRunning
+            _state.update {
+                it.copy(
+                    connectionState = SteamConnectionState.DISCONNECTED,
+                    error = if (!callback.isUserInitiated && !willReconnect) "Connection lost" else null
+                )
+            }
+            steamAuthManager.onDisconnected()
+
+            if (willReconnect) {
+                scope.launch {
+                    if (!isRunning) {
+                        Log.d(TAG, "Not running, stopping reconnect")
+                        return@launch
+                    }
+                    if (steamAuthManager.sessionDead) {
+                        Log.d(TAG, "Session dead, stopping reconnect")
+                        isRunning = false
+                        return@launch
+                    }
+                    kotlinx.coroutines.delay(500)
+                    if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+                        Log.e(TAG, "Max reconnect attempts ($MAX_RECONNECT_ATTEMPTS) reached, giving up")
+                        isRunning = false
+                        _state.update { it.copy(error = "Reconnect failed after $MAX_RECONNECT_ATTEMPTS attempts") }
+                        return@launch
+                    }
+
+                    val delaySec = minOf(1L shl reconnectAttempt, 60L)
+                    reconnectAttempt++
+                    Log.d(TAG, "Reconnect attempt $reconnectAttempt in ${delaySec}s")
+                    kotlinx.coroutines.delay(delaySec * 1000)
+
+                    if (isRunning) {
+                        connect()
+                    }
+                }
+            }
+        }
+
+        subscriptions += cm.subscribe(LoggedOnCallback::class.java) { callback ->
+            if (callback.result == EResult.OK) {
+                Log.d(TAG, "Logged on as ${callback.clientSteamID}")
+                reconnectAttempt = 0
+                _state.update {
+                    it.copy(
+                        connectionState = SteamConnectionState.LOGGED_IN,
+                        steamId = callback.clientSteamID?.convertToUInt64(),
+                        error = null
+                    )
+                }
+                steamAuthManager.onLoggedOn(callback)
+            } else {
+                Log.e(TAG, "Login failed: ${callback.result}")
+                _state.update {
+                    it.copy(
+                        connectionState = SteamConnectionState.LOGGED_OUT,
+                        error = "Login failed: ${callback.result}"
+                    )
+                }
+                steamAuthManager.onLoginFailed(callback.result)
+            }
+        }
+
+        subscriptions += cm.subscribe(LoggedOffCallback::class.java) { callback ->
+            Log.d(TAG, "Logged off: ${callback.result}")
+            _state.update {
+                it.copy(
+                    connectionState = SteamConnectionState.LOGGED_OUT,
+                    username = null,
+                    steamId = null
+                )
+            }
+            if (callback.result == `in`.dragonbra.javasteam.enums.EResult.LogonSessionReplaced) {
+                Log.d(TAG, "Session replaced externally, tokens preserved -- will reconnect with unique loginID")
+            }
+        }
+    }
+
+    private var connectStartedAt = 0L
+
+    private var suppressDisconnectError = false
+
+    private fun connectForAuth() {
+        steamAuthManager.connectingForAuth = true
+        suppressDisconnectError = true
+        _state.update { it.copy(connectionState = SteamConnectionState.CONNECTING, error = null) }
+        try { steamClient?.disconnect() } catch (_: Throwable) {}
+        callbackJob?.cancel()
+        initializeSteamClient()
+        isRunning = true
+        suppressDisconnectError = false
+
+        scope.launch {
+            try {
+                Log.d(TAG, "Connecting fresh client for QR auth...")
+                steamClient?.connect()
+                startCallbackLoop()
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to connect for auth", e)
+                _state.update {
+                    it.copy(
+                        connectionState = SteamConnectionState.DISCONNECTED,
+                        error = e.message
+                    )
+                }
+            }
+        }
+    }
+
+    fun connect() {
+        val currentState = _state.value.connectionState
+        if (currentState == SteamConnectionState.CONNECTING) {
+            val elapsed = System.currentTimeMillis() - connectStartedAt
+            if (elapsed < 30_000L) {
+                Log.d(TAG, "Already connecting (${elapsed / 1000}s)...")
+                return
+            }
+            Log.w(TAG, "Connection stuck at CONNECTING for ${elapsed / 1000}s, reinitializing")
+            suppressDisconnectError = true
+            try { steamClient?.disconnect() } catch (_: Exception) {}
+            callbackJob?.cancel()
+            initializeSteamClient()
+            suppressDisconnectError = false
+            _state.update { it.copy(connectionState = SteamConnectionState.DISCONNECTED) }
+        }
+
+        isRunning = true
+        connectStartedAt = System.currentTimeMillis()
+        _state.update { it.copy(connectionState = SteamConnectionState.CONNECTING) }
+
+        scope.launch {
+            try {
+                Log.d(TAG, "Connecting to Steam...")
+                steamClient?.connect()
+                startCallbackLoop()
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to connect: ${e::class.simpleName}, reinitializing client")
+                try { steamClient?.disconnect() } catch (_: Throwable) {}
+                callbackJob?.cancel()
+                initializeSteamClient()
+                try {
+                    steamClient?.connect()
+                    startCallbackLoop()
+                } catch (e2: Throwable) {
+                    Log.e(TAG, "Retry connect also failed", e2)
+                    _state.update {
+                        it.copy(
+                            connectionState = SteamConnectionState.DISCONNECTED,
+                            error = e2.message
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun disconnect() {
+        isRunning = false
+        callbackJob?.cancel()
+        callbackJob = null
+
+        try {
+            steamUser?.logOff()
+            steamClient?.disconnect()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during disconnect", e)
+        }
+
+        _state.value = SteamServiceState()
+    }
+
+    private fun startCallbackLoop() {
+        callbackJob?.cancel()
+        callbackJob = scope.launch {
+            Log.d(TAG, "Starting callback loop")
+            while (isActive && isRunning) {
+                try {
+                    callbackManager?.runWaitCallbacks(1000L)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Callback error", e)
+                }
+            }
+            Log.d(TAG, "Callback loop ended")
+        }
+    }
+
+    fun getSteamClient(): SteamClient? = steamClient
+    fun getSteamUser(): SteamUser? = steamUser
+    fun getSteamApps(): SteamApps? = steamApps
+    fun getCallbackManager(): CallbackManager? = callbackManager
+    fun getLibraryManager(): SteamLibraryManager = steamLibraryManager
+}

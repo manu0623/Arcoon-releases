@@ -1,0 +1,549 @@
+package com.nendo.argosy.ui.navigation
+
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.navigation.NavHostController
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
+import com.nendo.argosy.ui.ArgosyViewModel
+import com.nendo.argosy.ui.common.settingsSection
+import com.nendo.argosy.ui.screens.apps.AppsScreen
+import com.nendo.argosy.ui.screens.collections.CollectionDetailScreen
+import com.nendo.argosy.ui.screens.collections.CollectionsScreen
+import com.nendo.argosy.ui.screens.collections.VirtualBrowserScreen
+import com.nendo.argosy.ui.screens.collections.VirtualCategoryScreen
+import com.nendo.argosy.ui.screens.downloads.DownloadsScreen
+import com.nendo.argosy.ui.screens.firstrun.FirstRunScreen
+import com.nendo.argosy.ui.screens.gamedetail.GameDetailScreen
+import com.nendo.argosy.ui.screens.home.HomeScreen
+import com.nendo.argosy.ui.screens.quaypass.QuayPassCheckInScreen
+import com.nendo.argosy.ui.screens.library.LibraryScreen
+import com.nendo.argosy.ui.screens.media.MediaDetailScreen
+import com.nendo.argosy.ui.screens.media.MediaLibraryScreen
+import com.nendo.argosy.ui.screens.doodle.DoodleScreen
+import com.nendo.argosy.ui.screens.savetimeline.SaveTimelineScreen
+import com.nendo.argosy.ui.screens.search.SearchScreen
+import com.nendo.argosy.ui.screens.settings.ManagePinsScreen
+import com.nendo.argosy.ui.screens.settings.SettingsScreen
+import com.nendo.argosy.ui.screens.social.FeedEventDetailScreen
+import com.nendo.argosy.ui.screens.social.PostEditorScreen
+import com.nendo.argosy.ui.screens.social.SocialScreen
+import com.nendo.argosy.ui.screens.social.UserProfileScreen
+
+@Composable
+fun NavGraph(
+    navController: NavHostController,
+    startDestination: String,
+    onDrawerToggle: () -> Unit,
+    argosyViewModel: ArgosyViewModel,
+    modifier: Modifier = Modifier,
+    videoPreviewBlocked: Boolean = false,
+    onPlayMedia: (itemId: String, startOver: Boolean) -> Unit = { _, _ -> }
+) {
+    val navigateToDefault = remember {
+        {
+            navController.navigate(Screen.Home.route) {
+                popUpTo(0) { inclusive = true }
+            }
+        }
+    }
+    NavHost(
+        modifier = modifier,
+        navController = navController,
+        startDestination = startDestination,
+        enterTransition = { fadeIn(animationSpec = tween(100)) },
+        exitTransition = { fadeOut(animationSpec = tween(100)) },
+        popEnterTransition = { fadeIn(animationSpec = tween(100)) },
+        popExitTransition = { fadeOut(animationSpec = tween(100)) }
+    ) {
+        composable(Screen.FirstRun.route) {
+            FirstRunScreen(
+                onComplete = {
+                    navController.navigate(Screen.Home.route) {
+                        popUpTo(Screen.FirstRun.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(Screen.Home.route) {
+            val useClassicHome by com.nendo.argosy.ui.cocoon.CocoonMode.useClassicHome.collectAsState()
+            if (!useClassicHome) {
+                com.nendo.argosy.ui.cocoon.CocoonHomeScreen(
+                    onOpenPlatform = { platformId ->
+                        navController.navigate(Screen.Library.createRoute(platformId))
+                    },
+                    onOpenCollection = { collectionId ->
+                        navController.navigate(Screen.CollectionDetail.createRoute(collectionId))
+                    },
+                    onOpenAndroidGames = { navController.navigate(Screen.Apps.route) },
+                    onOpenEmulators = {
+                        navController.navigate(
+                            Screen.Settings.createRoute(com.nendo.argosy.ui.screens.settings.SettingsSection.PLATFORMS.name)
+                        )
+                    },
+                    onOpenSettings = { navController.navigate(Screen.Settings.createRoute()) },
+                    onNavigate = { route -> navController.navigate(route) },
+                    onEditPlatform = { platformId ->
+                        navController.navigate(
+                            Screen.Settings.createRoute(section = "platform_detail", platformId = platformId)
+                        )
+                    }
+                )
+            } else {
+                HomeScreen(
+                    isDefaultView = true,
+                    videoPreviewBlocked = videoPreviewBlocked,
+                    onNavigateToCollections = { collectionId ->
+                        navController.navigate(
+                            if (collectionId > 0) {
+                                Screen.CollectionDetail.createRoute(collectionId)
+                            } else {
+                                Screen.Collections.route
+                            }
+                        )
+                    },
+                    onGameSelect = { gameId ->
+                        navController.navigate(Screen.GameDetail.createRoute(gameId))
+                    },
+                    onNavigateToLibrary = { platformId, sourceFilter, filters ->
+                        navController.navigate(
+                            Screen.Library.createRoute(platformId, sourceFilter, filters)
+                        )
+                    },
+                    onNavigateToDefault = navigateToDefault,
+                    onDrawerToggle = onDrawerToggle,
+                    onChangelogAction = { action ->
+                        val section = action.settingsSection.name
+                        navController.navigate(Screen.Settings.createRoute(section, action.actionKey))
+                    },
+                    onNavigateToSettings = { section ->
+                        navController.navigate(Screen.Settings.createRoute(section))
+                    },
+                    onPlayMedia = onPlayMedia,
+                    onMediaSelect = { itemId ->
+                        navController.navigate(Screen.MediaDetail.createRoute(itemId))
+                    }
+                )
+            }
+        }
+
+        composable(
+            route = Screen.Library.route,
+            // Cocoon: the board fades out while the folder fades in quickly over it.
+            enterTransition = { fadeIn(animationSpec = tween(90)) },
+            popExitTransition = { fadeOut(animationSpec = tween(90)) },
+            // ...but a sheet opened from the folder replaces it in place, without a fade.
+            exitTransition = {
+                if (targetState.destination.route == Screen.GameDetail.route && targetState.arguments?.getString("sheet") != null) {
+                    androidx.compose.animation.ExitTransition.None
+                } else fadeOut(animationSpec = tween(100))
+            },
+            popEnterTransition = {
+                if (initialState.destination.route == Screen.GameDetail.route && initialState.arguments?.getString("sheet") != null) {
+                    androidx.compose.animation.EnterTransition.None
+                } else fadeIn(animationSpec = tween(100))
+            },
+            arguments = listOf(
+                navArgument("platformId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("source") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("filters") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            val platformId = backStackEntry.arguments?.getString("platformId")?.toLongOrNull()
+            val source = backStackEntry.arguments?.getString("source")
+            val filters = backStackEntry.arguments?.getString("filters")
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.nendo.argosy.ui.theme.LocalBoxArtStyle provides
+                    com.nendo.argosy.ui.cocoon.cocoonCoverStyle(com.nendo.argosy.ui.theme.LocalBoxArtStyle.current)
+            ) {
+                LibraryScreen(
+                    isDefaultView = false,
+                    initialPlatformId = platformId,
+                    initialSource = source,
+                    initialTileFilters = filters,
+                    onGameSelect = { gameId ->
+                        navController.navigate(Screen.GameDetail.createRoute(gameId))
+                    },
+                    onMediaLibrarySelect = { libraryId ->
+                        navController.navigate(Screen.MediaLibrary.createRoute(libraryId))
+                    },
+                    onNavigateToDefault = navigateToDefault,
+                    onDrawerToggle = onDrawerToggle,
+                    onOpenApps = { navController.navigate(Screen.Apps.route) },
+                    onOpenSearch = { navController.navigate(Screen.Search.route) },
+                    onOpenSettings = { navController.navigate(Screen.Settings.createRoute()) },
+                    onNavigate = { route -> navController.navigate(route) },
+                    onOpenGameSheet = { gameId, sheet ->
+                        navController.navigate(Screen.GameDetail.createRoute(gameId, sheet))
+                    }
+                )
+            }
+        }
+
+        composable(Screen.Collections.route) {
+            CollectionsScreen(
+                onBack = navigateToDefault,
+                onCollectionClick = { collectionId ->
+                    navController.navigate(Screen.CollectionDetail.createRoute(collectionId))
+                },
+                onVirtualBrowseClick = { type ->
+                    navController.navigate(Screen.VirtualBrowser.createRoute(type))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.CollectionDetail.route,
+            arguments = listOf(navArgument("collectionId") { type = NavType.LongType })
+        ) {
+            CollectionDetailScreen(
+                onBack = { navController.popBackStack() },
+                onGameClick = { gameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(gameId))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.VirtualBrowser.route,
+            arguments = listOf(navArgument("type") { type = NavType.StringType })
+        ) {
+            VirtualBrowserScreen(
+                onBack = { navController.popBackStack() },
+                onCategoryClick = { category ->
+                    val type = it.arguments?.getString("type") ?: "genres"
+                    navController.navigate(Screen.VirtualCategory.createRoute(type, category))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.VirtualCategory.route,
+            arguments = listOf(
+                navArgument("type") { type = NavType.StringType },
+                navArgument("category") { type = NavType.StringType }
+            )
+        ) {
+            VirtualCategoryScreen(
+                onBack = { navController.popBackStack() },
+                onGameClick = { gameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(gameId))
+                }
+            )
+        }
+
+        composable(Screen.Downloads.route) {
+            DownloadsScreen(
+                onBack = navigateToDefault,
+                onDrawerToggle = onDrawerToggle,
+                onNavigateToGame = { gameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(gameId))
+                }
+            )
+        }
+
+        composable(Screen.SyncMonitor.route) {
+            com.nendo.argosy.ui.screens.syncmonitor.SyncMonitorScreen(
+                onBack = { if (!navController.popBackStack()) navigateToDefault() },
+                onDrawerToggle = onDrawerToggle
+            )
+        }
+
+        composable(Screen.SaveSync.route) {
+            com.nendo.argosy.ui.screens.savesync.SaveSyncScreen(
+                onBack = { if (!navController.popBackStack()) navigateToDefault() },
+                onDrawerToggle = onDrawerToggle,
+                onNavigateToGame = { gameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(gameId))
+                }
+            )
+        }
+
+        composable(route = Screen.Apps.route) {
+            AppsScreen(
+                onBack = navigateToDefault,
+                onDrawerToggle = onDrawerToggle
+            )
+        }
+
+        composable(
+            route = Screen.Settings.route,
+            arguments = listOf(
+                navArgument("section") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("action") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("platformId") {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                }
+            )
+        ) { backStackEntry ->
+            val section = backStackEntry.arguments?.getString("section")
+            val action = backStackEntry.arguments?.getString("action")
+            val platformId = backStackEntry.arguments?.getLong("platformId")?.takeIf { it >= 0 }
+            SettingsScreen(
+                onBack = {
+                    if (platformId != null) navController.popBackStack() else navigateToDefault()
+                },
+                initialSection = section,
+                initialAction = action,
+                initialPlatformId = platformId,
+                onNavigateToAvatarEditor = {
+                    navController.navigate(Screen.AvatarDoodle.route)
+                },
+                onNavigate = { route -> navController.navigate(route) }
+            )
+        }
+
+        composable(
+            route = Screen.GameDetail.route,
+            // Cocoon sheets (?sheet=…) open in place over a still of the folder: no cross-fade.
+            enterTransition = {
+                if (targetState.arguments?.getString("sheet") != null) androidx.compose.animation.EnterTransition.None
+                else fadeIn(animationSpec = tween(100))
+            },
+            popExitTransition = {
+                if (initialState.arguments?.getString("sheet") != null) androidx.compose.animation.ExitTransition.None
+                else fadeOut(animationSpec = tween(100))
+            },
+            arguments = listOf(
+                navArgument("gameId") { type = NavType.LongType },
+                navArgument("sheet") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            val gameId = backStackEntry.arguments?.getLong("gameId") ?: return@composable
+            GameDetailScreen(
+                gameId = gameId,
+                cocoonSheet = backStackEntry.arguments?.getString("sheet"),
+                argosyViewModel = argosyViewModel,
+                onBack = { navController.popBackStack() },
+                onNavigateToPlatformSettings = { platformId ->
+                    navController.navigate(
+                        Screen.Settings.createRoute(section = "platform_detail", platformId = platformId)
+                    )
+                },
+                onNavigateToGame = { relatedGameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(relatedGameId))
+                },
+                onOpenSaveTimeline = { timelineGameId ->
+                    navController.navigate(Screen.SaveTimeline.createRoute(timelineGameId))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.SaveTimeline.route,
+            arguments = listOf(navArgument("gameId") { type = NavType.LongType })
+        ) {
+            SaveTimelineScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(
+            route = Screen.MediaLibrary.ROUTE_WITH_ARGS,
+            arguments = listOf(
+                navArgument(Screen.MediaLibrary.ARG_LIBRARY_ID) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            MediaLibraryScreen(
+                libraryId = backStackEntry.arguments?.getString(Screen.MediaLibrary.ARG_LIBRARY_ID),
+                onBack = navigateToDefault,
+                onItemSelect = { itemId ->
+                    navController.navigate(Screen.MediaDetail.createRoute(itemId))
+                },
+                onPlay = onPlayMedia
+            )
+        }
+
+        composable(
+            route = Screen.MediaDetail.route,
+            arguments = listOf(navArgument("itemId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val itemId = backStackEntry.arguments?.getString("itemId") ?: return@composable
+            MediaDetailScreen(
+                itemId = itemId,
+                onBack = { navController.popBackStack() },
+                onPlay = onPlayMedia,
+                onNavigateToLibrary = { libraryId ->
+                    navController.navigate(Screen.MediaLibrary.createRoute(libraryId))
+                }
+            )
+        }
+
+        composable(Screen.Search.route) {
+            SearchScreen(
+                onGameSelect = { gameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(gameId))
+                },
+                onMediaSelect = { itemId ->
+                    navController.navigate(Screen.MediaDetail.createRoute(itemId))
+                },
+                onBack = navigateToDefault
+            )
+        }
+
+        composable(Screen.ManagePins.route) {
+            ManagePinsScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.Social.route) {
+            SocialScreen(
+                onBack = navigateToDefault,
+                onDrawerToggle = onDrawerToggle,
+                onOpenEventDetail = { eventId ->
+                    navController.navigate(Screen.SocialEventDetail.createRoute(eventId))
+                },
+                onCreatePost = {
+                    navController.navigate(Screen.PostEditor.route)
+                },
+                onViewProfile = { userId ->
+                    navController.navigate(Screen.UserProfile.createRoute(userId))
+                },
+                onNavigateToGameDetail = { gameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(gameId.toLong()))
+                },
+                onNavigateToSocialSettings = {
+                    navController.navigate(Screen.Settings.createRoute(section = "social"))
+                },
+                onNavigateToAvatarEditor = {
+                    navController.navigate(Screen.AvatarDoodle.route)
+                }
+            )
+        }
+
+        composable(
+            route = Screen.UserProfile.route,
+            arguments = listOf(navArgument("userId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val userId = backStackEntry.arguments?.getString("userId") ?: return@composable
+            UserProfileScreen(
+                userId = userId,
+                onBack = { navController.popBackStack() },
+                onNavigateToGameDetail = { gameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(gameId.toLong()))
+                }
+            )
+        }
+
+        composable(
+            route = Screen.SocialEventDetail.route,
+            arguments = listOf(navArgument("eventId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val eventId = backStackEntry.arguments?.getString("eventId") ?: return@composable
+            FeedEventDetailScreen(
+                eventId = eventId,
+                onBack = { navController.popBackStack() },
+                onNavigateToGame = { gameId ->
+                    navController.navigate(Screen.GameDetail.createRoute(gameId))
+                },
+                onViewProfile = { userId ->
+                    navController.navigate(Screen.UserProfile.createRoute(userId))
+                }
+            )
+        }
+
+        composable(Screen.Doodle.route) {
+            val prevHandle = navController.previousBackStackEntry?.savedStateHandle
+            val initialGameId = prevHandle?.get<Int>("doodle_initial_game_id")
+            val initialGameTitle = prevHandle?.get<String>("doodle_initial_game_title")
+            val initialGameCoverPath = prevHandle?.get<String>("doodle_initial_game_cover_path")
+            DoodleScreen(
+                onBack = { navController.popBackStack() },
+                onDone = { data, size, gameId, gameTitle, gameCoverPath ->
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("doodle_data", data)
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("doodle_size", size)
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("doodle_game_id", gameId)
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("doodle_game_title", gameTitle)
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("doodle_game_cover_path", gameCoverPath)
+                    navController.popBackStack()
+                },
+                initialGameId = initialGameId,
+                initialGameTitle = initialGameTitle,
+                initialGameCoverPath = initialGameCoverPath
+            )
+        }
+
+        composable(Screen.AvatarDoodle.route) {
+            DoodleScreen(
+                onBack = { navController.popBackStack() },
+                onDone = { _, _, _, _, _ -> navController.popBackStack() },
+                avatarMode = true,
+                inputRoute = Screen.AvatarDoodle.route
+            )
+        }
+
+        composable(Screen.PostEditor.route) { backStackEntry ->
+            val doodleData = backStackEntry.savedStateHandle.get<String>("doodle_data")
+            val doodleSize = backStackEntry.savedStateHandle.get<Int>("doodle_size")
+            val doodleGameId = backStackEntry.savedStateHandle.get<Int>("doodle_game_id")
+            val doodleGameTitle = backStackEntry.savedStateHandle.get<String>("doodle_game_title")
+            val doodleGameCoverPath = backStackEntry.savedStateHandle.get<String>("doodle_game_cover_path")
+            PostEditorScreen(
+                onBack = { navController.popBackStack() },
+                onPosted = { navController.popBackStack() },
+                onNavigateToDoodle = { gameId, gameTitle, gameCoverPath ->
+                    backStackEntry.savedStateHandle["doodle_initial_game_id"] = gameId
+                    backStackEntry.savedStateHandle["doodle_initial_game_title"] = gameTitle
+                    backStackEntry.savedStateHandle["doodle_initial_game_cover_path"] = gameCoverPath
+                    navController.navigate(Screen.Doodle.route)
+                },
+                initialDoodleData = doodleData,
+                initialDoodleSize = doodleSize,
+                initialDoodleGameId = doodleGameId,
+                initialDoodleGameTitle = doodleGameTitle,
+                initialDoodleGameCoverPath = doodleGameCoverPath
+            )
+        }
+
+        composable(Screen.QuayPass.route) {
+            QuayPassCheckInScreen(onBack = navigateToDefault)
+        }
+    }
+}
