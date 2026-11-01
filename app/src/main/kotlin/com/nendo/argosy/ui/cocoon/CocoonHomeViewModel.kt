@@ -781,9 +781,16 @@ class CocoonHomeViewModel @Inject constructor(
         val tiles: List<CocoonTile> = layout(ordered)
         if (_state.value.tiles == tiles) return
         _state.update { current ->
-            val keepKey = current.focusedTile?.key
+            // Until you move, the cursor isn't "yours" yet: folders arrive in stages at start-up
+            // (Android Games first), so it goes to the first folder, or back to the one you
+            // opened, rather than sticking to whatever tile appeared first.
+            val keepKey = if (focusSettled) current.focusedTile?.key
+                else if (groupPath.isEmpty()) CocoonHomeStore.lastFocusKey else null
+            val firstReal = tiles.indexOfFirst { it.target !is CocoonTileTarget.Gap && it.target !is CocoonTileTarget.Covered }
+                .coerceAtLeast(0)
             val index = tiles.indexOfFirst { it.key == keepKey }.takeIf { it >= 0 }
-                ?: current.focusedIndex.coerceIn(0, (current.copy(tiles = tiles).slotCount - 1).coerceAtLeast(0))
+                ?: if (focusSettled) current.focusedIndex.coerceIn(0, (current.copy(tiles = tiles).slotCount - 1).coerceAtLeast(0))
+                else firstReal
             current.copy(tiles = tiles, focusedIndex = index, isLoading = false, groupTitles = groupTitles())
         }
         // The folder under the cursor at start-up (or on return) gets its covers warmed too.
@@ -826,6 +833,8 @@ class CocoonHomeViewModel @Inject constructor(
         val before = _state.value.focusedTile?.key
         _state.update { it.copy(inDock = false, focusedIndex = index.coerceIn(0, (it.slotCount - 1).coerceAtLeast(0))) }
         val now = _state.value.focusedTile
+        focusSettled = true
+        rememberFocus()
         if (now?.key != before) prefetchCovers(now)
     }
 
@@ -894,7 +903,18 @@ class CocoonHomeViewModel @Inject constructor(
     }
 
     /** Moves focus on the column-major board; answers false at an edge so the press can be refused. */
+    /** True once you've moved the cursor yourself. */
+    private var focusSettled = false
+
+    /** Remembers the tile under the cursor (on Home itself) for when Home comes back. */
+    private fun rememberFocus() {
+        if (groupPath.isEmpty() && !_state.value.inDock) {
+            _state.value.focusedTile?.key?.let { CocoonHomeStore.lastFocusKey = it }
+        }
+    }
+
     private fun move(dRow: Int, dCol: Int): Boolean {
+        focusSettled = true
         val state = _state.value
         val dockBelow = CocoonHomeStore.dockBottom
         if (state.inDock) {
@@ -1138,7 +1158,7 @@ class CocoonHomeViewModel @Inject constructor(
 
         // Edges answer with the boundary sound rather than falling through to Argosy's drawer.
         private fun step(dRow: Int, dCol: Int): InputResult =
-            if (move(dRow, dCol)) InputResult.HANDLED else InputResult.handled(com.nendo.argosy.core.input.SoundType.BOUNDARY)
+            if (move(dRow, dCol)) { rememberFocus(); InputResult.HANDLED } else InputResult.handled(com.nendo.argosy.core.input.SoundType.BOUNDARY)
 
         override fun onUp(): InputResult = when {
             choosing -> choiceStep(-1)

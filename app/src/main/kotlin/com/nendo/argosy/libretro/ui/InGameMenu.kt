@@ -479,7 +479,10 @@ private fun InGameMenuList(
                 .fillMaxWidth()
                 .weight(1f, fill = false)
                 .verticalEdgeFade(menuGridState, fadeHeight = Dimens.spacingXl),
-            verticalArrangement = Arrangement.spacedBy(Dimens.spacingXs),
+            // Cocoon: one grouped card of rows (no gaps) when it's a single column; room around the
+            // list so the cursor corners aren't cut off at its edges.
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = if (!collapsed && gridColumns == 1) Arrangement.Top else Arrangement.spacedBy(Dimens.spacingXs),
             horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
         ) {
             itemsIndexed(
@@ -511,6 +514,19 @@ private fun InGameMenuList(
                             }
                         },
                         onEntryClick = onQuickHistoryLoad
+                    )
+                } else if (!collapsed) {
+                    // Cocoon's menu rows: icon and label in a rounded card, cursor corners on focus
+                    val single = gridColumns == 1
+                    com.nendo.argosy.ui.cocoon.CocoonMenuRow(
+                        icon = action.icon,
+                        label = label,
+                        focused = rowFocused,
+                        isFirst = !single || index == 0,
+                        isLast = !single || index == menuItems.lastIndex,
+                        onClick = onRowClick,
+                        color = if (action == InGameMenuAction.QuickLoad) com.nendo.argosy.ui.theme.CocoonSurface.TextSecondary
+                            else com.nendo.argosy.ui.theme.CocoonSurface.TextPrimary
                     )
                 } else {
                     NavDrawerRow(

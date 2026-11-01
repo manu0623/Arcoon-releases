@@ -39,6 +39,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -370,8 +371,10 @@ fun ArgosyApp(
 
     val rootFocusRequester = remember { FocusRequester() }
     var resumeCount by remember { mutableStateOf(0) }
+    var anyResumeCount by remember { mutableStateOf(0) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        anyResumeCount++
         if (dsm?.isOverlayFocused != true) {
             inputDispatcher.blockInputFor(200)
             inputDispatcher.resetToMainView()
@@ -829,6 +832,27 @@ fun ArgosyApp(
         }
     }
 
+    // Waking from sleep can freeze the drawer half-way through its slide; on every resume it is
+    // put straight back where it belongs (closed unless it's meant to be open).
+    LaunchedEffect(anyResumeCount) {
+        repeat(3) { attempt ->
+            if (attempt > 0) delay(250)
+            val closed = !viewModel.isDrawerOpen.value
+            if (closed) {
+                inputDispatcher.unsubscribeDrawer()
+                com.nendo.argosy.util.ArcoonTrace.log(
+                    "drawer resume check: offset=${drawerState.currentOffset} value=${drawerState.currentValue}"
+                )
+            }
+            runCatching {
+                drawerState.snapTo(
+                    if (!closed) androidx.compose.material3.DrawerValue.Open
+                    else androidx.compose.material3.DrawerValue.Closed
+                )
+            }
+        }
+    }
+
     val notifyOverlayClosed: () -> Unit = remember {
         {
             if (dsm != null && dsm.isOverlayFocused) {
@@ -1237,6 +1261,19 @@ fun ArgosyApp(
                 gesturesEnabled = !uiState.isFirstRun,
                 scrimColor = scrimColor,
                 drawerContent = {
+                    /*
+                     * After the screen sleeps, the drawer's resting place can be measured before
+                     * the screen is back to full size, leaving a strip of it on the left edge. A
+                     * closed drawer that isn't moving is therefore never drawn at all.
+                     */
+                    val drawerShown by remember(drawerState) {
+                        derivedStateOf {
+                            drawerState.isAnimationRunning ||
+                                drawerState.currentValue == androidx.compose.material3.DrawerValue.Open ||
+                                drawerState.targetValue == androidx.compose.material3.DrawerValue.Open
+                        }
+                    }
+                    Box(modifier = Modifier.graphicsLayer { alpha = if (drawerShown || isDrawerOpen) 1f else 0f }) {
                     MainDrawer(
                         items = viewModel.drawerItems,
                         currentRoute = currentRoute,
@@ -1250,13 +1287,14 @@ fun ArgosyApp(
                         },
                         modifier = Modifier.onSizeChanged { drawerWidthPx = it.width.toFloat() }
                     )
+                    }
                 }
             ) {
                 val drawerBlurProgress by remember(drawerState) {
                     derivedStateOf {
                         val offset = drawerState.currentOffset
                         val width = drawerWidthPx
-                        if (offset.isNaN() || width <= 0f) {
+                        if (offset.isNaN() || width <= 0f || (!isDrawerOpen && !drawerState.isAnimationRunning)) {
                             0f
                         } else {
                             (1f + offset / width).coerceIn(0f, 1f)

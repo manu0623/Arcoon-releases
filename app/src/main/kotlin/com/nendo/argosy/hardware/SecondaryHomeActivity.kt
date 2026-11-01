@@ -208,12 +208,17 @@ class SecondaryHomeActivity :
 
     @androidx.compose.runtime.Composable
     private fun CompanionRoleContent() {
-        val gameActive by dsm.swappedIsGameActive.collectAsState()
+        val gameActive by dsm.gameOnScreen.collectAsState()
         val gameDisplay by dsm.emulatorDisplay.collectAsState()
         val hereDisplayId = androidx.core.content.ContextCompat.getDisplayOrDefault(this).displayId
         val showsDashboard = gameActive && dsm.primaryShowsDashboard(hereDisplayId, gameDisplay)
         val rolesSwapped by dsm.isRolesSwapped.collectAsState()
         val launcherShown = !rolesSwapped && !showsDashboard
+        androidx.compose.runtime.LaunchedEffect(launcherShown, showsDashboard) {
+            com.nendo.argosy.util.ArcoonTrace.log(
+                "companion window (display $hereDisplayId) shows ${if (launcherShown) "launcher" else if (showsDashboard) "game dashboard" else "presentation"}"
+            )
+        }
         val handoffMs = com.nendo.argosy.ui.dualscreen.companionHandoffMs(
             showsDashboard = showsDashboard,
             reduced = com.nendo.argosy.ui.theme.LocalMotionTier.current ==
@@ -230,9 +235,13 @@ class SecondaryHomeActivity :
                     androidx.compose.animation.core.tween(handoffMs)
                 )
             ) {
-                com.nendo.argosy.ui.ArgosyApp(
-                    onStartupComplete = { dsm.stopStartupGuard() }
-                )
+                // One sliding Cocoon cursor for the whole lower screen, as on the top screen. Without
+                // it every item drew its own corners, which lists cut off at their edges.
+                com.nendo.argosy.ui.primitives.CocoonCursorHost(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
+                    com.nendo.argosy.ui.ArgosyApp(
+                        onStartupComplete = { dsm.stopStartupGuard() }
+                    )
+                }
             }
             androidx.compose.animation.AnimatedVisibility(
                 visible = !launcherShown,

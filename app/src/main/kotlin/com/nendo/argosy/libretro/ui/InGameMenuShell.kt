@@ -85,12 +85,10 @@ internal fun InGameMenuPanel(
     )
 
     val isDarkTheme = isSystemInDarkTheme()
-    val overlayColor = if (isDarkTheme) {
-        Color.Black.copy(alpha = SCRIM_ALPHA_DARK)
-    } else {
-        Color.White.copy(alpha = SCRIM_ALPHA_LIGHT)
-    }
-    val panelShape = RoundedCornerShape(topEnd = Dimens.radiusXl, bottomEnd = Dimens.radiusXl)
+    // Cocoon dims the game behind its menu with black
+    val overlayColor = Color.Black.copy(alpha = 0.55f)
+    // Cocoon: a floating rounded card in the theme's panel colour (glass when the theme is glass)
+    val panelShape = RoundedCornerShape(24.dp)
 
     var sectionHandler: InputHandler? = null
 
@@ -110,10 +108,11 @@ internal fun InGameMenuPanel(
     ) {
         Row(
             modifier = Modifier
+                .padding(12.dp)
                 .width(panelWidth)
                 .fillMaxHeight()
                 .clip(panelShape)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = PANEL_SURFACE_ALPHA))
+                .background(com.nendo.argosy.ui.theme.CocoonSurface.Panel)
                 .clickableNoFocus {}
                 .focusProperties { canFocus = false }
         ) {

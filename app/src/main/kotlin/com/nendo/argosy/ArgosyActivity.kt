@@ -375,7 +375,8 @@ class ArgosyActivity : ComponentActivity() {
             displayAffinityHelper = displayAffinityHelper,
             screenCaptureManager = screenCaptureManager,
             onDualScreenChanged = { dualScreenManager.setDualScreenDevice(it) },
-            hasWindowFocus = ::hasWindowFocus
+            hasWindowFocus = ::hasWindowFocus,
+            appContext = applicationContext
         )
         preferencesObserver.collectIn(activityScope)
         revealCallerWhenExternalSessionCloses()
@@ -393,7 +394,7 @@ class ArgosyActivity : ComponentActivity() {
                     }
                     val companionHoldsPrimary =
                         dualScreenManager.companionHoldsPrimary.collectAsState()
-                    val gameActive = dualScreenManager.swappedIsGameActive.collectAsState()
+                    val gameActive = dualScreenManager.gameOnScreen.collectAsState()
                     val gameDisplay = dualScreenManager.emulatorDisplay.collectAsState()
                     val showsPresentation = rendersPresentation(
                         companionHoldsPrimary.value,
@@ -403,9 +404,17 @@ class ArgosyActivity : ComponentActivity() {
                     androidx.compose.runtime.CompositionLocalProvider(
                         com.nendo.argosy.ui.theme.LocalMotionTier provides com.nendo.argosy.ui.cocoon.cocoonMotionTier()
                     ) {
+                    androidx.compose.runtime.LaunchedEffect(showsPresentation) {
+                        com.nendo.argosy.util.ArcoonTrace.log(
+                            "main window (display ${window.decorView.display?.displayId}) shows ${if (showsPresentation) "presentation" else "launcher"}"
+                        )
+                    }
                     com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = showsPresentation) {
                     if (showsPresentation) {
                         val slot by dualScreenManager.presentationSlot.collectAsState()
+                        androidx.compose.runtime.LaunchedEffect(slot::class) {
+                            com.nendo.argosy.util.ArcoonTrace.log("main window presentation slot: ${slot::class.simpleName}")
+                        }
                         val presentationSink = androidx.compose.runtime.remember {
                             FocusRequester()
                         }
@@ -775,7 +784,7 @@ class ArgosyActivity : ComponentActivity() {
         if (emulatorDisplay == ownDisplay) return false
         return rendersPresentation(
             dualScreenManager.companionHoldsPrimary.value,
-            dualScreenManager.swappedIsGameActive.value,
+            dualScreenManager.gameOnScreen.value,
             emulatorDisplay
         )
     }

@@ -281,7 +281,7 @@ fun CocoonThemeStoreScreen(onDismiss: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             val current = section
             if (current == null) {
-                CocoonCursorHost(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                CocoonCursorHost(modifier = Modifier.fillMaxWidth().weight(1f), covers = true) {
                     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp)) {
                         StoreSection.entries.forEachIndexed { index, s ->
                             CocoonMenuRow(
@@ -299,7 +299,7 @@ fun CocoonThemeStoreScreen(onDismiss: () -> Unit) {
                 // Silk's carousel: the focused theme large in the middle, its neighbours either side.
                 val row = rememberLazyListState()
                 LaunchedEffect(focus) { if (catalog.isNotEmpty()) runCatching { row.animateScrollToItem((focus - 1).coerceAtLeast(0)) } }
-                CocoonCursorHost(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                CocoonCursorHost(modifier = Modifier.fillMaxWidth().weight(1f), covers = true) {
                     LazyRow(
                         state = row,
                         horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -391,7 +391,7 @@ private fun CocoonCatalogManager(onDismiss: () -> Unit) {
             Text(stringResource(R.string.cocoon_store_catalogs), style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold, color = CocoonSurface.TextPrimary)
             Spacer(Modifier.height(14.dp))
-            CocoonCursorHost(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            CocoonCursorHost(modifier = Modifier.fillMaxWidth().weight(1f), covers = true) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     (listOf(stringResource(R.string.cocoon_store_catalog_add)) + repos).forEachIndexed { index, label ->
                         Text(

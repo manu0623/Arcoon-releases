@@ -188,7 +188,7 @@ fun CocoonThemePicker(onDismiss: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             // The highlighted theme is previewed beside the grid before it is applied.
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                CocoonCursorHost(modifier = Modifier.weight(0.62f).fillMaxHeight()) {
+                CocoonCursorHost(modifier = Modifier.weight(0.62f).fillMaxHeight(), covers = true) {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(COLUMNS),
                         state = grid,

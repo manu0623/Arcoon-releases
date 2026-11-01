@@ -33,6 +33,8 @@ fun libraryQuickMenuRows(
         add(LibraryQuickMenuRow.LAUNCH_SCREEN_2)
     }
     add(LibraryQuickMenuRow.EDIT)
+    // Argosy's full game page (saves, files, play history, info)
+    add(LibraryQuickMenuRow.DETAILS)
     // Cocoon's Scrape Game: fetch this game's info and art again
     add(LibraryQuickMenuRow.REFRESH)
     if (game.isRommGame) add(LibraryQuickMenuRow.ACHIEVEMENTS)

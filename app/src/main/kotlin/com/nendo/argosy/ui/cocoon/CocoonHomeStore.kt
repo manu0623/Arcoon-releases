@@ -7,6 +7,9 @@ import android.content.Context
  * itself to Home through here). The board reads the same "cocoon_board" preferences.
  */
 object CocoonHomeStore {
+    /** The Home tile the cursor was last on, so coming back from a folder lands on it again. */
+    @Volatile var lastFocusKey: String? = null
+
     private const val PREFS = "cocoon_board"
 
     /** Cocoon's Grid setting: how many rows the board has (2–4). */

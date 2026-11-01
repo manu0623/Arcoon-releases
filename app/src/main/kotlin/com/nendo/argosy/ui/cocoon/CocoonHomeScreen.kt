@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -118,7 +119,7 @@ fun CocoonHomeScreen(
     viewModel: CocoonHomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val manager = com.nendo.argosy.DualScreenManagerHolder.instance
+    val manager by com.nendo.argosy.DualScreenManagerHolder.instanceFlow.collectAsState()
     val hasPresentation by (
         manager?.hasPresentationScreen ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }
         ).collectAsState()
@@ -131,6 +132,7 @@ fun CocoonHomeScreen(
     LaunchedEffect(Unit) {
         if (CocoonFolderZoom.returning) {
             CocoonFolderZoom.returning = false
+            CocoonFolderZoom.opening = false
             folderZoom.animateTo(0f, androidx.compose.animation.core.tween(240, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
         }
     }
@@ -140,6 +142,7 @@ fun CocoonHomeScreen(
         if (folderZoom.isRunning) return
         zoomScope.launch {
             CocoonFolderZoom.returning = true
+            CocoonFolderZoom.opening = true
             folderZoom.animateTo(1f, androidx.compose.animation.core.tween(170, easing = androidx.compose.animation.core.FastOutLinearInEasing))
             then()
         }
@@ -557,8 +560,12 @@ private fun CocoonBoard(
         // arriving and the corners arriving land together and the cursor holds still.
         val density = androidx.compose.ui.platform.LocalDensity.current
         val pitchPx = with(density) { (tileSize + gap).toPx() }
+        // When Home first appears (or comes back from a folder) the board jumps straight to the
+        // cursor; it only glides for moves you make.
+        val shownAt = androidx.compose.runtime.remember { android.os.SystemClock.uptimeMillis() }
         LaunchedEffect(state.focusedIndex, visibleColumns, state.slotCount) {
             if (state.tiles.isEmpty() || state.inDock) return@LaunchedEffect
+            val settling = android.os.SystemClock.uptimeMillis() - shownAt < 1_500
             val column = state.focusedIndex / COCOON_BOARD_ROWS
             val lastColumn = (state.slotCount - 1) / COCOON_BOARD_ROWS
             val maxFirst = (lastColumn - visibleColumns + 1).coerceAtLeast(0)
@@ -567,6 +574,10 @@ private fun CocoonBoard(
                 gridState.firstVisibleItemScrollOffset
             val delta = targetFirst * pitchPx - currentPx
             if (kotlin.math.abs(delta) < 1f) return@LaunchedEffect
+            if (settling) {
+                gridState.scrollBy(delta)
+                return@LaunchedEffect
+            }
             gridState.animateScrollBy(
                 delta,
                 androidx.compose.animation.core.tween(150, easing = androidx.compose.animation.core.CubicBezierEasing(0.33f, 1f, 0.68f, 1f))
@@ -616,7 +627,9 @@ private fun CocoonBoard(
                                 .onGloballyPositioned { CocoonFolderZoom.tile = it.boundsInRoot() }
                                 .graphicsLayer {
                                     // the opened folder swells as the board falls away from it
-                                    val z = CocoonFolderZoom.progress?.value ?: 0f
+                                    // only on the way in: coming back, the cursor corners measure the
+                                    // folder at its normal size, so it must not start swollen
+                                    val z = if (CocoonFolderZoom.opening) CocoonFolderZoom.progress?.value ?: 0f else 0f
                                     val pop = 1f + 0.18f * kotlin.math.sin(z * Math.PI.toFloat() * 0.5f)
                                     scaleX = pop
                                     scaleY = pop
@@ -631,8 +644,10 @@ private fun CocoonBoard(
                                     )
                                 )
                             } else if (reflowing) {
+                                // no fade-in: folders newly in view during the reflow appeared from
+                                // nothing, which read as a flash
                                 Modifier.animateItem(
-                                    fadeInSpec = androidx.compose.animation.core.tween(200),
+                                    fadeInSpec = null,
                                     placementSpec = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(
                                         260, easing = com.nendo.argosy.ui.theme.Motion.argosyEase
                                     ),
@@ -1129,6 +1144,8 @@ private fun CocoonListMenu(
 /** Where the board zooms from when a folder opens, and whether it owes the zoom back out. */
 object CocoonFolderZoom {
     var returning = false
+    /** True while a folder is opening (the folder pops); false on the way back. */
+    var opening = false
     /** The board's open/close progress (0 = Home, 1 = folder), read while drawing. */
     var progress: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>? = null
     var board: androidx.compose.ui.geometry.Rect = androidx.compose.ui.geometry.Rect.Zero

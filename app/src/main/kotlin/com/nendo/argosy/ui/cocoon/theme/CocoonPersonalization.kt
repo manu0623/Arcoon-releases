@@ -1,6 +1,7 @@
 package com.nendo.argosy.ui.cocoon.theme
 
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -75,6 +76,9 @@ private enum class PersonalRow(val labelRes: Int) {
 private val CURSOR_STYLES = listOf(null, "ANIMATED", "OUTLINED", "ALTERNATIVE_ANIMATED", "ALTERNATIVE")
 private val THICKNESSES = listOf(null, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1f)
 private val DOCK_SHAPES = listOf(null, "CIRCLE", "SQUIRCLE", "ROUNDED_SQUARE", "SQUARE")
+
+/** One height for every row, tall enough for a label or value on two lines. */
+private val PERSONAL_ROW_HEIGHT = 76.dp
 
 private fun <T> cycle(list: List<T>, current: T, delta: Int): T {
     val index = list.indexOf(current).coerceAtLeast(0)
@@ -287,12 +291,27 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
             // The page is longer than the screen: the list scrolls to keep the focused row in view.
             val list = androidx.compose.foundation.lazy.rememberLazyListState()
             androidx.compose.runtime.LaunchedEffect(focus) {
-                val visible = list.layoutInfo.visibleItemsInfo
-                val first = visible.firstOrNull()?.index ?: 0
-                val last = visible.lastOrNull()?.index ?: 0
-                if (focus <= first || focus >= last) {
-                    runCatching { list.animateScrollToItem((focus - 2).coerceAtLeast(0)) }
+                // Keep the highlighted row on screen with one short, smooth scroll of just the
+                // distance needed, plus a margin so the next row peeks in. Re-centering the list
+                // on every step made it jump, and stutter on the way back up.
+                val info = list.layoutInfo
+                val item = info.visibleItemsInfo.firstOrNull { it.index == focus }
+                val margin = (info.viewportEndOffset - info.viewportStartOffset) / 6
+                val spec = androidx.compose.animation.core.tween<Float>(
+                    220, easing = androidx.compose.animation.core.FastOutSlowInEasing
+                )
+                if (item == null) {
+                    runCatching { list.animateScrollToItem(focus) }
+                    return@LaunchedEffect
                 }
+                val top = item.offset - info.viewportStartOffset
+                val bottom = item.offset + item.size - info.viewportEndOffset
+                val delta = when {
+                    top < margin && list.canScrollBackward -> (top - margin).toFloat()
+                    bottom > -margin && list.canScrollForward -> (bottom + margin).toFloat()
+                    else -> 0f
+                }
+                if (delta != 0f) runCatching { list.animateScrollBy(delta, spec) }
             }
             // Settings that change how things look get a live preview beside the list (or above it
             // on a narrow screen) that follows the highlighted row.
@@ -302,7 +321,7 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
                 else -> CocoonPreviewKind.HOME
             }
             val personalList: @Composable (Modifier) -> Unit = { listModifier ->
-                CocoonCursorHost(modifier = listModifier) {
+                CocoonCursorHost(modifier = listModifier, covers = true) {
                     androidx.compose.foundation.lazy.LazyColumn(
                         state = list,
                         modifier = Modifier.fillMaxSize(),
@@ -310,29 +329,55 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
                     ) {
                         items(rows.size) { index ->
                             val row = rows[index]
+                            // Every row is the same height and splits the same way, whatever its
+                            // value says: a long value ("Alternative (Animated)") used to take the
+                            // width, squeeze the label into a tall column and resize the row (and
+                            // the cursor with it) at each press.
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .height(PERSONAL_ROW_HEIGHT)
                                     .cocoonBrackets(focused = index == focus, outset = 3.dp)
                                     .background(CocoonSurface.Panel, RoundedCornerShape(16.dp))
                                     .clickableNoFocus { focus = index; change(row, 1) }
-                                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                                    .padding(horizontal = 16.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     stringResource(row.labelRes),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = CocoonSurface.TextPrimary,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f)
                                 )
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = CocoonSurface.TextSecondary)
-                                Text(
-                                    valueOf(row),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = CocoonSurface.TextPrimary,
-                                    modifier = Modifier.padding(horizontal = 8.dp)
-                                )
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = CocoonSurface.TextSecondary)
+                                Spacer(Modifier.width(8.dp))
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                        contentDescription = null,
+                                        tint = CocoonSurface.TextSecondary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        valueOf(row),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = CocoonSurface.TextPrimary,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                                    )
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = CocoonSurface.TextSecondary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -346,13 +391,14 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
                 }
                 when {
                     jinglesOnly -> personalList(Modifier.fillMaxSize())
-                    maxWidth >= 600.dp -> Row(Modifier.fillMaxSize()) {
-                        personalList(Modifier.weight(0.56f).fillMaxHeight())
-                        Spacer(Modifier.width(20.dp))
-                        preview(Modifier.weight(0.44f).padding(top = 4.dp))
+                    // side by side whenever there's room, so the list keeps the full height
+                    maxWidth >= 420.dp -> Row(Modifier.fillMaxSize()) {
+                        personalList(Modifier.weight(0.6f).fillMaxHeight())
+                        Spacer(Modifier.width(16.dp))
+                        preview(Modifier.weight(0.4f).padding(top = 4.dp))
                     }
                     else -> Column(Modifier.fillMaxSize()) {
-                        preview(Modifier.fillMaxWidth(0.5f).align(Alignment.CenterHorizontally))
+                        preview(Modifier.fillMaxWidth(0.4f).align(Alignment.CenterHorizontally))
                         Spacer(Modifier.height(12.dp))
                         personalList(Modifier.fillMaxWidth().weight(1f))
                     }
@@ -421,7 +467,7 @@ private fun CocoonJingleRepoManager(onDismiss: () -> Unit) {
             Text(stringResource(R.string.cocoon_jingle_repos), style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold, color = CocoonSurface.TextPrimary)
             Spacer(Modifier.height(14.dp))
-            CocoonCursorHost(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            CocoonCursorHost(modifier = Modifier.fillMaxWidth().weight(1f), covers = true) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     (listOf(stringResource(R.string.cocoon_jingle_repo_add)) + repos).forEachIndexed { index, label ->
                         Text(

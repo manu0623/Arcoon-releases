@@ -29,6 +29,7 @@ import com.nendo.argosy.ui.theme.Dimens
 import com.nendo.argosy.ui.util.verticalEdgeFade
 import com.nendo.argosy.ui.theme.LocalUiScale
 import com.nendo.argosy.ui.util.clickableNoFocus
+import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -133,9 +134,9 @@ fun <Item> SectionPaneLayout(
                     .fillMaxHeight()
                     .padding(start = Dimens.spacingMd)
                     .verticalEdgeFade(contentListState, fadeHeight = Dimens.spacingMd, top = !headerLock),
-                verticalArrangement = verticalArrangement
+                verticalArrangement = Arrangement.Top
             ) {
-                paneItems(filteredItems, itemKey, isHeader, rowFocusIndex, itemContent)
+                paneItems(filteredItems, itemKey, isHeader, isNavItem, rowFocusIndex, itemContent)
             }
         }
     } else {
@@ -155,9 +156,9 @@ fun <Item> SectionPaneLayout(
         LazyColumn(
             state = listState,
             modifier = modifier.verticalEdgeFade(listState, fadeHeight = Dimens.spacingMd, top = false),
-            verticalArrangement = verticalArrangement
+            verticalArrangement = Arrangement.Top
         ) {
-            paneItems(items, itemKey, isHeader, rowFocusIndex, itemContent)
+            paneItems(items, itemKey, isHeader, isNavItem, rowFocusIndex, itemContent)
         }
     }
 }
@@ -214,29 +215,51 @@ private fun <Item> LazyListScope.paneItems(
     items: List<Item>,
     itemKey: (Item) -> Any,
     isHeader: (Item) -> Boolean,
+    isBreak: (Item) -> Boolean,
     rowFocusIndex: (Item) -> Int,
     itemContent: @Composable (Item) -> Unit
 ) {
-    items.forEach { item ->
+    val breaks = items.map { isHeader(it) || isBreak(it) }
+    items.forEachIndexed { index, item ->
         if (isHeader(item)) {
             stickyHeader(key = itemKey(item)) {
                 Box(
                     modifier = Modifier
                         .fillParentMaxWidth()
                         .background(MaterialTheme.colorScheme.background)
+                        .padding(bottom = Dimens.spacingSm)
                 ) {
                     itemContent(item)
                 }
             }
+        } else if (isBreak(item)) {
+            item(key = itemKey(item)) { itemContent(item) }
         } else {
+            val first = index == 0 || breaks[index - 1]
+            val last = index == items.lastIndex || breaks[index + 1]
+            val position = SettingsGroupPosition(first, last)
             item(key = itemKey(item)) {
-                SettingsRowTapArea(rowFocusIndex(item)) {
-                    itemContent(item)
+                Box(modifier = Modifier.padding(bottom = if (last) Dimens.spacingMd else SETTINGS_GROUP_DIVIDER)) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalSettingsGroupPosition provides position) {
+                        SettingsRowTapArea(rowFocusIndex(item)) {
+                            itemContent(item)
+                        }
+                    }
                 }
             }
         }
     }
 }
+
+/**
+ * Where a settings row sits in its group. Rows between two headers join into one card, as in
+ * Cocoon: only the group's outer corners are round, and a thin line of background parts the rows.
+ */
+data class SettingsGroupPosition(val first: Boolean, val last: Boolean)
+
+val LocalSettingsGroupPosition = androidx.compose.runtime.compositionLocalOf<SettingsGroupPosition?> { null }
+
+val SETTINGS_GROUP_DIVIDER = 2.dp
 
 @Composable
 private fun NavItem(
