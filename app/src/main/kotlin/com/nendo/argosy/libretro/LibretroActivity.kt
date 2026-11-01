@@ -1,0 +1,4149 @@
+package com.nendo.argosy.libretro
+
+import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.RectF
+import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.util.Log
+import android.view.KeyEvent
+import android.view.InputDevice
+import android.view.MotionEvent
+import android.widget.FrameLayout
+import androidx.activity.ComponentActivity
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.res.stringResource
+import com.nendo.argosy.libretro.ui.RAConnectionNotification
+import com.nendo.argosy.core.input.ConnectedControllerTracker
+import com.nendo.argosy.core.input.ControllerDetector
+import com.nendo.argosy.core.input.controllerIdOf
+import com.nendo.argosy.core.input.isPhysicalGamepad
+import com.nendo.argosy.core.input.VirtualPad
+import com.nendo.argosy.ui.input.LocalABIconsSwapped
+import com.nendo.argosy.ui.input.LocalSwapStartSelect
+import com.nendo.argosy.ui.input.LocalXYIconsSwapped
+import com.nendo.argosy.ui.input.buttonGlyphSwaps
+import androidx.lifecycle.lifecycleScope
+import com.nendo.argosy.BuildConfig
+import com.nendo.argosy.R
+import com.nendo.argosy.data.cheats.CheatsRepository
+import com.nendo.argosy.data.emulator.EmulatorRegistry
+import com.nendo.argosy.data.emulator.LaunchOrigin
+import com.nendo.argosy.data.emulator.PlaySessionTracker
+import com.nendo.argosy.data.repository.SaveCacheManager
+import com.nendo.argosy.hardware.AmbientLedManager
+import com.nendo.argosy.data.local.dao.AchievementDao
+import com.nendo.argosy.data.local.dao.CheatDao
+import com.nendo.argosy.data.local.dao.GameDao
+import com.nendo.argosy.data.platform.PlatformWeightRegistry
+import com.nendo.argosy.data.preferences.EffectiveLibretroSettingsResolver
+import com.nendo.argosy.data.preferences.UserPreferences
+import com.nendo.argosy.data.preferences.UserPreferencesRepository
+import com.nendo.argosy.data.repository.InputConfigRepository
+import com.nendo.argosy.data.repository.InputSource
+import com.nendo.argosy.ui.screens.settings.components.ScopedMapping
+import com.nendo.argosy.data.repository.MappingPlatforms
+import com.nendo.argosy.data.repository.RetroButton
+import com.nendo.argosy.data.repository.RetroAchievementsRepository
+import com.nendo.argosy.data.netplay.CoreHashCache
+import com.nendo.argosy.data.social.ArgosSocialService
+import com.nendo.argosy.data.social.NetplaySessionMode
+import com.nendo.argosy.data.social.SocialRepository
+import com.nendo.argosy.core.event.AchievementUpdateBus
+import com.nendo.argosy.core.game.AchievementUi
+import com.nendo.argosy.core.game.toAchievementUi
+import com.nendo.argosy.libretro.ui.InGameAchievements
+import com.nendo.argosy.libretro.ui.cheats.CheatDisplayItem
+import com.nendo.argosy.libretro.ui.cheats.CheatVariantInfo
+import com.nendo.argosy.libretro.ui.cheats.CheatsScreen
+import com.nendo.argosy.libretro.ui.cheats.CheatsTab
+import com.nendo.argosy.libretro.ui.AchievementPopup
+import com.nendo.argosy.libretro.ui.AutoRestorePrompt
+import com.nendo.argosy.data.emulator.M3uManager
+import com.nendo.argosy.libretro.ui.DiscMenu
+import com.nendo.argosy.libretro.ui.InGameMenu
+import com.nendo.argosy.libretro.ui.InGameMenuAction
+import com.nendo.argosy.libretro.ui.menuPanelInputHandler
+import com.nendo.argosy.libretro.ui.NetplayConnectionProgressOverlay
+import com.nendo.argosy.libretro.ui.NetplayFriendPickerDialog
+import com.nendo.argosy.libretro.ui.NetplayHostDisconnectPrompt
+import com.nendo.argosy.libretro.ui.NetplayJoinRequestDialog
+import com.nendo.argosy.libretro.ui.NetplayModePickerDialog
+import com.nendo.argosy.libretro.ui.NetplayMenuRole
+import com.nendo.argosy.libretro.ui.NetplayQualityInfo
+import com.nendo.argosy.libretro.ui.NetplayQualityWarningPrompt
+import com.nendo.argosy.libretro.ui.NetplayBorderHud
+import com.nendo.argosy.libretro.ui.NetplayReconnectingOverlay
+import com.nendo.argosy.libretro.ui.InGameStateManager
+import com.nendo.argosy.libretro.ui.QuickHistoryFocus
+import com.nendo.argosy.libretro.ui.StateManagerViewMode
+import com.nendo.argosy.libretro.ui.ControllerPortOption
+import com.nendo.argosy.libretro.ui.InGameControlsAction
+import com.nendo.argosy.libretro.ui.InGameControlsState
+import com.nendo.argosy.libretro.ui.InGameModalCallbacks
+import com.nendo.argosy.libretro.ui.InGameSettingsScreen
+import com.nendo.argosy.libretro.ui.InGameShaderChainScreen
+import com.nendo.argosy.libretro.ui.LibretroGamepadInputHandler
+import com.nendo.argosy.libretro.ui.LibretroMenuInputHandler
+import com.nendo.argosy.ui.input.InputHandler
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.ui.input.LocalGamepadInputHandler
+import com.nendo.argosy.ui.screens.settings.libretro.InGameLibretroSettingsAccessor
+import com.nendo.argosy.libretro.frame.FrameDownloader
+import com.nendo.argosy.libretro.frame.FrameManager
+import com.nendo.argosy.libretro.frame.FrameRegistry
+import com.nendo.argosy.libretro.ui.InGameFrameScreen
+import com.nendo.argosy.libretro.shader.ShaderChainManager
+import com.nendo.argosy.libretro.shader.ShaderDownloader
+import com.nendo.argosy.libretro.shader.ShaderPreviewRenderer
+import com.nendo.argosy.libretro.shader.ShaderRegistry
+import com.nendo.argosy.ui.theme.ALauncherTheme
+import com.nendo.argosy.ui.theme.GRIP_RESERVE_DEFAULT_PERCENT
+import com.nendo.argosy.ui.theme.isGripAutoControllerConnected
+import com.nendo.argosy.ui.theme.isGripReserveActive
+import com.nendo.argosy.ui.theme.GRIP_RESERVE_MAX_PERCENT
+import com.nendo.argosy.ui.theme.GRIP_RESERVE_MIN_PERCENT
+import com.nendo.argosy.ui.theme.resolveGripReserveFraction
+import com.nendo.argosy.data.preferences.BuiltinEmulatorSettings
+import com.nendo.argosy.util.AppPaths
+import com.nendo.argosy.util.hideSystemBars
+import com.nendo.argosy.util.installImmersiveMode
+import com.swordfish.libretrodroid.GLRetroView
+import com.swordfish.libretrodroid.GLRetroViewData
+import com.swordfish.libretrodroid.LibretroDroid
+import com.swordfish.libretrodroid.Variable
+import com.swordfish.libretrodroid.VulkanDriver
+import com.nendo.argosy.libretro.coreoptions.CoreControlManifestRegistry
+import com.nendo.argosy.libretro.coreoptions.CoreOptionManifestRegistry
+import com.nendo.argosy.data.local.entity.CoreInputMode
+import com.nendo.argosy.data.local.entity.CoreOptionOverrideEntity
+import com.nendo.argosy.data.local.entity.GameCoreOptionOverrideEntity
+import com.nendo.argosy.ui.screens.settings.CoreOptionViewItem
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import javax.inject.Inject
+
+@AndroidEntryPoint
+class LibretroActivity : ComponentActivity() {
+
+    private var languageTag: String = com.nendo.argosy.core.locale.LocaleHelper.SYSTEM_LANGUAGE_TAG
+
+    override fun attachBaseContext(newBase: android.content.Context) {
+        languageTag = com.nendo.argosy.data.preferences.SessionStateStore(newBase).getAppLanguage()
+        super.attachBaseContext(
+            com.nendo.argosy.core.locale.LocaleHelper.wrap(newBase, languageTag)
+        )
+    }
+
+    override fun applyOverrideConfiguration(overrideConfiguration: android.content.res.Configuration?) {
+        super.applyOverrideConfiguration(
+            com.nendo.argosy.core.locale.LocaleHelper.overrideConfiguration(
+                overrideConfiguration,
+                languageTag
+            )
+        )
+    }
+
+    @Inject lateinit var triggerAxisKeyEmitter: com.nendo.argosy.ui.input.TriggerAxisKeyEmitter
+    @Inject lateinit var playSessionTracker: PlaySessionTracker
+    @Inject lateinit var gameSessionManager: com.nendo.argosy.data.emulator.GameSessionManager
+    @Inject lateinit var quickPanelOverlay: com.nendo.argosy.ui.quickpanel.QuickPanelOverlay
+    @Inject lateinit var preferencesRepository: UserPreferencesRepository
+    @Inject lateinit var touchLayoutRepository: com.nendo.argosy.data.repository.TouchLayoutRepository
+    @Inject lateinit var inputConfigRepository: InputConfigRepository
+    @Inject lateinit var connectedControllerTracker: ConnectedControllerTracker
+    @Inject lateinit var cheatDao: CheatDao
+    @Inject lateinit var gameDao: GameDao
+    @Inject lateinit var gameOverlayWriter: com.nendo.argosy.data.repository.GameUserOverlayWriter
+    @Inject lateinit var achievementDao: AchievementDao
+    @Inject lateinit var cheatsRepository: CheatsRepository
+    @Inject lateinit var raRepository: RetroAchievementsRepository
+    @Inject lateinit var verifyRAGameIdUseCase: com.nendo.argosy.domain.usecase.achievement.VerifyRAGameIdUseCase
+    @Inject lateinit var achievementUpdateBus: AchievementUpdateBus
+    @Inject lateinit var saveCacheManager: SaveCacheManager
+    @Inject lateinit var saveScreenshotCapture: com.nendo.argosy.hardware.SaveScreenshotCapture
+    @Inject lateinit var saveUnitResolver: com.nendo.argosy.data.sync.SaveUnitResolver
+    @Inject lateinit var sigilSaveHandler: com.nendo.argosy.data.sync.platform.SigilSaveHandler
+    @Inject lateinit var activeSaveRepository: com.nendo.argosy.data.repository.ActiveSaveRepository
+    @Inject lateinit var activeSaveDiskJudge: com.nendo.argosy.data.repository.ActiveSaveDiskJudge
+    @Inject lateinit var ambientLedManager: AmbientLedManager
+    @Inject lateinit var socialRepository: SocialRepository
+    @Inject lateinit var argosSocialService: ArgosSocialService
+    @Inject lateinit var coreHashCache: CoreHashCache
+    @Inject lateinit var effectiveLibretroSettingsResolver: EffectiveLibretroSettingsResolver
+    @Inject lateinit var platformLibretroSettingsDao: com.nendo.argosy.data.local.dao.PlatformLibretroSettingsDao
+    @Inject lateinit var frameRegistry: FrameRegistry
+    @Inject lateinit var coreOptionsRepository: com.nendo.argosy.data.repository.CoreOptionsRepository
+    @Inject lateinit var configureEmulatorUseCase: com.nendo.argosy.domain.usecase.game.ConfigureEmulatorUseCase
+    @Inject lateinit var speedrunRepository: com.nendo.argosy.data.speedrun.SpeedrunRepository
+    @Inject lateinit var stateOwnershipTracker: com.nendo.argosy.data.sync.StateOwnershipTracker
+    @Inject lateinit var screenCatalog: com.nendo.argosy.util.ScreenCatalog
+    @Inject lateinit var gameRepository: com.nendo.argosy.data.repository.GameRepository
+    @Inject lateinit var romMRepository: com.nendo.argosy.data.remote.romm.RomMRepository
+    @Inject lateinit var gameDocumentLoader: com.nendo.argosy.data.repository.GameDocumentLoader
+    @Inject lateinit var documentHighlightStore: com.nendo.argosy.data.repository.DocumentHighlightStore
+
+    private val inGameDocuments by lazy {
+        com.nendo.argosy.libretro.ui.InGameDocuments(
+            scope = lifecycleScope,
+            gameRepository = gameRepository,
+            romMRepository = romMRepository,
+            loader = gameDocumentLoader,
+            highlightStore = documentHighlightStore
+        )
+    }
+    private var readerKind by mutableStateOf<com.nendo.argosy.libretro.ui.InGameDocumentKind?>(null)
+
+    private var coreLoadedSuccessfully = false
+
+    /**
+     * Set when the core rejected the content, which the GL surface coming up does not tell us.
+     * Every path that touches core memory has to stay off a core with no game in it: Beetle Saturn
+     * aborts the process inside `retro_serialize_size` rather than reporting an error.
+     */
+    private var gameLoadFailed = false
+    @Volatile private var coreDestroyed = false
+    private var autoSaveStateCaptured = false
+    private lateinit var retroView: GLRetroView
+    private val portResolver = ControllerPortResolver()
+    private val inputMapper = ControllerInputMapper()
+    private lateinit var inputConfig: InputConfigCoordinator
+    private val controllerSeats by lazy {
+        com.nendo.argosy.ui.screens.settings.components.ControllerSeatController(
+            repository = inputConfigRepository,
+            scope = lifecycleScope,
+            onSeatsChanged = { inputConfig.refreshControllerOrder() }
+        )
+    }
+    private var seatPromptVisible by mutableStateOf(false)
+    private var quickPanelOpen by mutableStateOf(false)
+    private lateinit var hotkeyDispatcher: LibretroHotkeyDispatcher
+    private lateinit var motionProcessor: MotionEventProcessor
+    private var vibrator: Vibrator? = null
+    private var rewindSetupJob: Job? = null
+    private var rollingSaveJob: Job? = null
+    private var saveWriteWatchJob: Job? = null
+    private var saveWrittenAt by mutableStateOf(0L)
+    private var backHoldJob: Job? = null
+    private var backHoldFired = false
+    private lateinit var romPath: String
+
+    private lateinit var saveStateManager: SaveStateManager
+    private lateinit var videoSettings: VideoSettingsManager
+    private lateinit var cheatManager: CheatSessionManager
+    private lateinit var achievementBridge: LibretroAchievementBridge
+
+    private var gameId: Long = -1L
+    private var variantFileId: Long = -1L
+    private var platformId: Long = -1L
+    private var platformSlug: String = ""
+    private var coreName: String? = null
+    private var activeSaveChannel: String? = null
+    private var menuVisible by mutableStateOf(false)
+    private var menuSection by mutableStateOf<com.nendo.argosy.libretro.ui.InGameMenuSection?>(null)
+    private var isClosing by mutableStateOf(false)
+    private var achievementsFocusIndex by mutableStateOf(0)
+    private var netplayFocusIndex by mutableStateOf(0)
+    private var inGameAchievements by mutableStateOf<List<AchievementUi>>(emptyList())
+    private var shaderChainEditorVisible by mutableStateOf(false)
+    private var frameEditorVisible by mutableStateOf(false)
+    private var frameAdjustMode by mutableStateOf(false)
+    private var inGameShaderChainManager: ShaderChainManager? = null
+    private var inGameFrameManager: FrameManager? = null
+    private var capturedGameFrame: Bitmap? = null
+    private var lastCheatsTab by mutableStateOf(CheatsTab.CHEATS)
+    private var inGameMessage by mutableStateOf<String?>(null)
+    private var gameName: String = ""
+    /** Set when Home left the game suspended rather than quitting it. */
+    private var suspendedByHome = false
+
+    /** Black cover laid over the game as Home is pressed, so the system's slide shows only black. */
+    private var leaveVeil: android.view.View? = null
+    private var canEnableBFI = false
+
+    private var limitHotkeysToPlayer1 by mutableStateOf(true)
+    private var selectAsBack by mutableStateOf(com.nendo.argosy.data.local.entity.SelectAsBackMode.AUTO)
+    private val backAsSelect = BackAsSelectTranslator { selectAsBack }
+    private var dualScreenMatchSize = false
+    private var matchedScreens: MatchedScreens? = null
+    private var firstFrameRendered = false
+    private var arrivalRevealed by mutableStateOf(false)
+    private var framesSinceSample = 0
+    private var measuredFps by mutableIntStateOf(0)
+    private lateinit var audioController: LibretroAudioController
+    private var swapAB by mutableStateOf(false)
+    private var swapXY by mutableStateOf(false)
+    private var swapStartSelect by mutableStateOf(false)
+    private var menuFocusIndex by mutableStateOf(0)
+    private lateinit var menuInputHandler: LibretroMenuInputHandler
+    private lateinit var gamepadInputBridge: LibretroGamepadInputHandler
+    private lateinit var connectedControllers: StateFlow<List<com.nendo.argosy.data.repository.ControllerInfo>>
+    private var activeMenuHandler: InputHandler? = null
+
+    private var restoredSram: ByteArray? = null
+    private var restoredRtc: ByteArray? = null
+    private var sunLevel = SunLevel.MIN
+    private var casualSaveInHardcore: Boolean = false
+    private var hardcoreMode by mutableStateOf(false)
+    private var hardcoreConfirmed by mutableStateOf(false)
+    private var secureSavesEnabled = true
+
+    /**
+     * Preferences as they stood when the session started. Read once because onCreate blocks
+     * the main thread on each read, and a mid-session change must not alter a running game.
+     */
+    private lateinit var launchPreferences: UserPreferences
+    private var launchMode = LaunchMode.RESUME
+    private var launchOrigin = LaunchOrigin.INTERNAL
+    private var statesSupported = true
+    private val stateSupportChecked = kotlinx.coroutines.CompletableDeferred<Unit>()
+    private var autoSaveEnabled = true
+    private var hwCoreSaveStatesEnabled = false
+    private var menuWrapMode = com.nendo.argosy.data.preferences.MenuWrapMode.HARD_STOP
+    private var autoRestorePromptVisible by mutableStateOf(false)
+    private var autoRestorePromptFocusIndex by mutableStateOf(0)
+
+    private var stateManagerFocusIndex by mutableStateOf(0)
+    private var stateManagerViewMode by mutableStateOf(StateManagerViewMode.SPLIT)
+    private var stateManagerShowDelete by mutableStateOf(false)
+    private var stateManagerDeleteTarget by mutableStateOf(-1)
+    private var stateManagerSlots by mutableStateOf<List<SaveStateManager.SlotInfo>>(emptyList())
+    private var stateManagerShowLoadConfirm by mutableStateOf(false)
+    private var stateManagerLoadTarget by mutableStateOf(Int.MIN_VALUE)
+    private var menuQuickHistoryFocus by mutableStateOf(QuickHistoryFocus.NONE)
+    private var menuQuickHistoryIndex by mutableStateOf(0)
+    private var menuQuickHistoryEntries by mutableStateOf<List<SaveStateManager.SlotInfo>>(emptyList())
+    private var quickHistoryLoadJob: Job? = null
+    private var menuDiscCount = 0
+    private var discPaths: List<File> = emptyList()
+    private var currentDiscIndex = 0
+    private var discMenuVisible by mutableStateOf(false)
+    private var discMenuFocusIndex by mutableStateOf(0)
+    private var discMenuCurrentIndex by mutableStateOf(0)
+    private var discMenuLabels by mutableStateOf<List<String>>(emptyList())
+    private var pendingSaveScreenshot: Bitmap? = null
+
+    private lateinit var netplay: LibretroNetplayCoordinator
+    private val isGuestJoinedSession: Boolean
+        get() = if (::netplay.isInitialized) netplay.isGuestJoinedSession else false
+    private var corePath: String = ""
+    private var resolvedCoreId: String? = null
+    private var dualScreenOutput: DualScreenOutput? = null
+    private var secondScreen: SecondScreenPresentation? = null
+
+    private var isGamepadConnectedState by mutableStateOf(false)
+    private var currentOrientationState by mutableStateOf(android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+    private var currentRotationState by mutableStateOf(0)
+    private var touchSettingsState by mutableStateOf(com.nendo.argosy.data.preferences.BuiltinEmulatorSettings())
+    private var portraitPositionState by mutableStateOf("Auto")
+    private var gripReserveModeState by mutableStateOf(com.nendo.argosy.data.preferences.GripReserveMode.OFF)
+    private var gripReservePercentState by mutableStateOf(GRIP_RESERVE_DEFAULT_PERCENT)
+    private var gripAutoControllerConnectedState by mutableStateOf(false)
+    private var gripAutoControllersState by mutableStateOf(
+        com.nendo.argosy.domain.model.GripAutoControllers()
+    )
+    private var coreOptionOverrides by mutableStateOf<Map<String, String>>(emptyMap())
+    private var gameCoreOptionOverrides by mutableStateOf<Map<String, String>>(emptyMap())
+    private var perGameSettingsEnabled by mutableStateOf(false)
+    private var perGameControlsEnabled by mutableStateOf(false)
+    private var corePortDevices by mutableStateOf<List<List<com.swordfish.libretrodroid.Controller>>>(emptyList())
+    private var gameControllerTypes by mutableStateOf<Map<Int, Int>>(emptyMap())
+    private var platformControllerTypes by mutableStateOf<Map<Int, Int>>(emptyMap())
+    private var storedGameControllerTypes: String? = null
+    private var storedPlatformControllerTypes: String? = null
+    private var appliedControllerTypes by mutableStateOf<Map<Int, Int>>(emptyMap())
+    private var inputDeviceListener: android.hardware.input.InputManager.InputDeviceListener? = null
+    private var splitColumn: android.widget.LinearLayout? = null
+    private var splitRow: android.widget.LinearLayout? = null
+    private var sidePanelContent by mutableStateOf<com.nendo.argosy.libretro.ui.SidePanelContent?>(null)
+    private var sidePanelSideState by mutableStateOf("Right")
+    private var speedrunPanelFractionState by mutableStateOf(SPEEDRUN_PANEL_FRACTION_DEFAULT)
+    private val speedrunTimer = com.nendo.argosy.libretro.speedrun.SpeedrunTimerEngine()
+    private var speedrunStartOnReset = true
+    private val keyPressGate = KeyPressGate()
+    private val coreHeldKeys = mutableMapOf<Int, KeyEvent>()
+    private val deferredCoreKeys = DeferredCoreKeys<KeyEvent>(
+        scope = lifecycleScope,
+        comboInFlight = { keyCode -> hotkeyDispatcher.isComboInFlight(keyCode) },
+        forwardDown = { keyCode, down ->
+            if (!shouldFilterShoulderButton(keyCode, down.device) && retroView.onKeyDown(keyCode, down)) {
+                coreHeldKeys[keyCode] = down
+            }
+        },
+        forwardUp = { keyCode, up ->
+            coreHeldKeys.remove(keyCode)
+            if (!shouldFilterShoulderButton(keyCode, up.device)) retroView.onKeyUp(keyCode, up)
+        },
+    )
+    private var speedrunPickerVisible by mutableStateOf(false)
+    private var speedrunPickerFocusIndex by mutableStateOf(0)
+    private var speedrunPickerCategories by mutableStateOf<List<com.nendo.argosy.data.local.entity.SpeedrunCategoryEntity>>(emptyList())
+    private var touchEditMode by mutableStateOf(false)
+    private var baselineRotation by mutableStateOf(0)
+    private var onSecondaryDisplayState by mutableStateOf(false)
+    private var hostDisplayId = android.view.Display.INVALID_DISPLAY
+    private var orientationEventListener: android.view.OrientationEventListener? = null
+
+    private val isAnyMenuOpen: Boolean
+        get() = menuVisible || shaderChainEditorVisible || frameEditorVisible || autoRestorePromptVisible || discMenuVisible ||
+            seatPromptVisible || quickPanelOpen ||
+            speedrunPickerVisible || readerKind != null || isClosing || netplay.isAnyDialogVisible
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate: savedInstanceState=${savedInstanceState != null}")
+        allowContentIntoDisplayCutout()
+        installImmersiveMode()
+        currentOrientationState = resources.configuration.orientation
+        currentRotationState = windowManager.defaultDisplay.rotation
+        baselineRotation = currentRotationState
+        hostDisplayId = currentDisplayId()
+        onSecondaryDisplayState = onSecondaryDisplay()
+        isGamepadConnectedState = com.nendo.argosy.core.input.ControllerDetector.isAnyGamepadConnected()
+        registerGamepadDetection()
+        registerOrientationListener()
+
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (isAnyMenuOpen) {
+                    activeMenuHandler?.onBack()
+                } else {
+                    showMenu()
+                }
+            }
+        })
+
+        com.nendo.argosy.DualScreenManagerHolder.instance?.let { dsm ->
+            dsm.emulatorKeyDispatcher = { event -> dispatchKeyEvent(event) }
+            dsm.emulatorMotionDispatcher = { event -> dispatchGenericMotionEvent(event) }
+            dsm.sessionQuickActions = createSessionQuickActions()
+            dsm.sessionRefocus = {
+                @Suppress("DEPRECATION")
+                val options = com.nendo.argosy.ui.screens.common.GameLaunchOptions
+                    .forDisplay(windowManager.defaultDisplay.displayId)
+                startActivity(
+                    Intent(this, LibretroActivity::class.java).addFlags(
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            Intent.FLAG_ACTIVITY_NO_ANIMATION
+                    ),
+                    options
+                )
+            }
+        }
+
+        netplay = LibretroNetplayCoordinator(
+            activity = this,
+            gameDao = gameDao,
+            coreHashCache = coreHashCache,
+            socialRepository = socialRepository,
+            argosSocialService = argosSocialService,
+            preferencesRepository = preferencesRepository,
+            scope = lifecycleScope,
+            showToast = { msg -> inGameMessage = msg },
+            onFastForwardRelease = { hotkeyDispatcher.releaseFastForward() },
+            getRetroView = { retroView },
+            getResolvedCoreId = { resolvedCoreId },
+            getCorePath = { corePath },
+            getRomPath = { romPath },
+            getGameId = { gameId },
+            getGameName = { gameName },
+            getRaSessionManager = { achievementBridge.sessionManager }
+        )
+
+        if (!parseIntentExtras()) return
+
+        val romFile = File(romPath)
+        if (!validateRomFile(romFile)) return
+
+        val systemDir = intent.getStringExtra(EXTRA_SYSTEM_DIR)
+            ?.let { File(it) }
+            ?: AppPaths.libretroSystemDir(filesDir)
+        systemDir.mkdirs()
+        val savesDir: File
+        val statesDir: File
+        if (isGuestJoinedSession) {
+            val (_, guestSaves, guestStates) = netplay.createScratchDir(cacheDir)
+            savesDir = guestSaves
+            statesDir = guestStates
+        } else {
+            val baseSavesDir = intent.getStringExtra(EXTRA_SAVES_DIR)?.let { File(it) }
+                ?: AppPaths.libretroSavesDir(filesDir)
+            val baseStatesDir = intent.getStringExtra(EXTRA_STATES_DIR)?.let { File(it) }
+                ?: AppPaths.libretroStatesDir(filesDir)
+            savesDir = variantIsolatedDir(baseSavesDir).apply { mkdirs() }
+            statesDir = variantIsolatedDir(baseStatesDir).apply { mkdirs() }
+        }
+
+        val game = kotlinx.coroutines.runBlocking { gameDao.getById(gameId) }
+        platformId = game?.platformId ?: -1L
+        platformSlug = intent.getStringExtra(EXTRA_PLATFORM_SLUG)?.takeIf { it.isNotBlank() }
+            ?: game?.platformSlug ?: ""
+        activeSaveChannel = kotlinx.coroutines.runBlocking {
+            activeSaveRepository.getActiveChannel(gameId)
+        }
+        perGameSettingsEnabled = game?.perGameSettingsEnabled == true
+        perGameControlsEnabled = game?.perGameControlsEnabled == true
+
+        initializeSaveState(savesDir, statesDir, activeSaveChannel)
+        if (hardcoreMode) {
+            com.nendo.argosy.DualScreenManagerHolder.instance?.sessionQuickActions = null
+        }
+        val globalSettings = kotlinx.coroutines.runBlocking {
+            preferencesRepository.getBuiltinEmulatorSettings().first()
+        }
+        touchSettingsState = globalSettings
+        var lastLockOrientation = globalSettings.touchControlsLockOrientation
+        var lastShow = globalSettings.showTouchControlsWhenNoGamepad
+        lifecycleScope.launch {
+            preferencesRepository.getBuiltinEmulatorSettings().collect {
+                touchSettingsState = it
+                if (it.touchControlsLockOrientation != lastLockOrientation) {
+                    lastLockOrientation = it.touchControlsLockOrientation
+                    applyOrientationLock(it.touchControlsLockOrientation)
+                }
+                if (it.showTouchControlsWhenNoGamepad != lastShow) {
+                    lastShow = it.showTouchControlsWhenNoGamepad
+                    splitColumn?.let { col -> applyPortraitSplit(col) }
+                }
+                speedrunStartOnReset = it.speedrunStartOnReset
+                val newFraction = it.speedrunPanelWidthPercent / 100f
+                if (newFraction != speedrunPanelFractionState) {
+                    setSpeedrunPanelFraction(newFraction)
+                }
+                if (sidePanelSideState != it.speedrunPanelSide) {
+                    sidePanelSideState = it.speedrunPanelSide
+                    splitRow?.let { row -> applySidePanelSplit(row) }
+                }
+            }
+        }
+        applyOrientationLock(globalSettings.touchControlsLockOrientation)
+        val settings = kotlinx.coroutines.runBlocking {
+            effectiveLibretroSettingsResolver.getEffectiveSettings(platformId, platformSlug)
+        }
+
+        autoSaveEnabled = settings.autoSaveState && !isGuestJoinedSession
+        hwCoreSaveStatesEnabled = settings.hwCoreSaveStatesEnabled
+        initializeInputHandlers()
+        initializeVideoSettings(globalSettings, settings)
+        detectBFICapability()
+
+        corePath = intent.getStringExtra(EXTRA_CORE_PATH)!!
+        resolvedCoreId = resolveCoreIdFromPath(corePath)
+        if (!isHwCore) {
+            com.nendo.argosy.DualScreenManagerHolder.instance?.registerLiveMoveHost(liveMoveHost)
+        }
+        loadCoreOptionOverrides()
+        loadControllerTypes()
+        createRetroView(corePath, systemDir, savesDir, settings, restoredSram)
+        achievementBridge = LibretroAchievementBridge(
+            gameDao = gameDao,
+            overlayWriter = gameOverlayWriter,
+            achievementDao = achievementDao,
+            raRepository = raRepository,
+            verifyRAGameIdUseCase = verifyRAGameIdUseCase,
+            achievementUpdateBus = achievementUpdateBus,
+            ambientLedManager = ambientLedManager,
+            socialRepository = socialRepository,
+            scope = lifecycleScope,
+            context = this
+        )
+        netplay.start()
+        setupRetroViewListeners()
+        audioController = LibretroAudioController(this, getRetroView = { retroView })
+        configureRetroView(settings)
+        audioController.requestAudioFocus()
+        inputConfig = InputConfigCoordinator(
+            inputConfigRepository = inputConfigRepository,
+            portResolver = portResolver,
+            inputMapper = inputMapper,
+            platformSlug = platformSlug,
+            coreId = resolvedCoreId,
+            gameId = perGameMappingId,
+            limitHotkeysToPlayer1 = limitHotkeysToPlayer1,
+            controllerTypeForPort = { port -> appliedControllerTypes[port] ?: effectiveControllerType(port) },
+            scope = lifecycleScope,
+            onHotkeysResolved = { hotkeys ->
+                if (::retroView.isInitialized) retroView.sunSensorEnabled = SunLevel.isBound(hotkeys)
+            }
+        )
+        portResolver.setLaunchPad(
+            controllerId = intent.getStringExtra(EXTRA_LAUNCH_CONTROLLER_ID),
+            isDocked = isDockedDark()
+        )
+        inputConfig.initialize(onControllerOrderLoaded = ::promptForSeatsIfNeeded)
+        lifecycleScope.launch {
+            quickPanelOverlay.isOpen.collect { open -> if (!open) quickPanelOpen = false }
+        }
+
+        if (settings.rumbleEnabled) {
+            setupRumble()
+        }
+        if (videoSettings.rewindEnabled && !hardcoreMode) {
+            setupRewind(settings)
+        }
+
+        initializeCheatManager()
+        initializeHotkeyDispatcher()
+        initializeSpeedrun()
+        motionProcessor = MotionEventProcessor(
+            inputMapper = inputMapper,
+            portResolver = portResolver,
+            videoSettings = videoSettings,
+            getRetroView = { retroView },
+            rightStickDeadzone = rightStickDeadzoneForPlatform(),
+            admitsAnalogKey = keyPressGate::admitsAnalog
+        )
+
+        buildContentView()
+        setUpSecondScreen()
+
+        if (gameId != -1L) {
+            val isNewGame = launchMode == LaunchMode.NEW_CASUAL || launchMode == LaunchMode.NEW_HARDCORE
+            playSessionTracker.startSession(
+                gameId,
+                EmulatorRegistry.BUILTIN_PACKAGE,
+                coreName,
+                hardcoreConfirmed,
+                isNewGame,
+                isNetplayGuest = isGuestJoinedSession,
+                variantFileId = variantFileId.takeIf { it >= 0 },
+                origin = launchOrigin
+            )
+            cheatManager.loadCheats(hardcoreMode)
+            achievementBridge.start(gameId, romPath, hardcoreMode, retroView)
+            observeRaSessionMode()
+            observeInGameAchievements()
+        }
+    }
+
+    /**
+     * The hardcore claim follows the server's answer, not the launch flag. hardcoreMode keeps the
+     * launch-time restrictions in force either way; only what the session says about itself,
+     * on this screen and everywhere the play session is consumed, waits for confirmation.
+     */
+    private fun observeRaSessionMode() {
+        lifecycleScope.launch {
+            achievementBridge.sessionMode.collect { mode ->
+                val confirmed = mode == RASessionMode.HARDCORE
+                if (confirmed == hardcoreConfirmed) return@collect
+                hardcoreConfirmed = confirmed
+                Log.d(TAG, "[Startup] gameId=$gameId, hardcore confirmed=$confirmed (requested=$hardcoreMode)")
+                playSessionTracker.updateSessionHardcore(gameId, confirmed)
+                val sramLoaded = ::retroView.isInitialized && !retroView.sramLoadFailed
+                if (confirmed && casualSaveInHardcore && sramLoaded) {
+                    inGameMessage = getString(R.string.ingame_libretro_casual_save_in_hardcore)
+                }
+            }
+        }
+    }
+
+    private fun observeInGameAchievements() {
+        lifecycleScope.launch {
+            refreshInGameAchievements()
+            achievementUpdateBus.updates.collect { update ->
+                if (update.gameId == gameId) refreshInGameAchievements()
+            }
+        }
+    }
+
+    private suspend fun refreshInGameAchievements() {
+        val loaded = withContext(Dispatchers.IO) {
+            raRepository.getCachedAchievements(gameId).map { it.toAchievementUi() }
+        }
+        inGameAchievements = loaded
+        if (achievementsFocusIndex >= loaded.size) {
+            achievementsFocusIndex = (loaded.size - 1).coerceAtLeast(0)
+        }
+    }
+
+    private fun parseIntentExtras(): Boolean {
+        romPath = intent.getStringExtra(EXTRA_ROM_PATH) ?: run { finish(); return false }
+        intent.getStringExtra(EXTRA_CORE_PATH) ?: run { finish(); return false }
+        gameName = intent.getStringExtra(EXTRA_GAME_NAME) ?: File(romPath).nameWithoutExtension
+        gameId = intent.getLongExtra(EXTRA_GAME_ID, -1L)
+        inGameDocuments.load(gameId)
+        variantFileId = intent.getLongExtra(EXTRA_VARIANT_FILE_ID, -1L)
+        discPaths = intent.getStringExtra(EXTRA_DISC_M3U_PATH)
+            ?.let { M3uManager.parseAllDiscs(File(it)) } ?: emptyList()
+        coreName = intent.getStringExtra(EXTRA_CORE_NAME)
+        launchMode = LaunchMode.fromString(intent.getStringExtra(LaunchMode.EXTRA_LAUNCH_MODE))
+        launchOrigin = LaunchOrigin.fromString(intent.getStringExtra(LaunchOrigin.EXTRA_LAUNCH_ORIGIN))
+        launchPreferences = kotlinx.coroutines.runBlocking {
+            preferencesRepository.preferences.first()
+        }
+        secureSavesEnabled = launchPreferences.secureSaves
+        if (!secureSavesEnabled && launchMode.isHardcore) {
+            launchMode = if (launchMode == LaunchMode.RESUME_HARDCORE) LaunchMode.RESUME else LaunchMode.NEW_CASUAL
+        }
+        hardcoreMode = launchMode.isHardcore
+
+        val joinSessionId = intent.getStringExtra(EXTRA_NETPLAY_JOIN_SESSION_ID)
+        val joinHostUserId = intent.getStringExtra(EXTRA_NETPLAY_JOIN_HOST_USER_ID)
+        if (netplay.parseJoinIntent(joinSessionId, joinHostUserId)) {
+            launchMode = LaunchMode.NEW_CASUAL
+            hardcoreMode = false
+        }
+
+        return true
+    }
+
+    private fun validateRomFile(romFile: File): Boolean {
+        if (!romFile.exists()) {
+            Log.e(TAG, "ROM file not found: $romPath")
+            inGameMessage = getString(R.string.ingame_libretro_rom_not_found)
+            finish()
+            return false
+        }
+        if (!romFile.canRead()) {
+            Log.e(TAG, "ROM file not readable: $romPath")
+            inGameMessage = getString(R.string.ingame_libretro_rom_not_readable)
+            finish()
+            return false
+        }
+        Log.d(TAG, "ROM validated: exists=${romFile.exists()}, size=${romFile.length()}, path=$romPath")
+        return true
+    }
+
+    private fun variantIsolatedDir(baseDir: File): File =
+        if (variantFileId >= 0) File(baseDir, "variants/$variantFileId") else baseDir
+
+    /**
+     * Stamps a live state file with the signed-in account as soon as the core writes it.
+     *
+     * The built-in core's state directory is device-global, so without this the next account to
+     * end a session here discovers the file, finds no ownership record, and adopts and uploads it
+     * as their own. Recording at session end would leave that window open across a crash.
+     */
+    private fun recordStateOwnership(slotNumber: Int, stateFile: File, channelName: String?) {
+        if (gameId < 0) return
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+            stateOwnershipTracker.record(
+                statePath = stateFile.absolutePath,
+                emulatorId = EmulatorRegistry.BUILTIN_ID,
+                contentHash = null,
+                gameId = gameId,
+                slotNumber = slotNumber,
+                channelName = channelName,
+                coreId = resolvedCoreId
+            )
+        }
+    }
+
+    private fun publishSessionControls() {
+        if (!::saveStateManager.isInitialized) return
+        val dsm = com.nendo.argosy.DualScreenManagerHolder.instance ?: return
+        val quickStates = saveStateManager.getQuickRingInfoList().map { slot ->
+            com.nendo.argosy.ui.dualscreen.dashboard.DashboardQuickState(
+                slotNumber = slot.slotNumber,
+                savedAtMillis = slot.timestamp ?: 0L,
+                screenshotPath = slot.screenshotFile?.absolutePath
+            )
+        }
+        dsm.updateSessionControls(
+            com.nendo.argosy.ui.dualscreen.dashboard.SessionControls(
+                quickStates = quickStates,
+                cheatsAvailable = !hardcoreMode && PlatformWeightRegistry.supportsCheats(platformSlug),
+                settingsAvailable = true
+            )
+        )
+    }
+
+    private fun clearStateOwnership(stateFile: File) {
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+            stateOwnershipTracker.clear(stateFile.absolutePath, EmulatorRegistry.BUILTIN_ID)
+        }
+    }
+
+    private fun initializeSaveState(savesDir: File, statesDir: File, channelName: String? = null) {
+        val sramPath = File(savesDir, "${File(romPath).nameWithoutExtension}.srm").absolutePath
+        val primarySavePath = coreName?.let { layout ->
+            kotlinx.coroutines.runBlocking {
+                val game = gameDao.getById(gameId)
+                saveUnitResolver.expectedPrimaryPath(sramPath, layout, platformSlug, File(romPath).name, game)
+            }
+        } ?: sramPath
+        saveStateManager = SaveStateManager(
+            savesDir = savesDir,
+            statesDir = statesDir,
+            romPath = romPath,
+            gameId = gameId,
+            activeSaveRepository = activeSaveRepository,
+            saveCacheManager = saveCacheManager,
+            diskJudge = activeSaveDiskJudge,
+            secureSaves = secureSavesEnabled,
+            ownerUserId = launchPreferences.rommUserId,
+            usesExternalMemcard = com.nendo.argosy.data.platform.PlatformDefinitions.getCanonicalSlug(platformSlug) == "gc",
+            channelName = channelName,
+            isVariant = variantFileId >= 0,
+            primarySavePath = primarySavePath,
+            onLiveStateWritten = { slot, file ->
+                recordStateOwnership(slot, file, channelName)
+                publishSessionControls()
+            },
+            onLiveStateRemoved = { _, file ->
+                clearStateOwnership(file)
+                publishSessionControls()
+            }
+        )
+        lifecycleScope.launch(Dispatchers.IO) {
+            saveStateManager.watchCoreSaveFiles(sigilSaveHandler.liveSaveFiles(gameId, EmulatorRegistry.BUILTIN_ID))
+        }
+        saveStateManager.adoptLegacySaveIfMissing()
+        if (coreName == "genesis_plus_gx" && isSegaCd()) saveStateManager.adoptSharedSegaCdBramIfMissing()
+        val restoreResult = kotlinx.coroutines.runBlocking {
+            saveStateManager.withRtcFromDisk(saveStateManager.restoreSaveForLaunchMode(launchMode))
+        }
+        restoredSram = restoreResult.sramData
+        restoredRtc = restoreResult.rtcData
+        casualSaveInHardcore = restoreResult.casualSaveInHardcore
+        if (restoreResult.switchToHardcore && secureSavesEnabled) {
+            hardcoreMode = true
+        }
+        saveStateManager.initializeFromExistingSave(restoreResult.sramData)
+        lifecycleScope.launch {
+            snapshotFlow { hardcoreMode }.collect { publishSessionControls() }
+        }
+        lifecycleScope.launch {
+            snapshotFlow { isAnyMenuOpen }.collect { open -> if (open) releaseCoreHeldKeys() }
+        }
+        lifecycleScope.launch {
+            playSessionTracker.saveWrites.collect {
+                val now = System.currentTimeMillis()
+                if (now - saveWrittenAt > SAVE_INDICATOR_MERGE_MS) saveWrittenAt = now
+            }
+        }
+    }
+
+    private fun applyGlyphSwaps(swaps: com.nendo.argosy.ui.input.ButtonGlyphSwaps) {
+        swapAB = swaps.ab
+        swapXY = swaps.xy
+        swapStartSelect = swaps.startSelect
+    }
+
+    private fun initializeInputHandlers() {
+        val inputPrefs = launchPreferences
+        menuWrapMode = inputPrefs.menuWrapMode
+        lifecycleScope.launch {
+            connectedControllerTracker.activeLayout.collect { layout ->
+                applyGlyphSwaps(inputPrefs.buttonGlyphSwaps(layout))
+            }
+        }
+        connectedControllers = inputConfigRepository.observeConnectedControllers()
+            .stateIn(lifecycleScope, SharingStarted.Eagerly, emptyList())
+        menuInputHandler = LibretroMenuInputHandler(
+            inputPrefs.swapAB,
+            inputPrefs.swapXY,
+            inputPrefs.swapStartSelect
+        )
+        gamepadInputBridge = LibretroGamepadInputHandler(
+            menuInputHandler = menuInputHandler,
+            getActiveHandler = { activeMenuHandler }
+        )
+    }
+
+    private fun initializeVideoSettings(
+        globalSettings: com.nendo.argosy.data.preferences.BuiltinEmulatorSettings,
+        settings: com.nendo.argosy.data.preferences.BuiltinEmulatorSettings
+    ) {
+        videoSettings = VideoSettingsManager(
+            platformId = platformId,
+            platformSlug = platformSlug,
+            globalSettings = globalSettings,
+            platformLibretroSettingsDao = platformLibretroSettingsDao,
+            effectiveLibretroSettingsResolver = effectiveLibretroSettingsResolver,
+            preferencesRepository = preferencesRepository,
+            frameRegistry = frameRegistry,
+            scope = lifecycleScope,
+            shaderRegistryProvider = { ShaderRegistry(this) },
+            getRetroView = { retroView },
+            setAudioVolume = { audioController.setVolume(it) }
+        )
+        videoSettings.applySettings(settings)
+        videoSettings.resolveCustomShader(settings)
+        limitHotkeysToPlayer1 = settings.limitHotkeysToPlayer1
+        selectAsBack = settings.selectAsBack
+        dualScreenMatchSize = settings.dualScreenMatchSize
+        videoSettings.onRewindToggled = { enabled ->
+            if (enabled && !hardcoreMode) {
+                setupRewind(settings)
+            } else if (!enabled) {
+                rewindSetupJob?.cancel()
+                rewindSetupJob = null
+                retroView.rewindEnabled = false
+                retroView.destroyRewindBuffer()
+            }
+        }
+        videoSettings.onRewindConfigChanged = {
+            if (videoSettings.rewindEnabled && !hardcoreMode) {
+                retroView.rewindEnabled = false
+                retroView.destroyRewindBuffer()
+                setupRewind(settings)
+            }
+        }
+        portraitPositionState = settings.portraitPosition
+        videoSettings.onPortraitPositionChanged = { value ->
+            portraitPositionState = value
+            splitColumn?.let { applyPortraitSplit(it) }
+        }
+        lifecycleScope.launch {
+            snapshotFlow { netplay.inSession || sidePanelContent != null }
+                .collect { videoSettings.framesSuppressed = it }
+        }
+        lifecycleScope.launch {
+            preferencesRepository.preferences
+                .combine(connectedControllerTracker.connectedControllerIds) { prefs, connectedIds ->
+                    prefs to isGripAutoControllerConnected(
+                        autoEnabled = prefs.gripReserveMode == com.nendo.argosy.data.preferences.GripReserveMode.AUTO,
+                        autoControllerIds = prefs.gripAutoControllers.controllerIds,
+                        connectedControllerIds = connectedIds
+                    )
+                }
+                .collect { (prefs, autoConnected) ->
+                    gripAutoControllersState = prefs.gripAutoControllers
+                    if (prefs.gripReserveMode == gripReserveModeState &&
+                        prefs.gripReservePercent == gripReservePercentState &&
+                        autoConnected == gripAutoControllerConnectedState
+                    ) return@collect
+                    gripReserveModeState = prefs.gripReserveMode
+                    gripReservePercentState = prefs.gripReservePercent
+                    gripAutoControllerConnectedState = autoConnected
+                    splitColumn?.let { applyPortraitSplit(it) }
+                }
+        }
+    }
+
+    private fun isSegaCd(): Boolean =
+        com.nendo.argosy.data.platform.PlatformDefinitions.getCanonicalSlug(platformSlug) == "scd"
+
+    private fun onSecondaryDisplay(): Boolean =
+        currentDisplayId() != android.view.Display.DEFAULT_DISPLAY
+
+    @Suppress("DEPRECATION")
+    private fun currentDisplayId(): Int = windowManager.defaultDisplay.displayId
+
+    private val liveMoveHost = object : com.nendo.argosy.DualScreenManager.LiveMoveHost {
+        override fun beforeDisplayMove() = hideSecondScreen()
+
+        override fun displayMoveAbandoned() = rebuildSecondScreen()
+    }
+
+    private fun rebuildSecondScreen() {
+        if (!::retroView.isInitialized) return
+        hideSecondScreen()
+        setUpSecondScreen()
+        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            showSecondScreen()
+        }
+    }
+
+    private fun onMovedToDisplay(displayId: Int) {
+        hostDisplayId = displayId
+        baselineRotation = currentRotationState
+        onSecondaryDisplayState = onSecondaryDisplay()
+        rebuildSecondScreen()
+        com.nendo.argosy.DualScreenManagerHolder.instance?.onGameMovedToDisplay(displayId)
+    }
+
+    private fun detectBFICapability() {
+        val displayManager = getSystemService(android.content.Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        val display = displayManager.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+        canEnableBFI = (display?.supportedModes?.maxOfOrNull { it.refreshRate } ?: 60f) >= 120f
+    }
+
+    private fun createRetroView(
+        corePath: String,
+        systemDir: File,
+        savesDir: File,
+        settings: com.nendo.argosy.data.preferences.BuiltinEmulatorSettings,
+        existingSram: ByteArray?
+    ) {
+        val effectiveShader = if (settings.shader == "Custom") videoSettings.resolvedCustomShader else settings.shaderConfig
+        Log.d(TAG, "[Startup] Creating GLRetroView: core=$coreName, effectiveShader=${effectiveShader::class.simpleName}")
+        retroView = GLRetroView(
+            this,
+            GLRetroViewData(this).apply {
+                coreFilePath = corePath
+                gameFilePath = romPath
+                systemDirectory = systemDir.absolutePath
+                savesDirectory = savesDir.absolutePath
+                saveRAMState = existingSram
+                rtcState = restoredRtc
+                shader = effectiveShader
+                skipDuplicateFrames = settings.skipDuplicateFrames &&
+                    coreName != "dolphin" &&
+                    DualScreenOutput.forCore(coreName) == null
+                timingFollowsGeometry = coreName == "dolphin"
+                preferLowLatencyAudio = settings.lowLatencyAudio
+                forceSoftwareTiming = settings.forceSoftwareTiming
+                rumbleEventsEnabled = settings.rumbleEnabled
+                motionSensorsEnabled = settings.motionEnabled
+                coreAccelerometerScale = CoreSensorUnits.accelerometerScale(coreName)
+                variables = coreVariablesFromIntent()
+                preferVulkan = intent.getBooleanExtra(EXTRA_PREFER_VULKAN, false)
+                vulkanDriver = vulkanDriverFromIntent()
+            }
+        )
+        retroView.illuminance = SunLevel.lux(sunLevel)
+        lifecycle.addObserver(retroView)
+    }
+
+    private fun stepSunLevel(direction: Int) {
+        sunLevel = SunLevel.step(sunLevel, direction)
+        retroView.illuminance = SunLevel.lux(sunLevel)
+        inGameMessage = getString(R.string.ingame_libretro_sun_level, sunLevel, SunLevel.MAX)
+    }
+
+    private fun setupRetroViewListeners() {
+        lifecycleScope.launch {
+            retroView.getGLRetroErrors().collect { errorCode ->
+                val errorMessage = when (errorCode) {
+                    LibretroDroid.ERROR_LOAD_LIBRARY -> getString(R.string.ingame_libretro_core_error_load_library)
+                    LibretroDroid.ERROR_LOAD_GAME -> getString(R.string.ingame_libretro_core_error_load_game)
+                    LibretroDroid.ERROR_GL_NOT_COMPATIBLE -> getString(R.string.ingame_libretro_core_error_gl_incompatible)
+                    LibretroDroid.ERROR_SERIALIZATION -> getString(R.string.ingame_libretro_core_error_serialization)
+                    LibretroDroid.ERROR_CHEAT -> getString(R.string.ingame_libretro_core_error_cheat)
+                    else -> getString(R.string.ingame_libretro_core_error_unknown)
+                }
+                Log.e(TAG, "GLRetroView error: code=$errorCode, message=$errorMessage")
+                Log.e(TAG, "Context: gameId=$gameId, core=$coreName, rom=$romPath")
+                gameLoadFailed = true
+                arrivalRevealed = true
+                coreLoadedSuccessfully = false
+                inGameMessage = errorMessage
+                finish()
+            }
+        }
+
+        startFpsSampling()
+        lifecycleScope.launch {
+            retroView.getGLRetroEvents().collect { event ->
+                if (event is GLRetroView.GLRetroEvents.FrameRendered && fpsReadoutWanted) {
+                    framesSinceSample++
+                }
+                when (event) {
+                    is GLRetroView.GLRetroEvents.SurfaceCreated -> {
+                        if (gameLoadFailed) return@collect
+                        coreLoadedSuccessfully = true
+                        Log.i(TAG, "[Startup] GL surface created - render pipeline ready")
+                        videoSettings.applyFrame(videoSettings.currentFrame)
+                        videoSettings.applyAspectRatio()
+                        videoSettings.applyOverscanCrop()
+                        videoSettings.applyRotation()
+                    }
+                    is GLRetroView.GLRetroEvents.FrameRendered -> {
+                        if (!firstFrameRendered) {
+                            firstFrameRendered = true
+                            arrivalRevealed = true
+                            audioController.riseFromFirstFrame(lifecycleScope)
+                            if (seatPromptVisible) retroView.pauseEmulation()
+                            Log.i(TAG, "[Startup] First frame rendered - emulation running successfully")
+                            Log.d(TAG, "[Startup] gameId=$gameId, core=$coreName, hardcore=$hardcoreMode")
+                            checkStateSupport()
+                            enforceHardcoreCoreSettings()
+                            cheatManager.applyAllEnabledCheats(hardcoreMode)
+                            if (retroView.sramLoadFailed) {
+                                Log.w(TAG, "[Startup] SRAM failed to load (size mismatch); booting with a fresh save")
+                                inGameMessage = getString(R.string.ingame_libretro_sram_load_failed_fresh_save)
+                                saveStateManager.holdWritesForRefusedSave()
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    val kept = saveStateManager.preserveUnloadedSave()
+                                    Log.i(TAG, "[Startup] Kept the unloaded save as a rollback: $kept")
+                                }
+                            }
+                            corePortDevices = readCorePortDevices()
+                            applyControllerTypes()
+                            attemptAutoRestore()
+                            netplay.triggerPendingNetplayJoin()
+                            startRollingSave()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun configureRetroView(settings: com.nendo.argosy.data.preferences.BuiltinEmulatorSettings) {
+        audioController.applyInitialAudioConfig(settings.fastForwardPreservePitch, settings.audioVolumeGain)
+        retroView.filterMode = settings.filterMode
+        retroView.blackFrameInsertion = settings.blackFrameInsertion
+        retroView.portResolver = portResolver
+        retroView.keyMapper = inputMapper
+    }
+
+    private fun initializeCheatManager() {
+        cheatManager = CheatSessionManager(
+            gameId = gameId,
+            cheatDao = cheatDao,
+            gameDao = gameDao,
+            cheatsRepository = cheatsRepository,
+            canSerialize = { canSerialize },
+            isHardcore = { hardcoreMode },
+            scope = lifecycleScope
+        )
+        cheatManager.setRetroView(retroView)
+        netplay.attachCheatSessionManager(cheatManager)
+    }
+
+    private fun initializeHotkeyDispatcher() {
+        hotkeyDispatcher = LibretroHotkeyDispatcher(
+            hotkeyManager = inputConfig.hotkeyManager,
+            saveStateManager = saveStateManager,
+            videoSettings = videoSettings,
+            getRetroView = { retroView },
+            showToast = { msg -> inGameMessage = msg },
+            isHardcoreMode = { hardcoreMode },
+            canSerialize = { canSerialize },
+            isNetplayInSession = { netplay.inSession },
+            getNetplayRole = { netplay.role },
+            onShowMenu = ::showMenu,
+            onAutoSaveState = ::performAutoSaveState,
+            onCycleCoreOption = { key, direction, values -> cycleCoreOption(key, direction, values) },
+            onSendCoreInput = ::sendCoreInput,
+            onQuit = ::finish,
+            onGameReset = { speedrunTimer.onGameReset(speedrunStartOnReset) },
+            onSpeedrunSplit = { speedrunTimer.split() },
+            onSpeedrunUndoSplit = { speedrunTimer.undoSplit() },
+            onSpeedrunSkipSplit = { speedrunTimer.skipSplit() },
+            onSpeedrunToggleTimer = { speedrunTimer.togglePause() },
+            onSpeedrunResetTimer = { speedrunTimer.resetRun() },
+            onStepSunLevel = ::stepSunLevel,
+            onHotkeyFired = { deferredCoreKeys.clear() }
+        )
+    }
+
+    private fun initializeSpeedrun() {
+        speedrunTimer.onRunEnded = { runEnd ->
+            val categoryId = runEnd.categoryId
+            if (categoryId != null) {
+                lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                    speedrunRepository.recordAttempt(
+                        categoryId = categoryId,
+                        startedAt = runEnd.startedAtEpochMs,
+                        completed = runEnd.completed,
+                        finalTimeMs = runEnd.finalTimeMs,
+                        splitTimesMs = runEnd.splitTimesMs
+                    )
+                    val refreshed = speedrunRepository.getComparison(
+                        categoryId,
+                        runEnd.splitTimesMs.size
+                    )
+                    speedrunTimer.updateComparison(
+                        pbSplitTimesMs = refreshed.pbSplitTimesMs,
+                        comparisonSplitTimesMs = refreshed.comparisonSplitTimesMs,
+                        bestSegmentDurationsMs = refreshed.bestSegmentDurationsMs,
+                        pbTimeMs = refreshed.pbTimeMs,
+                        attemptCount = refreshed.attemptCount
+                    )
+                }
+            }
+        }
+    }
+
+    private fun requestSpeedrunArm() {
+        lifecycleScope.launch {
+            val categories = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                speedrunRepository.getCategoriesForGame(gameId)
+            }
+            when {
+                categories.isEmpty() -> armSpeedrunCategory(null)
+                categories.size == 1 -> armSpeedrunCategory(categories.first().id)
+                else -> {
+                    speedrunPickerCategories = categories
+                    speedrunPickerFocusIndex = 0
+                    speedrunPickerVisible = true
+                }
+            }
+        }
+    }
+
+    private fun armSpeedrunCategory(categoryId: Long?) {
+        lifecycleScope.launch {
+            val armData = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val category = categoryId?.let { id ->
+                    speedrunRepository.getCategoriesForGame(gameId).firstOrNull { it.id == id }
+                } ?: speedrunRepository.createCategory(
+                    gameId = gameId,
+                    name = getString(R.string.ingame_libretro_speedrun_default_category_name),
+                    segmentNames = (1..5).map { getString(R.string.ingame_libretro_speedrun_default_segment_name, it) }
+                ).let { newId -> speedrunRepository.getCategoriesForGame(gameId).first { it.id == newId } }
+                val segments = speedrunRepository.getSegmentNames(category.id)
+                val comparison = speedrunRepository.getComparison(category.id, segments.size)
+                Triple(category, segments, comparison)
+            }
+            speedrunTimer.arm(
+                categoryId = armData.first.id,
+                categoryName = armData.first.name,
+                segments = armData.second,
+                pbSplitTimesMs = armData.third.pbSplitTimesMs,
+                comparisonSplitTimesMs = armData.third.comparisonSplitTimesMs,
+                bestSegmentDurationsMs = armData.third.bestSegmentDurationsMs,
+                pbTimeMs = armData.third.pbTimeMs,
+                attemptCount = armData.third.attemptCount
+            )
+            setSidePanel(com.nendo.argosy.libretro.ui.SidePanelContent.SPEEDRUN)
+        }
+    }
+
+    /**
+     * Counts presented frames and republishes a rate once a second, so the per-frame work stays a
+     * single increment and the arithmetic happens on the tick instead.
+     */
+    private fun startFpsSampling() {
+        lifecycleScope.launch {
+            var lastSampleMs = android.os.SystemClock.elapsedRealtime()
+            while (true) {
+                kotlinx.coroutines.delay(FPS_SAMPLE_INTERVAL_MS)
+                val now = android.os.SystemClock.elapsedRealtime()
+                val elapsed = (now - lastSampleMs).coerceAtLeast(1L)
+                val counted = framesSinceSample
+                framesSinceSample = 0
+                lastSampleMs = now
+                if (fpsReadoutWanted) {
+                    measuredFps = (counted * 1000L / elapsed).toInt()
+                }
+            }
+        }
+    }
+
+    private val fpsReadoutWanted: Boolean
+        get() = touchSettingsState.hudEnabled && touchSettingsState.hudShowFps
+
+    @androidx.compose.runtime.Composable
+    private fun rememberHudState(): com.nendo.argosy.ui.components.InGameStatusHudState {
+        val settings = touchSettingsState
+        val battery = com.nendo.argosy.ui.components.rememberBatteryState().value
+        val sessionStart = playSessionTracker.activeSession.collectAsState().value?.startTime
+        var nowMs by androidx.compose.runtime.remember { mutableLongStateOf(System.currentTimeMillis()) }
+        var nowRealtimeMs by androidx.compose.runtime.remember {
+            mutableLongStateOf(android.os.SystemClock.elapsedRealtime())
+        }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            while (true) {
+                nowMs = System.currentTimeMillis()
+                nowRealtimeMs = android.os.SystemClock.elapsedRealtime()
+                kotlinx.coroutines.delay(HUD_TICK_INTERVAL_MS)
+            }
+        }
+        val lastSaveAt = saveStateManager.lastStateWriteRealtimeMs
+        return com.nendo.argosy.ui.components.InGameStatusHudState(
+            batteryLevel = battery.level.takeIf { settings.hudShowBattery && it >= 0 },
+            batteryCharging = battery.isCharging,
+            clock = if (settings.hudShowClock) formatClock(nowMs) else null,
+            sessionElapsed = if (settings.hudShowPlaytime && sessionStart != null) {
+                formatDuration(
+                    java.time.Duration.between(sessionStart, java.time.Instant.ofEpochMilli(nowMs)).seconds
+                )
+            } else {
+                null
+            },
+            fps = if (settings.hudShowFps && !hotkeyDispatcher.isFastForwarding) formatFps(measuredFps) else null,
+            lastSave = if (settings.hudShowLastSave && lastSaveAt != null) {
+                formatAgo((nowRealtimeMs - lastSaveAt) / 1000L)
+            } else {
+                null
+            }
+        )
+    }
+
+    private fun hudCornerFor(value: String): com.nendo.argosy.ui.components.HudCorner =
+        com.nendo.argosy.ui.common.hudCornerFromStored(value)
+
+    private fun formatClock(epochMs: Long): String =
+        com.nendo.argosy.util.formatClockTime(this, epochMs)
+
+    /**
+     * Padded to a stable width so the bar does not resize as the digits change. The readouts are
+     * drawn in a monospaced face, so the leading blanks hold their place rather than collapsing.
+     */
+    private fun formatDuration(totalSeconds: Long): String {
+        val safe = totalSeconds.coerceAtLeast(0L)
+        val hours = safe / 3600
+        val minutes = (safe % 3600) / 60
+        val text = if (hours > 0) {
+            getString(R.string.ingame_libretro_hud_duration_hm, hours, minutes)
+        } else {
+            getString(R.string.ingame_libretro_hud_duration_minutes, minutes)
+        }
+        return text.padStart(HUD_DURATION_WIDTH)
+    }
+
+    private fun formatFps(fps: Int): String =
+        getString(R.string.ingame_libretro_hud_fps_format, fps.toString().padStart(HUD_FPS_DIGITS))
+
+    private fun formatAgo(seconds: Long): String {
+        val safe = seconds.coerceAtLeast(0L)
+        return when {
+            safe < 60 -> getString(R.string.ingame_libretro_hud_last_save_just_now)
+            safe < 3600 -> getString(R.string.ingame_libretro_hud_last_save_minutes_ago, safe / 60)
+            else -> getString(R.string.ingame_libretro_hud_last_save_hours_ago, safe / 3600)
+        }
+    }
+
+    private fun buildContentView() {
+        val splitColumn = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            addView(
+                android.widget.Space(this@LibretroActivity),
+                android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    0,
+                    0f
+                )
+            )
+            addView(
+                retroView,
+                android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                )
+            )
+            addView(
+                android.widget.Space(this@LibretroActivity),
+                android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    0,
+                    0f
+                )
+            )
+        }
+        val splitRow = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            addView(
+                android.widget.Space(this@LibretroActivity),
+                android.widget.LinearLayout.LayoutParams(
+                    0,
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    0f
+                )
+            )
+            addView(
+                splitColumn,
+                android.widget.LinearLayout.LayoutParams(
+                    0,
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    1f
+                )
+            )
+            addView(
+                android.widget.Space(this@LibretroActivity),
+                android.widget.LinearLayout.LayoutParams(
+                    0,
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    0f
+                )
+            )
+        }
+        val container = FrameLayout(this).apply {
+            addView(splitRow, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            addView(
+                ComposeView(this@LibretroActivity).apply {
+                    setContent { InGameOverlay() }
+                },
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        setContentView(container)
+        this.splitColumn = splitColumn
+        this.splitRow = splitRow
+        applyPortraitSplit(splitColumn)
+        applySidePanelSplit(splitRow)
+
+        container.post {
+            videoSettings.setScreenSize(splitColumn.width, container.height)
+            Log.d(TAG, "Game region size: ${splitColumn.width}x${container.height}, aspectRatioMode: ${videoSettings.aspectRatioMode}")
+            if (coreLoadedSuccessfully) {
+                videoSettings.applyAspectRatio()
+                videoSettings.applyOverscanCrop()
+                videoSettings.applyRotation()
+            }
+        }
+    }
+
+    private fun applyPortraitSplit(column: android.widget.LinearLayout) {
+        val portrait = currentOrientationState == android.content.res.Configuration.ORIENTATION_PORTRAIT
+        val overlayWouldShow = touchSettingsState.showTouchControlsWhenNoGamepad && !isGamepadConnectedState
+        val position = when {
+            !portrait -> "Center"
+            portraitPositionState == "Top" -> "Top"
+            portraitPositionState == "Center" -> "Center"
+            portraitPositionState == "Bottom" -> "Bottom"
+            else -> if (overlayWouldShow) "Top" else "Center"
+        }
+        val reserved = resolveGripReserveFraction(
+            enabled = isGripReserveActive(
+                mode = gripReserveModeState,
+                autoControllerConnected = gripAutoControllerConnectedState
+            ),
+            percent = gripReservePercentState,
+            screenWidthDp = resources.configuration.screenWidthDp,
+            screenHeightDp = resources.configuration.screenHeightDp,
+            isSecondaryDisplay = onSecondaryDisplay()
+        )
+        val (topWeight, gameWeight, bottomWeight) = portraitSplitWeights(position, reserved)
+        val spacerTop = column.getChildAt(0)
+        val spacerBottom = column.getChildAt(2)
+        (spacerTop.layoutParams as android.widget.LinearLayout.LayoutParams).weight = topWeight
+        (retroView.layoutParams as android.widget.LinearLayout.LayoutParams).weight = gameWeight
+        (spacerBottom.layoutParams as android.widget.LinearLayout.LayoutParams).weight = bottomWeight
+        spacerTop.layoutParams = spacerTop.layoutParams
+        retroView.layoutParams = retroView.layoutParams
+        spacerBottom.layoutParams = spacerBottom.layoutParams
+        column.requestLayout()
+    }
+
+    private val isWideScreen: Boolean
+        get() = com.nendo.argosy.ui.theme.aspectRatioClassOf(
+            resources.configuration.screenWidthDp,
+            resources.configuration.screenHeightDp
+        ).isWide
+
+    private fun sidePanelFits(content: com.nendo.argosy.libretro.ui.SidePanelContent?): Boolean {
+        val landscape = currentOrientationState != android.content.res.Configuration.ORIENTATION_PORTRAIT
+        return when (content) {
+            null -> false
+            com.nendo.argosy.libretro.ui.SidePanelContent.SPEEDRUN -> landscape && isGamepadConnectedState
+            com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH -> landscape && isWideScreen
+        }
+    }
+
+    private fun applySidePanelSplit(row: android.widget.LinearLayout) {
+        val panelWeight = if (sidePanelFits(sidePanelContent)) {
+            speedrunPanelFractionState.coerceIn(SPEEDRUN_PANEL_FRACTION_RANGE)
+        } else 0f
+        val (leftWeight, rightWeight) = if (sidePanelSideState == "Left") {
+            panelWeight to 0f
+        } else {
+            0f to panelWeight
+        }
+        val spacerLeft = row.getChildAt(0)
+        val gameArea = row.getChildAt(1)
+        val spacerRight = row.getChildAt(2)
+        (spacerLeft.layoutParams as android.widget.LinearLayout.LayoutParams).weight = leftWeight
+        (gameArea.layoutParams as android.widget.LinearLayout.LayoutParams).weight = 1f - panelWeight
+        (spacerRight.layoutParams as android.widget.LinearLayout.LayoutParams).weight = rightWeight
+        spacerLeft.layoutParams = spacerLeft.layoutParams
+        gameArea.layoutParams = gameArea.layoutParams
+        spacerRight.layoutParams = spacerRight.layoutParams
+        row.requestLayout()
+        row.post {
+            splitColumn?.let { videoSettings.setScreenSize(it.width, it.height) }
+            if (coreLoadedSuccessfully) videoSettings.applyAspectRatio()
+        }
+    }
+
+    private fun setSidePanel(content: com.nendo.argosy.libretro.ui.SidePanelContent?) {
+        sidePanelContent = content
+        splitRow?.let { applySidePanelSplit(it) }
+    }
+
+    private fun setSpeedrunPanelFraction(fraction: Float) {
+        speedrunPanelFractionState = fraction.coerceIn(SPEEDRUN_PANEL_FRACTION_RANGE)
+        splitRow?.let { applySidePanelSplit(it) }
+    }
+
+    private fun openReader(kind: com.nendo.argosy.libretro.ui.InGameDocumentKind) {
+        menuVisible = false
+        inGameDocuments.open(kind)
+        readerKind = kind
+    }
+
+    private fun closeReader() {
+        val kind = readerKind ?: return
+        readerKind = null
+        val keptBesideGame = kind == com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH &&
+            sidePanelContent == com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH
+        if (!keptBesideGame) inGameDocuments.reader(kind).dismiss()
+        menuVisible = true
+    }
+
+    private fun toggleWalkthroughPanel() {
+        if (sidePanelContent == com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH) {
+            closeWalkthroughPanel()
+        } else {
+            inGameDocuments.open(com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH)
+            setSidePanel(com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH)
+        }
+    }
+
+    private fun closeWalkthroughPanel() {
+        if (sidePanelContent == com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH) setSidePanel(null)
+        inGameDocuments.reader(com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH).dismiss()
+    }
+
+
+    @androidx.compose.runtime.Composable
+    private fun InGameOverlay() {
+        ALauncherTheme(isSecondaryDisplay = onSecondaryDisplayState) {
+            CompositionLocalProvider(
+                LocalGamepadInputHandler provides gamepadInputBridge,
+                LocalABIconsSwapped provides swapAB,
+                LocalXYIconsSwapped provides swapXY,
+                LocalSwapStartSelect provides swapStartSelect
+            ) {
+                com.nendo.argosy.libretro.ui.GameArrival(revealed = arrivalRevealed)
+                com.nendo.argosy.libretro.touch.OnScreenControlsHost(
+                    retroView = retroView,
+                    platformSlug = platformSlug,
+                    orientation = currentOrientationState,
+                    isGamepadConnected = isGamepadConnectedState,
+                    settings = touchSettingsState,
+                    rotationKey = currentRotationState,
+                    baselineRotation = baselineRotation,
+                    editMode = touchEditMode,
+                    repository = touchLayoutRepository,
+                    onExitEdit = { exitTouchEditMode() },
+                    onKey = { action, kc -> dispatchTouchKey(action, kc) }
+                )
+                val speedrunState by speedrunTimer.state.collectAsState()
+                val documents by inGameDocuments.available.collectAsState()
+                val liveSwapAvailable by (
+                    com.nendo.argosy.DualScreenManagerHolder.instance?.liveSwapAvailable
+                        ?: androidx.compose.runtime.remember {
+                            kotlinx.coroutines.flow.MutableStateFlow(false)
+                        }
+                    ).collectAsState()
+                val panelAlignment = if (sidePanelSideState == "Left") Alignment.CenterStart else Alignment.CenterEnd
+                val panelFraction = speedrunPanelFractionState.coerceIn(SPEEDRUN_PANEL_FRACTION_RANGE)
+                val shownPanel = sidePanelContent?.takeIf { sidePanelFits(it) }
+                if (shownPanel == com.nendo.argosy.libretro.ui.SidePanelContent.SPEEDRUN && speedrunState.armed) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        com.nendo.argosy.libretro.ui.SpeedrunPanel(
+                            state = speedrunState,
+                            modifier = Modifier
+                                .align(panelAlignment)
+                                .fillMaxWidth(panelFraction)
+                        )
+                    }
+                }
+                val walkthroughInMenu = menuVisible &&
+                    menuSection == com.nendo.argosy.libretro.ui.InGameMenuSection.WALKTHROUGH
+                if (shownPanel == com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH &&
+                    readerKind != com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH &&
+                    !walkthroughInMenu
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        com.nendo.argosy.ui.screens.gamedetail.components.DocumentReaderPane(
+                            reader = inGameDocuments.reader(com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH),
+                            showsControllerHints = false,
+                            onDismiss = ::closeWalkthroughPanel,
+                            modifier = Modifier
+                                .align(panelAlignment)
+                                .fillMaxHeight()
+                                .fillMaxWidth(panelFraction)
+                        )
+                    }
+                }
+                if (menuVisible) {
+                    activeMenuHandler = InGameMenu(
+                        gameName = gameName,
+                        coreName = resolvedCoreId?.let { id ->
+                            LibretroCoreRegistry.getCoreById(id)?.displayName
+                                ?: com.nendo.argosy.data.emulator.EmulatorRegistry
+                                    .getCoresForPlatform(platformSlug).firstOrNull { it.id == id }?.displayName
+                                ?: id
+                        },
+                        cheatsAvailable = !hardcoreMode && PlatformWeightRegistry.supportsCheats(platformSlug),
+                        achievementsAvailable = inGameAchievements.isNotEmpty(),
+                        statesSupported = statesSupported && !hardcoreMode,
+                        focusedIndex = menuFocusIndex,
+                        onFocusChange = { menuFocusIndex = it },
+                        onAction = ::handleMenuAction,
+                        isHardcoreMode = hardcoreMode,
+                        hardcoreConfirmed = hardcoreConfirmed,
+                        availableDiscs = menuDiscCount,
+                        netplaySupported = netplay.isCoreSupported() && !hardcoreMode,
+                        isInNetplaySession = netplay.inSession,
+                        touchControlsVisible = touchSettingsState.showTouchControlsWhenNoGamepad && !isGamepadConnectedState,
+                        speedrunAvailable = isGamepadConnectedState &&
+                            currentOrientationState != android.content.res.Configuration.ORIENTATION_PORTRAIT,
+                        speedrunArmed = speedrunState.armed,
+                        hasQuickSave = saveStateManager.hasQuickSave,
+                        quickHistoryFocus = menuQuickHistoryFocus,
+                        quickHistoryIndex = menuQuickHistoryIndex,
+                        quickHistoryEntries = menuQuickHistoryEntries,
+                        onQuickHistoryFocusChange = ::setQuickHistoryFocus,
+                        onQuickHistoryLoad = ::loadQuickHistorySlot,
+                        twoColumnMenu = touchSettingsState.ingameMenuTwoColumn,
+                        manualAvailable = com.nendo.argosy.libretro.ui.InGameDocumentKind.MANUAL in documents,
+                        walkthroughAvailable = com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH in documents,
+                        walkthroughPanelAvailable = !speedrunState.armed &&
+                            sidePanelFits(com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH),
+                        walkthroughPanelShown = sidePanelContent == com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH,
+                        swapScreensAvailable = liveSwapAvailable,
+                        openSection = menuSection,
+                        onCloseSection = ::closeMenuSection,
+                        sectionContent = { section -> menuSectionContent(section) }
+                    )
+                }
+                readerKind?.let { kind ->
+                    val reader = inGameDocuments.reader(kind)
+                    activeMenuHandler = androidx.compose.runtime.remember(kind) {
+                        reader.inputHandler(onDismiss = ::closeReader)
+                    }
+                    com.nendo.argosy.ui.screens.gamedetail.components.DocumentReaderPane(
+                        reader = reader,
+                        showsControllerHints = isGamepadConnectedState,
+                        onDismiss = ::closeReader,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                if (discMenuVisible) {
+                    activeMenuHandler = DiscMenu(
+                        labels = discMenuLabels,
+                        currentIndex = discMenuCurrentIndex,
+                        focusedIndex = discMenuFocusIndex,
+                        onFocusChange = { discMenuFocusIndex = it },
+                        onSelect = { index ->
+                            if (index != discMenuCurrentIndex) {
+                                discPaths.getOrNull(index)?.let { retroView.changeDisk(index, it.absolutePath) }
+                                currentDiscIndex = index
+                                val discName = discMenuLabels.getOrNull(index)
+                                    ?: getString(R.string.ingame_libretro_disc_swap_fallback_name, index + 1)
+                                inGameMessage = getString(R.string.ingame_libretro_disc_swap_inserted, discName)
+                            }
+                            discMenuVisible = false
+                            hideMenu()
+                        },
+                        onDismiss = {
+                            discMenuVisible = false
+                            menuFocusIndex = 0
+                            menuVisible = true
+                        }
+                    )
+                }
+                if (speedrunPickerVisible) {
+                    activeMenuHandler = DiscMenu(
+                        labels = speedrunPickerCategories.map { it.name },
+                        currentIndex = -1,
+                        focusedIndex = speedrunPickerFocusIndex,
+                        onFocusChange = { speedrunPickerFocusIndex = it },
+                        onSelect = { index ->
+                            speedrunPickerVisible = false
+                            speedrunPickerCategories.getOrNull(index)?.let { armSpeedrunCategory(it.id) }
+                        },
+                        onDismiss = { speedrunPickerVisible = false },
+                        title = getString(R.string.ingame_libretro_speedrun_picker_title)
+                    )
+                }
+                if (netplay.modePickerVisible) {
+                    activeMenuHandler = NetplayModePickerDialog(
+                        focusedIndex = netplay.modePickerFocus,
+                        onFocusChange = { netplay.modePickerFocus = it },
+                        onSelectOpen = {
+                            netplay.modePickerVisible = false
+                            netplay.handleOpenWithMode(NetplaySessionMode.OPEN)
+                        },
+                        onSelectPrivate = {
+                            netplay.modePickerVisible = false
+                            netplay.handleOpenWithMode(NetplaySessionMode.PRIVATE)
+                        },
+                        onSelectInvite = {
+                            netplay.modePickerVisible = false
+                            netplay.handleInviteFriend()
+                        },
+                        onDismiss = { netplay.modePickerVisible = false }
+                    )
+                }
+                if (netplay.friendPickerVisible) {
+                    activeMenuHandler = NetplayFriendPickerDialog(
+                        friends = netplay.friendPickerEntries,
+                        focusedIndex = netplay.friendPickerFocus,
+                        onFocusChange = { netplay.friendPickerFocus = it },
+                        onSelect = netplay::onFriendPicked,
+                        onDismiss = { netplay.friendPickerVisible = false }
+                    )
+                }
+                if (netplay.joinRequestVisible) {
+                    activeMenuHandler = NetplayJoinRequestDialog(
+                        username = netplay.joinRequestUsername,
+                        focusedIndex = netplay.joinRequestFocus,
+                        onFocusChange = { netplay.joinRequestFocus = it },
+                        onAccept = netplay::handleJoinRequestAccept,
+                        onDecline = netplay::handleJoinRequestDecline
+                    )
+                }
+                if (netplay.disconnectPromptVisible) {
+                    activeMenuHandler = NetplayHostDisconnectPrompt(
+                        peerDisplayName = netplay.disconnectPromptPeer,
+                        focusedIndex = netplay.disconnectPromptFocus,
+                        onFocusChange = { netplay.disconnectPromptFocus = it },
+                        onKeepOpen = netplay::handleKeepSession,
+                        onCloseAndEnd = netplay::handleCloseAfterDisconnect
+                    )
+                }
+                if (netplay.qualityWarningVisible) {
+                    activeMenuHandler = NetplayQualityWarningPrompt(
+                        rttMs = netplay.qualityWarningRttMs,
+                        jitterMs = netplay.qualityWarningJitterMs,
+                        ratingLabel = netplay.qualityWarningLabel,
+                        focusedIndex = netplay.qualityWarningFocus,
+                        onFocusChange = { netplay.qualityWarningFocus = it },
+                        onAccept = netplay::handleQualityAccept,
+                        onDecline = netplay::handleQualityDecline
+                    )
+                }
+                netplay.progressState?.let { progress ->
+                    activeMenuHandler = NetplayConnectionProgressOverlay(
+                        state = progress,
+                        onDismiss = { netplay.progressState = null }
+                    )
+                }
+                if (netplay.reconnecting) {
+                    NetplayReconnectingOverlay(lastRttMs = netplay.lastRttMs)
+                }
+                if (shaderChainEditorVisible) {
+                    val manager = inGameShaderChainManager
+                    if (manager != null) {
+                        activeMenuHandler = InGameShaderChainScreen(
+                            manager = manager,
+                            onDismiss = ::closeInGameShaderChainEditor
+                        )
+                    }
+                }
+                if (frameEditorVisible) {
+                    val manager = inGameFrameManager
+                    if (manager != null) {
+                        activeMenuHandler = InGameFrameScreen(
+                            manager = manager,
+                            isOffline = false,
+                            adjustable = videoSettings.isFrameAdjustable(manager.selectedFrameId),
+                            adjusting = frameAdjustMode,
+                            onToggleAdjust = { frameAdjustMode = !frameAdjustMode },
+                            onAdjust = { dx, dy, zoom ->
+                                videoSettings.adjustFrame(manager.selectedFrameId, dx, dy, zoom)
+                            },
+                            onResetAdjust = { videoSettings.resetFrameAdjustment(manager.selectedFrameId) },
+                            onConfirm = ::confirmInGameFrameEditor,
+                            onDismiss = ::closeInGameFrameEditor
+                        )
+                    }
+                }
+                if (autoRestorePromptVisible) {
+                    activeMenuHandler = AutoRestorePrompt(
+                        focusedIndex = autoRestorePromptFocusIndex,
+                        onFocusChange = { autoRestorePromptFocusIndex = it },
+                        onRestore = { handleAutoRestoreResponse(true) },
+                        onSkip = { handleAutoRestoreResponse(false) }
+                    )
+                }
+                if (seatPromptVisible) {
+                    activeMenuHandler = seatPromptInputHandler
+                    com.nendo.argosy.ui.screens.settings.components.ControllerOrderModal(
+                        controller = controllerSeats,
+                        onDismiss = ::closeSeatPrompt,
+                        drawsOwnFooter = true
+                    )
+                }
+                if (!isAnyMenuOpen) {
+                    activeMenuHandler = null
+                }
+                androidx.compose.runtime.LaunchedEffect(isAnyMenuOpen) {
+                    if (!isAnyMenuOpen && !netplay.inSession) {
+                        retroView.suppressAutoResume = false
+                        retroView.resumeEmulation()
+                    }
+                }
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (netplay.inSession && !menuVisible) {
+                        val playerCount = if (netplay.peerConnected) 2 else 1
+                        val isLocalHost = netplay.role == NetplayMenuRole.Host
+                        NetplayBorderHud(
+                            gameTitle = gameName,
+                            sessionMode = netplay.hudSessionMode,
+                            playerCount = playerCount,
+                            averagePingMs = netplay.hudAveragePingMs,
+                            hostUsername = if (isLocalHost) netplay.hudHostUsername else netplay.peerDisplayName,
+                            guestUsername = if (netplay.peerConnected) {
+                                if (isLocalHost) netplay.peerDisplayName else netplay.hudHostUsername
+                            } else null,
+                            hostAvatarColor = if (isLocalHost) netplay.hudHostAvatarColor else netplay.hudGuestAvatarColor,
+                            guestAvatarColor = if (isLocalHost) netplay.hudGuestAvatarColor else netplay.hudHostAvatarColor,
+                            observers = emptyList(),
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(start = 4.dp, top = 4.dp)
+                        )
+                    }
+                    AchievementPopup(
+                        achievement = achievementBridge.currentUnlock,
+                        onDismiss = { achievementBridge.showNextUnlock() },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                    )
+                    RAConnectionNotification(
+                        connectionInfo = achievementBridge.connectionInfo,
+                        onDismiss = { achievementBridge.dismissConnectionInfo() },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                    )
+                    InGameMessageOverlay(
+                        message = inGameMessage,
+                        onDismiss = { inGameMessage = null },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 24.dp)
+                    )
+                    com.nendo.argosy.libretro.ui.SaveWrittenIndicator(
+                        writtenAt = saveWrittenAt,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .navigationBarsPadding()
+                    )
+                }
+
+                if (touchSettingsState.hudEnabled && !isAnyMenuOpen) {
+                    com.nendo.argosy.ui.components.InGameStatusHud(
+                        state = rememberHudState(),
+                        corner = hudCornerFor(touchSettingsState.hudCorner),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .safeDrawingPadding()
+                    )
+                }
+
+                if (isClosing) {
+                    ClosingSaveOverlay()
+                }
+            }
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun ClosingSaveOverlay() {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.85f))
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) { awaitPointerEvent().changes.forEach { it.consume() } }
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                Text(
+                    text = stringResource(R.string.ingame_libretro_closing_overlay_validating),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color.White
+                )
+            }
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun InGameMessageOverlay(
+        message: String?,
+        onDismiss: () -> Unit,
+        modifier: Modifier = Modifier
+    ) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = message != null,
+            enter = androidx.compose.animation.fadeIn(
+                animationSpec = androidx.compose.animation.core.tween(150)
+            ),
+            exit = androidx.compose.animation.fadeOut(
+                animationSpec = androidx.compose.animation.core.tween(150)
+            ),
+            modifier = modifier
+        ) {
+            message?.let { msg ->
+                LaunchedEffect(msg) {
+                    kotlinx.coroutines.delay(2000)
+                    onDismiss()
+                }
+                Text(
+                    text = msg,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier
+                        .background(
+                            Color.Black.copy(alpha = 0.7f),
+                            RoundedCornerShape(6.dp)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+
+    private fun loadCoreOptionOverrides() {
+        val coreId = resolvedCoreId ?: return
+        if (CoreOptionManifestRegistry.getManifest(coreId) == null) return
+        lifecycleScope.launch {
+            val (global, perGame) = withContext(Dispatchers.IO) {
+                val g = coreOptionsRepository.getOverridesForCore(coreId)
+                    .associate { it.optionKey to it.value }
+                val pg = if (gameId != -1L) {
+                    coreOptionsRepository.getOverridesForGame(gameId, coreId)
+                        .associate { it.optionKey to it.value }
+                } else {
+                    emptyMap()
+                }
+                g to pg
+            }
+            coreOptionOverrides = global
+            gameCoreOptionOverrides = perGame
+        }
+    }
+
+    private fun loadControllerTypes() {
+        lifecycleScope.launch {
+            val (game, platform) = withContext(Dispatchers.IO) {
+                val g = if (gameId != -1L) {
+                    configureEmulatorUseCase.getControllerTypesForGame(gameId)
+                } else {
+                    null
+                }
+                val p = if (platformId != -1L) {
+                    configureEmulatorUseCase.getControllerTypesForPlatform(platformId)
+                } else {
+                    null
+                }
+                g to p
+            }
+            val coreId = resolvedCoreId ?: return@launch
+            val legacyApplies = ControllerTypeSelection.legacyApplies(platformSlug)
+            storedGameControllerTypes = game
+            storedPlatformControllerTypes = platform
+            gameControllerTypes = ControllerTypeSelection.decode(game, coreId, legacyApplies)
+            platformControllerTypes = ControllerTypeSelection.decode(platform, coreId, legacyApplies)
+            applyControllerTypes()
+        }
+    }
+
+    private fun effectiveControllerType(port: Int): Int? =
+        (if (perGameControlsEnabled && gameId != -1L) gameControllerTypes[port] else null)
+            ?: platformControllerTypes[port]
+
+    /**
+     * Pushes the stored per-port device ids into the core, once per load. Never call this while the
+     * session is running: `retro_set_controller_port_device` reconfigures emulated hardware, and on
+     * a threaded core (Dolphin in dual-core mode) driving it from the GL thread hangs the session
+     * with no recovery. Selections made in-game are stored and land on the next launch.
+     */
+    private fun applyControllerTypes() {
+        if (!::retroView.isInitialized) return
+        if (!firstFrameRendered) return
+        if (appliedControllerTypes.isNotEmpty()) return
+        if (corePortDevices.isEmpty()) corePortDevices = readCorePortDevices()
+        val applied = mutableMapOf<Int, Int>()
+        corePortDevices.indices.forEach { port ->
+            val deviceId = effectiveControllerType(port) ?: return@forEach
+            if (corePortDevices[port].none { it.id == deviceId }) {
+                Log.w(TAG, "Stored controller type $deviceId is not advertised for port $port; ignoring")
+                return@forEach
+            }
+            retroView.queueEvent { retroView.setControllerType(port, deviceId) }
+            applied[port] = deviceId
+            Log.d(TAG, "Controller type applied: port=$port, device=$deviceId")
+        }
+        appliedControllerTypes = applied
+        if (applied.isNotEmpty() && ::inputConfig.isInitialized) {
+            lifecycleScope.launch { inputConfig.refreshInputMappings() }
+        }
+    }
+
+    private fun readCorePortDevices(): List<List<com.swordfish.libretrodroid.Controller>> =
+        runCatching { retroView.getControllers().map { it.toList() } }
+            .onFailure { Log.w(TAG, "Could not read controller info from core: ${it.message}") }
+            .getOrDefault(emptyList())
+
+    private fun buildControllerPortOptions(): List<ControllerPortOption> {
+        val perGame = perGameControlsEnabled && gameId != -1L
+        return corePortDevices.mapIndexedNotNull { port, devices ->
+            if (devices.size < 2) return@mapIndexedNotNull null
+            val stored = if (perGame) gameControllerTypes[port] else platformControllerTypes[port]
+            val effective = effectiveControllerType(port)
+            val deviceIds = devices.map { it.id }
+            ControllerPortOption(
+                port = port,
+                options = devices.map { it.description ?: getString(R.string.ingame_libretro_controller_port_device_fallback, it.id) },
+                selectedIndex = CorePortDeviceCatalog.selectedDeviceIndex(deviceIds, effective),
+                autoIndex = CorePortDeviceCatalog.autoDeviceIndex(deviceIds),
+                followsAuto = effective == null,
+                isOverridden = stored != null,
+                pendingRestart = effective != null && effective != appliedControllerTypes[port]
+            )
+        }
+    }
+
+    private fun setControllerType(port: Int, deviceId: Int) {
+        val perGame = perGameControlsEnabled && gameId != -1L
+        if (perGame) {
+            gameControllerTypes = gameControllerTypes + (port to deviceId)
+        } else {
+            platformControllerTypes = platformControllerTypes + (port to deviceId)
+        }
+        persistControllerTypes(perGame)
+    }
+
+    private fun cycleControllerType(port: Int, direction: Int) {
+        val devices = corePortDevices.getOrNull(port) ?: return
+        if (devices.isEmpty()) return
+        val currentIndex = CorePortDeviceCatalog.selectedDeviceIndex(devices.map { it.id }, effectiveControllerType(port))
+        val next = devices[(currentIndex + direction).mod(devices.size)]
+        setControllerType(port, next.id)
+    }
+
+    private fun selectControllerType(port: Int, optionIndex: Int) {
+        val device = corePortDevices.getOrNull(port)?.getOrNull(optionIndex) ?: return
+        setControllerType(port, device.id)
+    }
+
+    private fun resetControllerType(port: Int) {
+        val perGame = perGameControlsEnabled && gameId != -1L
+        if (perGame) {
+            gameControllerTypes = gameControllerTypes - port
+        } else {
+            platformControllerTypes = platformControllerTypes - port
+        }
+        persistControllerTypes(perGame)
+    }
+
+    private fun persistControllerTypes(perGame: Boolean) {
+        val coreId = resolvedCoreId ?: return
+        val legacyApplies = ControllerTypeSelection.legacyApplies(platformSlug)
+        val encodedGame = ControllerTypeSelection.update(storedGameControllerTypes, coreId, legacyApplies, gameControllerTypes)
+        val encodedPlatform =
+            ControllerTypeSelection.update(storedPlatformControllerTypes, coreId, legacyApplies, platformControllerTypes)
+        if (perGame) storedGameControllerTypes = encodedGame else storedPlatformControllerTypes = encodedPlatform
+        lifecycleScope.launch(Dispatchers.IO) {
+            if (perGame) {
+                configureEmulatorUseCase.setControllerTypesForGame(gameId, encodedGame)
+            } else if (platformId != -1L) {
+                configureEmulatorUseCase.setControllerTypesForPlatform(platformId, encodedPlatform)
+            }
+        }
+    }
+
+    private fun buildCoreOptionItems(): List<CoreOptionViewItem> {
+        val coreId = resolvedCoreId ?: return emptyList()
+        val manifest = CoreOptionManifestRegistry.getManifest(coreId) ?: return emptyList()
+        val perGame = perGameSettingsEnabled && gameId != -1L
+        val held = splitHeldCoreOptions()
+        return manifest.options.map { def ->
+            val gameOverride = if (perGame) gameCoreOptionOverrides[def.key] else null
+            val globalOverride = coreOptionOverrides[def.key]
+            val heldValue = held[def.key]
+            CoreOptionViewItem(
+                key = def.key,
+                displayName = def.displayName,
+                description = def.description,
+                values = def.values,
+                currentValue = heldValue ?: (gameOverride ?: globalOverride)
+                    ?.let { def.resolveStored(it) } ?: def.defaultValue,
+                isOverridden = heldValue == null &&
+                    (if (perGame) gameOverride != null else globalOverride != null),
+                valueLabels = def.valueLabels,
+                isHeldByDualScreen = heldValue != null
+            )
+        }
+    }
+
+    private fun splitHeldCoreOptions(): Map<String, String> = dualScreenOutput?.coreOptions.orEmpty()
+
+    private fun cycleCoreOption(optionKey: String, direction: Int) =
+        cycleCoreOption(optionKey, direction, emptyList())
+
+    private fun cycleCoreOption(optionKey: String, direction: Int, explicitValues: List<String>) {
+        if (optionKey in splitHeldCoreOptions()) return
+        val coreId = resolvedCoreId ?: return
+        val def = CoreOptionManifestRegistry.getManifest(coreId)
+            ?.options?.firstOrNull { it.key == optionKey } ?: return
+        val rotation = explicitValues.filter { it in def.values }.takeIf { it.isNotEmpty() } ?: def.values
+        if (rotation.isEmpty()) return
+        val perGame = perGameSettingsEnabled && gameId != -1L
+        val stored = (if (perGame) gameCoreOptionOverrides[optionKey] else null)
+            ?: coreOptionOverrides[optionKey]
+        val current = stored?.let { def.resolveStored(it) } ?: def.defaultValue
+        val currentIndex = rotation.indexOf(current).coerceAtLeast(0)
+        val newValue = rotation[(currentIndex + direction).mod(rotation.size)]
+        if (hardcoreBlocks(optionKey, newValue)) {
+            inGameMessage = getString(R.string.ingame_libretro_core_option_blocked_hardcore)
+            return
+        }
+        val inherited = (if (perGame) coreOptionOverrides[optionKey] else null)
+            ?.let { def.resolveStored(it) } ?: def.defaultValue
+        if (newValue == inherited) {
+            resetCoreOption(optionKey)
+            return
+        }
+        if (perGame) {
+            gameCoreOptionOverrides = gameCoreOptionOverrides + (optionKey to newValue)
+        } else {
+            coreOptionOverrides = coreOptionOverrides + (optionKey to newValue)
+        }
+        if (::retroView.isInitialized) retroView.updateVariables(Variable(optionKey, newValue))
+        lifecycleScope.launch(Dispatchers.IO) {
+            if (perGame) {
+                coreOptionsRepository.upsertForGame(
+                    GameCoreOptionOverrideEntity(gameId, coreId, optionKey, newValue)
+                )
+            } else {
+                coreOptionsRepository.upsert(CoreOptionOverrideEntity(coreId, optionKey, newValue))
+            }
+        }
+    }
+
+    private fun sendCoreInput(retropadId: Int, @Suppress("UNUSED_PARAMETER") mode: CoreInputMode) {
+        if (!::retroView.isInitialized) return
+        val keyCode = ControllerInputMapper.retroButtonToAndroidKeyCode(retropadId)
+        retroView.sendKeyEvent(KeyEvent.ACTION_DOWN, keyCode, 0)
+        lifecycleScope.launch {
+            delay(CORE_INPUT_PULSE_MS)
+            retroView.sendKeyEvent(KeyEvent.ACTION_UP, keyCode, 0)
+        }
+    }
+
+    private fun resetCoreOption(optionKey: String) {
+        if (optionKey in splitHeldCoreOptions()) return
+        val coreId = resolvedCoreId ?: return
+        val def = CoreOptionManifestRegistry.getManifest(coreId)
+            ?.options?.firstOrNull { it.key == optionKey } ?: return
+        val perGame = perGameSettingsEnabled && gameId != -1L
+        val target = if (perGame) coreOptionOverrides[optionKey] ?: def.defaultValue else def.defaultValue
+        if (hardcoreBlocks(optionKey, target)) {
+            inGameMessage = getString(R.string.ingame_libretro_core_option_blocked_hardcore)
+            return
+        }
+        if (perGame) {
+            gameCoreOptionOverrides = gameCoreOptionOverrides - optionKey
+            val fallback = coreOptionOverrides[optionKey] ?: def.defaultValue
+            if (::retroView.isInitialized) retroView.updateVariables(Variable(optionKey, fallback))
+            lifecycleScope.launch(Dispatchers.IO) {
+                coreOptionsRepository.deleteForGame(gameId, coreId, optionKey)
+            }
+        } else {
+            coreOptionOverrides = coreOptionOverrides - optionKey
+            if (::retroView.isInitialized) retroView.updateVariables(Variable(optionKey, def.defaultValue))
+            lifecycleScope.launch(Dispatchers.IO) {
+                coreOptionsRepository.delete(coreId, optionKey)
+            }
+        }
+    }
+
+    private fun applyPerGameSettingsToggle(enabled: Boolean) {
+        if (gameId == -1L) return
+        val coreId = resolvedCoreId
+        val manifest = coreId?.let { CoreOptionManifestRegistry.getManifest(it) }
+        val held = splitHeldCoreOptions()
+        val effective = manifest?.options?.map { def ->
+            val gameOverride = if (enabled) gameCoreOptionOverrides[def.key] else null
+            val stored = gameOverride ?: coreOptionOverrides[def.key]
+            Variable(def.key, held[def.key] ?: stored?.let { def.resolveStored(it) } ?: def.defaultValue)
+        }.orEmpty()
+        if (effective.any { hardcoreBlocks(it.key, it.value) }) {
+            inGameMessage = getString(R.string.ingame_libretro_core_option_blocked_hardcore)
+            return
+        }
+        perGameSettingsEnabled = enabled
+        if (::retroView.isInitialized) {
+            effective.forEach { retroView.updateVariables(it) }
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            gameDao.setPerGameSettingsEnabled(gameId, enabled)
+        }
+    }
+
+    private fun applyPerGameControlsToggle(enabled: Boolean) {
+        if (gameId == -1L) return
+        perGameControlsEnabled = enabled
+        if (::inputConfig.isInitialized) {
+            inputConfig.setGameId(perGameMappingId)
+        }
+        applyControllerTypes()
+        lifecycleScope.launch(Dispatchers.IO) {
+            gameDao.setPerGameControlsEnabled(gameId, enabled)
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun menuSectionContent(section: com.nendo.argosy.libretro.ui.InGameMenuSection): InputHandler =
+        when (section) {
+            com.nendo.argosy.libretro.ui.InGameMenuSection.STATES -> buildStateManagerScreen()
+            com.nendo.argosy.libretro.ui.InGameMenuSection.ACHIEVEMENTS -> InGameAchievements(
+                gameName = gameName,
+                achievements = inGameAchievements,
+                focusedIndex = achievementsFocusIndex,
+                onFocusChange = { achievementsFocusIndex = it },
+                onDismiss = ::closeMenuSection
+            )
+            com.nendo.argosy.libretro.ui.InGameMenuSection.CHEATS -> CheatsScreen(
+                cheats = cheatManager.cheats.map { CheatDisplayItem(it.id, it.description, it.code, it.enabled, it.isUserCreated, it.lastUsedAt) },
+                variants = cheatManager.variants.map { CheatVariantInfo(it.variantRegion, it.variantVersion, it.cheatCount) },
+                selectedVariant = cheatManager.selectedVariant,
+                scanner = cheatManager.memoryScanner,
+                initialTab = lastCheatsTab,
+                onToggleCheat = cheatManager::handleToggleCheat,
+                onCreateCheat = cheatManager::handleCreateCheat,
+                onUpdateCheat = cheatManager::handleUpdateCheat,
+                onDeleteCheat = cheatManager::handleDeleteCheat,
+                onSelectVariant = { region, version ->
+                    cheatManager.selectVariant(region, version, hardcoreMode)
+                },
+                onGetRam = { retroView.getSystemRam() },
+                onTabChange = { lastCheatsTab = it },
+                onDismiss = ::closeMenuSection
+            )
+            com.nendo.argosy.libretro.ui.InGameMenuSection.SETTINGS -> buildSettingsScreen()
+            com.nendo.argosy.libretro.ui.InGameMenuSection.WALKTHROUGH -> buildWalkthroughSection()
+            com.nendo.argosy.libretro.ui.InGameMenuSection.NETPLAY -> buildNetplaySection()
+        }
+
+    @androidx.compose.runtime.Composable
+    private fun buildNetplaySection(): InputHandler {
+        val role = netplay.role
+        val quality = if (netplay.inSession && role != null) {
+            NetplayQualityInfo(
+                peerDisplayName = netplay.peerDisplayName,
+                role = role,
+                pingMs = netplay.lastRttMs,
+                label = NetplayQualityInfo.labelForRttMs(netplay.lastRttMs)
+            )
+        } else null
+        return com.nendo.argosy.libretro.ui.InGameNetplaySection(
+            isInSession = netplay.inSession,
+            role = role,
+            sessionIsReserved = netplay.sessionIsReserved,
+            peerConnected = netplay.peerConnected,
+            quality = quality,
+            focusedIndex = netplayFocusIndex,
+            onFocusChange = { netplayFocusIndex = it },
+            onAction = ::handleNetplaySectionAction,
+            onDismiss = ::closeMenuSection
+        )
+    }
+
+    private fun handleNetplaySectionAction(action: com.nendo.argosy.libretro.ui.NetplaySectionAction) {
+        hideMenu()
+        when (action) {
+            com.nendo.argosy.libretro.ui.NetplaySectionAction.OpenServer -> {
+                netplay.modePickerFocus = 0
+                netplay.modePickerVisible = true
+            }
+            com.nendo.argosy.libretro.ui.NetplaySectionAction.InviteFriend -> netplay.handleInviteFriend()
+            com.nendo.argosy.libretro.ui.NetplaySectionAction.OpenToAllFriends -> netplay.handleClearReservation()
+            com.nendo.argosy.libretro.ui.NetplaySectionAction.CloseServer,
+            com.nendo.argosy.libretro.ui.NetplaySectionAction.LeaveSession -> netplay.handleCloseSession()
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun buildWalkthroughSection(): InputHandler {
+        val reader = inGameDocuments.reader(com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH)
+        com.nendo.argosy.ui.screens.gamedetail.components.DocumentReaderPane(
+            reader = reader,
+            showsControllerHints = isGamepadConnectedState,
+            onDismiss = ::closeMenuSection,
+            modifier = Modifier.fillMaxSize()
+        )
+        return androidx.compose.runtime.remember(reader) {
+            reader.menuPanelInputHandler(onDismiss = ::closeMenuSection)
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun buildStateManagerScreen(): InputHandler = InGameStateManager(
+        slots = stateManagerSlots,
+        channelName = activeSaveChannel,
+        focusedIndex = stateManagerFocusIndex,
+        viewMode = stateManagerViewMode,
+        showDeleteConfirmation = stateManagerShowDelete,
+        onFocusChange = { stateManagerFocusIndex = it },
+        onViewModeToggle = {
+            stateManagerViewMode = when (stateManagerViewMode) {
+                StateManagerViewMode.SPLIT -> StateManagerViewMode.CAROUSEL
+                StateManagerViewMode.CAROUSEL -> StateManagerViewMode.SPLIT
+            }
+        },
+        onSave = ::handleStateManagerSave,
+        onDeleteRequest = { slot ->
+            stateManagerDeleteTarget = slot
+            stateManagerShowDelete = true
+        },
+        onDeleteConfirm = {
+            if (stateManagerDeleteTarget >= SaveStateManager.AUTO_SLOT) {
+                saveStateManager.deleteSlot(stateManagerDeleteTarget)
+                stateManagerSlots = saveStateManager.getSlotInfoList()
+            }
+            stateManagerShowDelete = false
+            stateManagerDeleteTarget = -1
+        },
+        onDeleteCancel = {
+            stateManagerShowDelete = false
+            stateManagerDeleteTarget = -1
+        },
+        onDismiss = ::closeMenuSection,
+        loadAllowed = !netplay.inSession,
+        showLoadConfirmation = stateManagerShowLoadConfirm,
+        onLoadRequest = { slot ->
+            stateManagerLoadTarget = slot
+            stateManagerShowLoadConfirm = true
+        },
+        onLoadConfirm = {
+            stateManagerShowLoadConfirm = false
+            handleStateManagerLoad(stateManagerLoadTarget)
+        },
+        onLoadCancel = { stateManagerShowLoadConfirm = false }
+    )
+
+    private fun openMenuSection(section: com.nendo.argosy.libretro.ui.InGameMenuSection) {
+        if (menuSection == section) return
+        closeMenuSection()
+        collapseQuickHistory()
+        when (section) {
+            com.nendo.argosy.libretro.ui.InGameMenuSection.STATES -> {
+                stateManagerSlots = saveStateManager.getSlotInfoList()
+                stateManagerFocusIndex = 0
+            }
+            com.nendo.argosy.libretro.ui.InGameMenuSection.ACHIEVEMENTS -> achievementsFocusIndex = 0
+            com.nendo.argosy.libretro.ui.InGameMenuSection.NETPLAY -> netplayFocusIndex = 0
+            com.nendo.argosy.libretro.ui.InGameMenuSection.WALKTHROUGH ->
+                inGameDocuments.open(com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH)
+            com.nendo.argosy.libretro.ui.InGameMenuSection.CHEATS,
+            com.nendo.argosy.libretro.ui.InGameMenuSection.SETTINGS -> Unit
+        }
+        menuSection = section
+    }
+
+    private fun closeMenuSection() {
+        when (menuSection) {
+            com.nendo.argosy.libretro.ui.InGameMenuSection.CHEATS -> {
+                cheatManager.memoryScanner.markGameRan()
+                cheatManager.flushCheatReset()
+            }
+            com.nendo.argosy.libretro.ui.InGameMenuSection.STATES -> {
+                stateManagerShowDelete = false
+                stateManagerShowLoadConfirm = false
+                stateManagerDeleteTarget = -1
+            }
+            com.nendo.argosy.libretro.ui.InGameMenuSection.WALKTHROUGH -> {
+                if (sidePanelContent != com.nendo.argosy.libretro.ui.SidePanelContent.WALKTHROUGH) {
+                    inGameDocuments.reader(com.nendo.argosy.libretro.ui.InGameDocumentKind.WALKTHROUGH).dismiss()
+                }
+            }
+            com.nendo.argosy.libretro.ui.InGameMenuSection.ACHIEVEMENTS,
+            com.nendo.argosy.libretro.ui.InGameMenuSection.SETTINGS,
+            com.nendo.argosy.libretro.ui.InGameMenuSection.NETPLAY,
+            null -> Unit
+        }
+        menuSection = null
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun buildSettingsScreen(): InputHandler {
+        return InGameSettingsScreen(
+            accessor = InGameLibretroSettingsAccessor(
+                getCurrentValue = videoSettings::getVideoSettingValue,
+                globalValue = videoSettings::getGlobalVideoSettingValue,
+                onCycle = videoSettings::cycleVideoSetting,
+                onToggle = videoSettings::toggleVideoSetting,
+                onReset = videoSettings::resetVideoSetting,
+                onActionCallback = { setting ->
+                    if (setting.key == "filter" && videoSettings.currentShader == "Custom") {
+                        menuVisible = false
+                        openInGameShaderChainEditor()
+                    } else if (setting.key == "frame") {
+                        menuVisible = false
+                        openInGameFrameEditor()
+                    }
+                }
+            ),
+            platformSlug = platformSlug,
+            canEnableBFI = canEnableBFI,
+            menuWrapMode = menuWrapMode,
+            controlsState = InGameControlsState(
+                gameSpecificControls = perGameControlsEnabled,
+                supportsGameSpecificControls = gameId != -1L,
+                controllerPorts = buildControllerPortOptions(),
+                rumbleEnabled = videoSettings.currentRumbleEnabled,
+                motionEnabled = videoSettings.currentMotionEnabled,
+                analogAsDpad = videoSettings.currentAnalogAsDpad,
+                dpadAsAnalog = videoSettings.currentDpadAsAnalog,
+                limitHotkeysToPlayer1 = limitHotkeysToPlayer1,
+                fastForwardMode = videoSettings.fastForwardMode,
+                selectAsBack = selectAsBack,
+                fastForwardPreservePitch = videoSettings.fastForwardPreservePitch,
+                controllerOrderCount = inputConfig.controllerOrderCount,
+                gripReserveMode = gripReserveModeState,
+                gripReservePercent = gripReservePercentState,
+                gripAutoControllers = gripAutoControllersState.controllers,
+                touchEnabled = touchSettingsState.showTouchControlsWhenNoGamepad,
+                touchOpacityLandscape = touchSettingsState.touchControlsOpacityLandscape,
+                touchOpacityPortrait = touchSettingsState.touchControlsOpacityPortrait,
+                touchSizeScale = touchSettingsState.touchControlsSizeScale,
+                touchHaptic = touchSettingsState.touchControlsHaptic,
+                touchLockOrientation = touchSettingsState.touchControlsLockOrientation,
+                touchGenesis6Button = touchSettingsState.touchControlsGenesis6Button,
+                hudEnabled = touchSettingsState.hudEnabled,
+                hudCorner = touchSettingsState.hudCorner,
+                hudShowBattery = touchSettingsState.hudShowBattery,
+                hudShowClock = touchSettingsState.hudShowClock,
+                hudShowPlaytime = touchSettingsState.hudShowPlaytime,
+                hudShowFps = touchSettingsState.hudShowFps,
+                hudShowLastSave = touchSettingsState.hudShowLastSave
+            ),
+            onControlsAction = ::handleControlsAction,
+            coreOptions = buildCoreOptionItems(),
+            coreOptionsSupported = resolvedCoreId?.let {
+                CoreOptionManifestRegistry.getManifest(it) != null
+            } ?: false,
+            onCoreOptionCycle = ::cycleCoreOption,
+            onCoreOptionReset = ::resetCoreOption,
+            perGameSettingsSupported = gameId != -1L && resolvedCoreId?.let {
+                CoreOptionManifestRegistry.getManifest(it) != null
+            } ?: false,
+            perGameSettingsEnabled = perGameSettingsEnabled,
+            onTogglePerGameSettings = ::applyPerGameSettingsToggle,
+            modalCallbacks = buildModalCallbacks(),
+            onDismiss = ::closeMenuSection
+        )
+    }
+
+    private fun buildModalCallbacks(): InGameModalCallbacks {
+        val repo = inputConfig.inputConfigRepository
+        return InGameModalCallbacks(
+            hotkeys = inputConfig.hotkeyList,
+            connectedControllers = connectedControllers,
+            activeController = connectedControllerTracker.activeController,
+            onHoldActiveController = connectedControllerTracker::holdActiveController,
+            lockedProfileIndexFor = { controller ->
+                InputDevice.getDevice(controller.deviceId)?.let { device ->
+                    MappingPlatforms.ALL.indexOfFirst { it == inputConfig.profileForDevice(device) }
+                        .takeIf { index -> index >= 0 }
+                }
+            },
+            onGetMapping = { controller, mappingPlatformId ->
+                val device = InputDevice.getDevice(controller.deviceId)
+                if (device != null) {
+                    ScopedMapping(
+                        mapping = repo.getOrCreateExtendedMappingForDevice(device, mappingPlatformId, perGameMappingId),
+                        inherited = repo.getInheritedExtendedMappingForDevice(device, mappingPlatformId, perGameMappingId)
+                    )
+                } else {
+                    ScopedMapping()
+                }
+            },
+            onSaveMapping = { controller, mapping, presetName, isAutoDetected, mappingPlatformId ->
+                val device = InputDevice.getDevice(controller.deviceId)
+                if (device != null) {
+                    repo.saveExtendedMapping(device, mapping, presetName, isAutoDetected, mappingPlatformId, perGameMappingId)
+                    inputConfig.refreshInputMappings()
+                }
+            },
+            onApplyPreset = { controller, presetName ->
+                val device = InputDevice.getDevice(controller.deviceId)
+                if (device != null) {
+                    repo.applyPreset(device, presetName)
+                    inputConfig.refreshInputMappings()
+                }
+            },
+            onSaveHotkey = { action, keyCodes, scopeType, scopeKey ->
+                repo.setHotkey(action, keyCodes, scopeType = scopeType, scopeKey = scopeKey)
+                inputConfig.refreshHotkeys()
+            },
+            onClearHotkey = { action, scopeType, scopeKey ->
+                repo.clearScopedHotkey(action, scopeType, scopeKey)
+                inputConfig.refreshHotkeys()
+            },
+            onSetHotkeyHoldMs = { action, holdMs, scopeType, scopeKey ->
+                repo.setHotkeyHoldMs(action, holdMs, scopeType = scopeType, scopeKey = scopeKey)
+                inputConfig.refreshHotkeys()
+            },
+            coreId = resolvedCoreId,
+            coreName = resolvedCoreId?.let { LibretroCoreRegistry.getCoreById(it)?.displayName },
+            platformSlug = platformSlug,
+            platformName = com.nendo.argosy.data.platform.PlatformDefinitions.deriveDisplayName(platformSlug)?.first,
+            coreControls = resolvedCoreId?.let { CoreControlManifestRegistry.getManifest(it)?.controls } ?: emptyList(),
+            onSaveCoreControl = { retropadId, mode, keyCodes ->
+                resolvedCoreId?.let { coreId ->
+                    repo.setCoreControlHotkey(
+                        id = null,
+                        keyCodes = keyCodes,
+                        retropadId = retropadId,
+                        mode = mode,
+                        coreId = coreId
+                    )
+                    inputConfig.refreshHotkeys()
+                }
+            },
+            onClearCoreBind = { id ->
+                repo.deleteHotkeyById(id)
+                inputConfig.refreshHotkeys()
+            }
+        )
+    }
+
+    private fun setupRumble() {
+        vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+            vibratorManager?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(VIBRATOR_SERVICE) as? Vibrator
+        }
+
+        lifecycleScope.launch {
+            retroView.getRumbleEvents().collect { event ->
+                val strength = maxOf(event.strengthStrong, event.strengthWeak)
+                if (strength > 0f) {
+                    val amplitude = (strength * 255).toInt().coerceIn(1, 255)
+                    val duration = 50L
+                    vibrator?.vibrate(VibrationEffect.createOneShot(duration, amplitude))
+                }
+            }
+        }
+    }
+
+    private fun startRollingSave() {
+        if (!firstFrameRendered || coreDestroyed || isGuestJoinedSession) return
+        if (rollingSaveJob?.isActive == true) return
+        rollingSaveJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(ROLLING_SAVE_INTERVAL_MS)
+                if (coreDestroyed) break
+                saveStateManager.saveSram(retroView)
+            }
+        }
+        saveWriteWatchJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                reportNewlyWrittenSaves()
+                delay(SAVE_WRITE_CHECK_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun reportNewlyWrittenSaves() {
+        if (coreDestroyed || isGuestJoinedSession) return
+        if (saveStateManager.takeNewlyWrittenSaves()) {
+            playSessionTracker.reportSaveWritten()
+            captureSaveScreenshot()
+        }
+    }
+
+    private fun captureSaveScreenshot() {
+        val game = gameId.takeIf { it > 0 } ?: return
+        lifecycleScope.launch {
+            delay(SAVE_SCREENSHOT_DELAY_MS)
+            if (coreDestroyed) return@launch
+            val frame = runCatching { retroView.captureRawFrame() }.getOrNull() ?: return@launch
+            withContext(Dispatchers.IO) {
+                saveScreenshotCapture.store(game, frame)
+                frame.recycle()
+            }
+        }
+    }
+
+    private fun stopRollingSave() {
+        rollingSaveJob?.cancel()
+        rollingSaveJob = null
+        saveWriteWatchJob?.cancel()
+        saveWriteWatchJob = null
+    }
+
+    private fun rewindBudgetBytes(): Long {
+        val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val memoryInfo = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(memoryInfo)
+        return RewindBudget.budgetBytes(memoryInfo.availMem, LibretroBuildbot.processIs64Bit)
+    }
+
+    /**
+     * Rewind serializes once per frame, so it must not arm before the capability check has run.
+     * Waiting on [stateSupportChecked] rather than on SurfaceCreated is what orders the two: the
+     * check runs at the first rendered frame, which is strictly after the surface exists, and a
+     * rewind toggled on mid-session gets an already-completed signal instead of waiting for a
+     * surface event that will not come again.
+     */
+    private fun setupRewind(settings: BuiltinEmulatorSettings) {
+        rewindSetupJob?.cancel()
+        rewindSetupJob = lifecycleScope.launch {
+            stateSupportChecked.await()
+            if (!canSerialize) {
+                retroView.rewindEnabled = false
+                Log.d(TAG, "Rewind skipped: core=$resolvedCoreId cannot serialize this content")
+                return@launch
+            }
+            val fps = LibretroDroid.getContentFps()
+            val duration = RewindBudget.durationSeconds(
+                settings.rewindBufferDuration,
+                LibretroBuildbot.processIs64Bit
+            )
+            val maxSlots = (duration * fps).toInt()
+            val budget = rewindBudgetBytes()
+            retroView.initRewindBuffer(maxSlots, budget)
+            retroView.rewindEnabled = true
+            retroView.rewindSpeed = settings.rewindSpeed
+            Log.d(TAG, "Rewind requested: $maxSlots slots (${duration}s), budget=${budget / (1024 * 1024)}MiB, speed=${settings.rewindSpeed}x")
+        }
+    }
+
+    private fun setQuickHistoryFocus(focus: QuickHistoryFocus, index: Int) {
+        val opening = menuQuickHistoryFocus == QuickHistoryFocus.NONE && focus != QuickHistoryFocus.NONE
+        menuQuickHistoryFocus = focus
+        menuQuickHistoryIndex = index
+        if (opening) refreshQuickHistoryEntries()
+    }
+
+    private fun refreshQuickHistoryEntries() {
+        quickHistoryLoadJob?.cancel()
+        quickHistoryLoadJob = lifecycleScope.launch {
+            menuQuickHistoryEntries = withContext(Dispatchers.IO) { saveStateManager.getQuickRingInfoList() }
+        }
+    }
+
+    private fun collapseQuickHistory() {
+        menuQuickHistoryFocus = QuickHistoryFocus.NONE
+        menuQuickHistoryIndex = 0
+    }
+
+    private fun loadQuickHistorySlot(slotNumber: Int) {
+        if (!canSerialize) {
+            inGameMessage = getString(R.string.ingame_libretro_quicktimeline_load_unsupported_core)
+            hideMenu()
+            return
+        }
+        lifecycleScope.launch {
+            val loaded = withContext(Dispatchers.IO) {
+                try {
+                    saveStateManager.performSlotLoad(retroView, slotNumber)
+                } catch (_: Exception) {
+                    false
+                }
+            }
+            inGameMessage = if (loaded) {
+                getString(R.string.ingame_libretro_quicktimeline_load_success)
+            } else {
+                getString(R.string.ingame_libretro_quicktimeline_load_failure)
+            }
+            hideMenu()
+        }
+    }
+
+    private fun handleMenuAction(action: InGameMenuAction) {
+        when (action) {
+            InGameMenuAction.SwapDisc -> {
+                menuVisible = false
+                discMenuLabels = discPaths.map { it.nameWithoutExtension }
+                discMenuCurrentIndex = currentDiscIndex.coerceIn(0, (discPaths.size - 1).coerceAtLeast(0))
+                discMenuFocusIndex = discMenuCurrentIndex
+                discMenuVisible = true
+            }
+            InGameMenuAction.Resume -> hideMenu()
+            InGameMenuAction.QuickSave -> {
+                inGameMessage = if (!canSerialize) {
+                    getString(R.string.ingame_libretro_menu_quicksave_unsupported_core)
+                } else {
+                    val stateData = try { retroView.serializeState() } catch (_: Exception) { null }
+                    if (stateData != null && saveStateManager.performQuickSave(stateData, pendingSaveScreenshot)) {
+                        getString(R.string.ingame_libretro_menu_quicksave_success)
+                    } else {
+                        getString(R.string.ingame_libretro_menu_quicksave_failure)
+                    }
+                }
+                hideMenu()
+            }
+            InGameMenuAction.QuickLoad -> {
+                inGameMessage = if (!canSerialize) {
+                    getString(R.string.ingame_libretro_menu_quickload_unsupported_core)
+                } else if (saveStateManager.performQuickLoad(retroView)) {
+                    getString(R.string.ingame_libretro_menu_quickload_success)
+                } else {
+                    getString(R.string.ingame_libretro_menu_quickload_failure)
+                }
+                hideMenu()
+            }
+            InGameMenuAction.ManageStates -> openMenuSection(com.nendo.argosy.libretro.ui.InGameMenuSection.STATES)
+            InGameMenuAction.Settings -> openMenuSection(com.nendo.argosy.libretro.ui.InGameMenuSection.SETTINGS)
+            InGameMenuAction.Cheats -> openMenuSection(com.nendo.argosy.libretro.ui.InGameMenuSection.CHEATS)
+            InGameMenuAction.Achievements -> openMenuSection(com.nendo.argosy.libretro.ui.InGameMenuSection.ACHIEVEMENTS)
+            InGameMenuAction.ViewManual -> openReader(com.nendo.argosy.libretro.ui.InGameDocumentKind.MANUAL)
+            InGameMenuAction.ViewWalkthrough -> openMenuSection(com.nendo.argosy.libretro.ui.InGameMenuSection.WALKTHROUGH)
+            InGameMenuAction.ToggleWalkthroughPanel -> {
+                toggleWalkthroughPanel()
+                hideMenu()
+            }
+            InGameMenuAction.CustomizeTouchControls -> {
+                enterTouchEditMode()
+            }
+            InGameMenuAction.SwapScreens -> {
+                hideMenu()
+                com.nendo.argosy.DualScreenManagerHolder.instance?.swapRoles()
+            }
+            InGameMenuAction.Reset -> {
+                retroView.reset()
+                speedrunTimer.onGameReset(speedrunStartOnReset)
+                hideMenu()
+            }
+            InGameMenuAction.ToggleSpeedrun -> {
+                if (speedrunTimer.isArmed) {
+                    speedrunTimer.disarm()
+                    if (sidePanelContent == com.nendo.argosy.libretro.ui.SidePanelContent.SPEEDRUN) setSidePanel(null)
+                } else {
+                    requestSpeedrunArm()
+                }
+                hideMenu()
+            }
+            InGameMenuAction.Quit -> {
+                isClosing = true
+                deferredMenuPause?.cancel()
+                lifecycleScope.launch {
+                    try {
+                        withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                            awaitSaveFlushWindow()
+                            withContext(kotlinx.coroutines.Dispatchers.Main) { menuVisible = false }
+                            performAutoSaveState()
+                            if (!isGuestJoinedSession) {
+                                saveStateManager.saveSram(retroView)
+                            }
+                            coreDestroyed = true
+                            retroView.destroyNative()
+                            try {
+                                playSessionTracker.cacheCurrentSessionForQuit()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Pre-quit save cache failed", e)
+                            }
+                            try {
+                                playSessionTracker.cacheCurrentSessionStatesForQuit()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Pre-quit state cache failed", e)
+                            }
+                        }
+                    } finally {
+                        finish()
+                    }
+                }
+            }
+            InGameMenuAction.Netplay -> if (!hardcoreMode) {
+                openMenuSection(com.nendo.argosy.libretro.ui.InGameMenuSection.NETPLAY)
+            }
+        }
+    }
+
+    private fun resolveCoreIdFromPath(path: String): String? {
+        val fileName = File(path).name
+        val known = LibretroCoreRegistry.getAllCores().firstOrNull { it.fileName == fileName }
+        if (known != null) return known.coreId
+        return fileName.removeSuffix("_libretro_android.so")
+            .removeSuffix("_libretro.so")
+            .takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Whether the core can be asked to serialize at all. Every path that reaches retro_serialize
+     * has to check this, not just save states: rewind serializes once per frame and cheat removal
+     * round-trips a state. A core that cannot serialize the loaded content may take the process
+     * with it rather than returning an error - Beetle Saturn aborts inside retro_serialize_size
+     * when its second save attempt throws, which no Kotlin catch can absorb.
+     */
+    private val canSerialize: Boolean
+        get() = statesSupported && !hardcoreMode && coreLoadedSuccessfully && !coreDestroyed
+
+    private fun performAutoSaveState(fallbackScreenshot: Bitmap? = null) {
+        if (isGuestJoinedSession) return
+        if (!canSerialize || !autoSaveEnabled) return
+        if (autoSaveStateCaptured) return
+        try {
+            val stateData = retroView.serializeState()
+            autoSaveStateCaptured = true
+            saveStateManager.performSlotSave(
+                SaveStateManager.AUTO_SLOT,
+                stateData,
+                pendingSaveScreenshot ?: fallbackScreenshot
+            )
+            Log.d(TAG, "Auto-saved state on close")
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto-save state failed", e)
+        }
+    }
+
+    /**
+     * The signal fires only once the verdict is written. Waiters resume undispatched on
+     * Main.immediate, so completing this before the checks below would resume them inline while
+     * [statesSupported] still holds its initializer, arming rewind on a core the check is about
+     * to reject and serializing it before the probe marker exists.
+     */
+    private fun checkStateSupport() {
+        try {
+            evaluateStateSupport()
+        } finally {
+            stateSupportChecked.complete(Unit)
+        }
+    }
+
+    private fun evaluateStateSupport() {
+        if (hardcoreMode) {
+            statesSupported = false
+            return
+        }
+        if (!LibretroCoreRegistry.coreStatesAllowed(resolvedCoreId, hwCoreSaveStatesEnabled)) {
+            statesSupported = false
+            Log.d(TAG, "State support disabled for core=$resolvedCoreId")
+            return
+        }
+        if (com.nendo.argosy.data.platform.PlatformDefinitions.getCanonicalSlug(platformSlug) in
+            LibretroCoreRegistry.PLATFORMS_WITHOUT_STATE_SUPPORT
+        ) {
+            statesSupported = false
+            Log.d(TAG, "State support disabled for platform=$platformSlug")
+            return
+        }
+        val marker = serializeProbeMarker()
+        if (marker.exists()) {
+            statesSupported = false
+            Log.w(TAG, "State support disabled: probing core=$resolvedCoreId took the process down on an earlier launch")
+            return
+        }
+        val markerWritten = runCatching {
+            marker.parentFile?.mkdirs()
+            marker.createNewFile()
+        }.getOrDefault(false)
+        if (!markerWritten) {
+            statesSupported = false
+            Log.w(TAG, "State support disabled: could not write the serialize probe marker")
+            return
+        }
+        statesSupported = try {
+            retroView.getSerializeSize() > 0
+        } catch (_: Exception) {
+            false
+        } finally {
+            marker.delete()
+        }
+        Log.d(TAG, "State support check: statesSupported=$statesSupported")
+    }
+
+    /**
+     * Determining state support means asking the core, and a core that cannot serialize this
+     * content may abort instead of answering - which no catch here can survive. The marker is
+     * written before the call and cleared after it returns, so finding one on entry means the
+     * previous launch died inside the probe and this core and game must not be asked again. It
+     * is deliberately left in place once found: clearing it re-probes on the next launch, which
+     * turns a permanent crash into a crash on every other launch.
+     */
+    private fun serializeProbeMarker(): File =
+        File(File(filesDir, "serialize-probe"), "${resolvedCoreId ?: "unknown"}-$gameId")
+
+    private fun handleStateManagerSave(slotNumber: Int) {
+        if (slotNumber >= SaveStateManager.QUICK_SLOT_BASE) return
+        if (!canSerialize) {
+            inGameMessage = getString(R.string.ingame_libretro_state_save_unsupported_core)
+            return
+        }
+        val stateData = try { retroView.serializeState() } catch (_: Exception) { null }
+        if (stateData != null) {
+            val saved = saveStateManager.performSlotSave(slotNumber, stateData, pendingSaveScreenshot)
+            inGameMessage = if (saved) {
+                if (slotNumber == SaveStateManager.AUTO_SLOT) {
+                    getString(R.string.ingame_libretro_state_saved_to_auto)
+                } else {
+                    getString(R.string.ingame_libretro_state_saved_to_slot, slotNumber)
+                }
+            } else {
+                getString(R.string.ingame_libretro_state_save_failure)
+            }
+        } else {
+            inGameMessage = getString(R.string.ingame_libretro_state_save_serialize_failed)
+        }
+        stateManagerSlots = saveStateManager.getSlotInfoList()
+    }
+
+    private fun handleStateManagerLoad(slotNumber: Int) {
+        if (!canSerialize) {
+            inGameMessage = getString(R.string.ingame_libretro_state_load_unsupported_core)
+            return
+        }
+        val loaded = saveStateManager.performSlotLoad(retroView, slotNumber)
+        if (loaded) {
+            inGameMessage = if (slotNumber == SaveStateManager.AUTO_SLOT) {
+                getString(R.string.ingame_libretro_state_loaded_from_auto)
+            } else {
+                getString(R.string.ingame_libretro_state_loaded_from_slot, slotNumber)
+            }
+            hideMenu()
+        } else {
+            inGameMessage = getString(R.string.ingame_libretro_state_load_failure)
+        }
+    }
+
+    private suspend fun attemptAutoRestore() {
+        if (isGuestJoinedSession) return
+        val resumeFile = saveStateManager.getSlotFile(SaveStateManager.RESUME_SLOT)
+        if (resumeFile.exists()) {
+            if (!canSerialize) {
+                Log.w(TAG, "One-shot resume state kept: core=$resolvedCoreId cannot load it in this session")
+                return
+            }
+            if (saveStateManager.performSlotLoad(retroView, SaveStateManager.RESUME_SLOT)) {
+                inGameMessage = getString(R.string.ingame_libretro_resume_success)
+            } else {
+                inGameMessage = getString(R.string.ingame_libretro_resume_restore_failure)
+                Log.w(TAG, "Failed to restore one-shot resume state")
+            }
+            resumeFile.delete()
+            return
+        }
+        if (launchMode != LaunchMode.RESUME || !canSerialize) return
+        val autoFile = saveStateManager.getSlotFile(SaveStateManager.AUTO_SLOT)
+        if (!autoFile.exists()) return
+
+        val settings = withContext(Dispatchers.IO) {
+            effectiveLibretroSettingsResolver.getEffectiveSettings(platformId, platformSlug)
+        }
+
+        if (!settings.autoRestoreState || hardcoreMode || coreDestroyed) return
+
+        val outcome = withContext(Dispatchers.IO) { saveStateManager.loadAutoSlotMatchingSave(retroView) }
+        when (outcome) {
+            SaveStateManager.AutoLoadOutcome.LOADED -> {
+                inGameMessage = getString(R.string.ingame_libretro_auto_restore_success)
+                Log.d(TAG, "Auto-restored state from auto slot")
+            }
+            SaveStateManager.AutoLoadOutcome.KEPT_SAVE -> {
+                inGameMessage = getString(R.string.ingame_libretro_auto_restore_skipped_for_save)
+                Log.i(TAG, "Auto state does not match the save; started from the save")
+            }
+            SaveStateManager.AutoLoadOutcome.FAILED -> {
+                inGameMessage = getString(R.string.ingame_libretro_auto_restore_failure)
+                Log.w(TAG, "Failed to auto-restore state from auto slot")
+            }
+        }
+    }
+
+    private fun handleAutoRestoreResponse(restore: Boolean) {
+        autoRestorePromptVisible = false
+        if (restore) {
+            if (!canSerialize) {
+                inGameMessage = getString(R.string.ingame_libretro_auto_restore_response_unsupported_core)
+                return
+            }
+            if (saveStateManager.performSlotLoad(retroView, SaveStateManager.AUTO_SLOT)) {
+                inGameMessage = getString(R.string.ingame_libretro_auto_restore_response_success)
+            } else {
+                inGameMessage = getString(R.string.ingame_libretro_auto_restore_response_failure)
+            }
+        }
+    }
+
+    private fun openInGameShaderChainEditor() {
+        capturedGameFrame = retroView.captureRawFrame()
+        retroView.pauseEmulation()
+
+        val registry = ShaderRegistry(this)
+        val manager = ShaderChainManager(
+            shaderRegistry = registry,
+            shaderDownloader = ShaderDownloader(registry.getCatalogDir()),
+            previewRenderer = ShaderPreviewRenderer(),
+            scope = lifecycleScope,
+            previewInputProvider = {
+                val frame = capturedGameFrame
+                frame?.copy(frame.config ?: Bitmap.Config.ARGB_8888, false)
+            },
+            onChainChanged = { config ->
+                val shaderConfig = ShaderRegistry(this).resolveChain(config)
+                videoSettings.resolvedCustomShader = shaderConfig
+                retroView.shader = shaderConfig
+            }
+        )
+
+        val settings = kotlinx.coroutines.runBlocking {
+            effectiveLibretroSettingsResolver.getEffectiveSettings(platformId, platformSlug)
+        }
+        manager.loadChain(settings.shaderChainJson)
+        inGameShaderChainManager = manager
+        shaderChainEditorVisible = true
+    }
+
+    private fun closeInGameShaderChainEditor() {
+        val manager = inGameShaderChainManager ?: return
+        val config = manager.getChainConfig()
+        val shaderConfig = ShaderRegistry(this).resolveChain(config)
+        Log.d(TAG, "closeInGameShaderChainEditor: resolved shader type=${shaderConfig::class.simpleName}")
+        videoSettings.resolvedCustomShader = shaderConfig
+        retroView.shader = shaderConfig
+        videoSettings.persistShaderChain(config.toJson())
+        manager.destroy()
+        inGameShaderChainManager = null
+        capturedGameFrame?.recycle()
+        capturedGameFrame = null
+        shaderChainEditorVisible = false
+        menuVisible = true
+        Log.d(TAG, "closeInGameShaderChainEditor: done, menu reopened on $menuSection")
+    }
+
+    private fun openInGameFrameEditor() {
+        val registry = frameRegistry
+        var shownFrameId = videoSettings.currentFrame
+        val manager = FrameManager(
+            frameRegistry = registry,
+            frameDownloader = FrameDownloader(registry),
+            platformSlug = platformSlug,
+            scope = lifecycleScope,
+            initialFrameId = videoSettings.currentFrame,
+            onFrameChanged = { frameId ->
+                if (frameId == shownFrameId) {
+                    videoSettings.applyFrame(frameId)
+                } else {
+                    shownFrameId = frameId
+                    videoSettings.resetFrameAdjustment(frameId)
+                }
+            }
+        )
+        inGameFrameManager = manager
+        retroView.enablePreviewMode()
+        frameEditorVisible = true
+    }
+
+    private fun confirmInGameFrameEditor() {
+        val manager = inGameFrameManager ?: return
+        val frameId = manager.selectedFrameId
+        videoSettings.currentFrame = frameId
+        videoSettings.persistFrame(frameId)
+        videoSettings.persistFrameAdjustment()
+        if (frameId != null) {
+            lifecycleScope.launch {
+                val globalSettings = preferencesRepository.getBuiltinEmulatorSettings().first()
+                if (!globalSettings.framesEnabled) {
+                    preferencesRepository.setBuiltinFramesEnabled(true)
+                }
+            }
+        }
+        closeInGameFrameEditorInternal()
+    }
+
+    private fun closeInGameFrameEditor() {
+        lifecycleScope.launch {
+            val stored = platformLibretroSettingsDao.getByPlatformId(platformId)
+            videoSettings.frameOffsetX = stored?.frameOffsetX ?: 0f
+            videoSettings.frameOffsetY = stored?.frameOffsetY ?: 0f
+            videoSettings.frameZoom = stored?.frameZoom ?: 1f
+            videoSettings.applyFrame(videoSettings.currentFrame)
+        }
+        closeInGameFrameEditorInternal()
+    }
+
+    private fun closeInGameFrameEditorInternal() {
+        retroView.disablePreviewMode()
+        inGameFrameManager?.destroy()
+        inGameFrameManager = null
+        frameEditorVisible = false
+        frameAdjustMode = false
+        menuVisible = true
+    }
+
+    private fun handleControlsAction(action: InGameControlsAction) {
+        when (action) {
+            is InGameControlsAction.SetGameSpecificControls -> applyPerGameControlsToggle(action.enabled)
+            is InGameControlsAction.SetRumble -> {
+                videoSettings.currentRumbleEnabled = action.enabled
+                if (action.enabled) {
+                    if (vibrator == null) setupRumble()
+                } else {
+                    vibrator = null
+                }
+                videoSettings.persistControlSetting("rumbleEnabled", action.enabled)
+            }
+            is InGameControlsAction.SetMotion -> {
+                videoSettings.currentMotionEnabled = action.enabled
+                retroView.motionSensorsEnabled = action.enabled
+                videoSettings.persistControlSetting("motionEnabled", action.enabled)
+            }
+            is InGameControlsAction.SetAnalogAsDpad -> {
+                videoSettings.currentAnalogAsDpad = action.enabled
+                videoSettings.persistControlSetting("analogAsDpad", action.enabled)
+            }
+            is InGameControlsAction.SetDpadAsAnalog -> {
+                videoSettings.currentDpadAsAnalog = action.enabled
+                videoSettings.persistControlSetting("dpadAsAnalog", action.enabled)
+            }
+            is InGameControlsAction.CycleGripReserveMode -> {
+                val modes = com.nendo.argosy.data.preferences.GripReserveMode.entries
+                val current = modes.indexOf(gripReserveModeState).coerceAtLeast(0)
+                val next = modes[(current + action.direction).mod(modes.size)]
+                lifecycleScope.launch { preferencesRepository.setGripReserveMode(next) }
+            }
+            is InGameControlsAction.AddGripAutoController -> {
+                lifecycleScope.launch {
+                    preferencesRepository.setGripAutoControllers(
+                        gripAutoControllersState.with(action.controllerId, action.name)
+                    )
+                }
+            }
+            is InGameControlsAction.RemoveGripAutoController -> {
+                lifecycleScope.launch {
+                    preferencesRepository.setGripAutoControllers(
+                        gripAutoControllersState.without(action.controllerId)
+                    )
+                }
+            }
+            is InGameControlsAction.AdjustGripReservePercent -> {
+                val next = (gripReservePercentState + action.delta)
+                    .coerceIn(GRIP_RESERVE_MIN_PERCENT, GRIP_RESERVE_MAX_PERCENT)
+                if (next != gripReservePercentState) {
+                    lifecycleScope.launch { preferencesRepository.setGripReservePercent(next) }
+                }
+            }
+            is InGameControlsAction.CycleControllerType ->
+                cycleControllerType(action.port, action.direction)
+            is InGameControlsAction.SelectControllerType ->
+                selectControllerType(action.port, action.optionIndex)
+            is InGameControlsAction.ResetControllerType ->
+                resetControllerType(action.port)
+            is InGameControlsAction.SetLimitHotkeys -> {
+                limitHotkeysToPlayer1 = action.enabled
+                inputConfig.hotkeyManager.setLimitToPlayer1(action.enabled)
+                lifecycleScope.launch {
+                    preferencesRepository.setBuiltinLimitHotkeysToPlayer1(action.enabled)
+                }
+            }
+            is InGameControlsAction.SetFastForwardMode -> {
+                videoSettings.fastForwardMode = action.mode
+                lifecycleScope.launch {
+                    preferencesRepository.setBuiltinFastForwardMode(action.mode)
+                }
+            }
+            is InGameControlsAction.SetSelectAsBack -> {
+                selectAsBack = action.mode
+                lifecycleScope.launch {
+                    preferencesRepository.setBuiltinSelectAsBack(action.mode)
+                }
+            }
+            is InGameControlsAction.SetFastForwardPreservePitch -> {
+                videoSettings.fastForwardPreservePitch = action.enabled
+                audioController.setPitchPreservationEnabled(action.enabled)
+                lifecycleScope.launch {
+                    preferencesRepository.setBuiltinFastForwardPreservePitch(action.enabled)
+                }
+            }
+            InGameControlsAction.ShowControllerOrder -> openSeatScreen()
+            InGameControlsAction.ShowInputMapping,
+            InGameControlsAction.ShowGripSettings,
+            InGameControlsAction.ShowHotkeys -> {}
+            is InGameControlsAction.SetTouchEnabled -> {
+                lifecycleScope.launch { preferencesRepository.setTouchControlsShowWhenNoGamepad(action.enabled) }
+            }
+            is InGameControlsAction.SetTouchHaptic -> {
+                lifecycleScope.launch { preferencesRepository.setTouchControlsHaptic(action.enabled) }
+            }
+            is InGameControlsAction.SetTouchLockOrientation -> {
+                lifecycleScope.launch { preferencesRepository.setTouchControlsLockOrientation(action.enabled) }
+            }
+            is InGameControlsAction.SetTouchGenesis6Button -> {
+                lifecycleScope.launch { preferencesRepository.setTouchControlsGenesis6Button(action.enabled) }
+            }
+            is InGameControlsAction.SetHudEnabled -> {
+                lifecycleScope.launch { preferencesRepository.setHudEnabled(action.enabled) }
+            }
+            is InGameControlsAction.SetHudCorner -> {
+                lifecycleScope.launch { preferencesRepository.setHudCorner(action.corner.name) }
+            }
+            is InGameControlsAction.SetHudShowBattery -> {
+                lifecycleScope.launch { preferencesRepository.setHudShowBattery(action.enabled) }
+            }
+            is InGameControlsAction.SetHudShowClock -> {
+                lifecycleScope.launch { preferencesRepository.setHudShowClock(action.enabled) }
+            }
+            is InGameControlsAction.SetHudShowPlaytime -> {
+                lifecycleScope.launch { preferencesRepository.setHudShowPlaytime(action.enabled) }
+            }
+            is InGameControlsAction.SetHudShowFps -> {
+                lifecycleScope.launch { preferencesRepository.setHudShowFps(action.enabled) }
+            }
+            is InGameControlsAction.SetHudShowLastSave -> {
+                lifecycleScope.launch { preferencesRepository.setHudShowLastSave(action.enabled) }
+            }
+        }
+    }
+
+    private val saveFlushWindowMs: Long
+        get() = coreName?.let { LibretroCoreRegistry.getCoreById(it)?.saveFlushWindowMs } ?: 0L
+
+    private var menuOpenedAtMs = 0L
+    private var deferredMenuPause: kotlinx.coroutines.Job? = null
+
+    private fun pauseForMenu() {
+        retroView.suppressAutoResume = true
+        val window = saveFlushWindowMs
+        if (window <= 0L) {
+            retroView.pauseEmulation()
+            return
+        }
+        deferredMenuPause?.cancel()
+        deferredMenuPause = lifecycleScope.launch {
+            kotlinx.coroutines.delay(window)
+            if (isAnyMenuOpen && !isClosing && !coreDestroyed) retroView.pauseEmulation()
+        }
+    }
+
+    private suspend fun awaitSaveFlushWindow() {
+        val window = saveFlushWindowMs
+        if (window <= 0L) return
+        val remaining = window - (System.currentTimeMillis() - menuOpenedAtMs)
+        if (remaining > 0) {
+            Log.i(TAG, "[SRAM] holding quit ${remaining}ms so the core can flush its own save file")
+            kotlinx.coroutines.delay(remaining)
+        }
+    }
+
+    private fun showMenu() {
+        if (!netplay.inSession) {
+            menuOpenedAtMs = System.currentTimeMillis()
+            pauseForMenu()
+        }
+        pendingSaveScreenshot?.recycle()
+        pendingSaveScreenshot = try { retroView.captureRawFrame() } catch (_: Exception) { null }
+        menuDiscCount = if (netplay.inSession) 0 else discPaths.size
+        val discSwapShown = menuDiscCount > 1
+        menuFocusIndex = if (discSwapShown) 1 else 0
+        collapseQuickHistory()
+        closeMenuSection()
+        menuVisible = true
+    }
+
+    private fun hideMenu() {
+        menuVisible = false
+        collapseQuickHistory()
+        quickHistoryLoadJob?.cancel()
+        menuQuickHistoryEntries = emptyList()
+        closeMenuSection()
+        pendingSaveScreenshot?.recycle()
+        pendingSaveScreenshot = null
+        deferredMenuPause?.cancel()
+        deferredMenuPause = null
+        if (!netplay.inSession) {
+            retroView.suppressAutoResume = false
+            retroView.resumeEmulation()
+        }
+    }
+
+    private fun promptForSeatsIfNeeded(savedOrder: List<com.nendo.argosy.data.local.entity.ControllerOrderEntity>) {
+        if (isGuestJoinedSession || netplay.inSession) return
+        val connected = InputDevice.getDeviceIds().toList()
+            .mapNotNull { InputDevice.getDevice(it) }
+            .filter { it.isPhysicalGamepad() }
+            .map { SeatedPad(controllerIdOf(it), ControllerDetector.isBuiltInPad(it)) }
+            .distinctBy { it.controllerId }
+        val savedIds = savedOrder.mapTo(mutableSetOf()) { it.controllerId }
+        if (!ControllerSeating.shouldPromptForSeats(connected, savedIds)) return
+        openSeatScreen()
+        retroView.suppressAutoResume = true
+        if (firstFrameRendered) retroView.pauseEmulation()
+    }
+
+    private fun openSeatScreen() {
+        controllerSeats.open()
+        seatPromptVisible = true
+    }
+
+    private fun closeSeatPrompt() {
+        seatPromptVisible = false
+    }
+
+    private val seatPromptInputHandler = object : InputHandler {
+        override fun onBack(): InputResult {
+            closeSeatPrompt()
+            return InputResult.HANDLED
+        }
+    }
+
+    fun enterTouchEditMode() {
+        menuVisible = false
+        closeMenuSection()
+        retroView.pauseEmulation()
+        retroView.suppressAutoResume = true
+        touchEditMode = true
+    }
+
+    private fun exitTouchEditMode() {
+        touchEditMode = false
+        if (!netplay.inSession) {
+            retroView.suppressAutoResume = false
+            retroView.resumeEmulation()
+        }
+    }
+
+    /**
+     * Lets the game surface reach the edges of a display with a cutout.
+     *
+     * The mode has to be written back through [android.view.Window.setAttributes]: the getter hands
+     * out the live parameters, so changing the field in place never reaches the window manager and
+     * the game stays letterboxed away from the notch.
+     */
+    private fun allowContentIntoDisplayCutout() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.P) return
+        window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode =
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+    }
+
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        observeVirtualPad(event)
+        connectedControllerTracker.noteInput(event)
+        return dispatchKeyFrom(backAsSelect.translate(event), KeyPressGate.Source.Key, coreBound = true)
+    }
+
+    private fun observeVirtualPad(event: android.view.InputEvent) {
+        if (VirtualPad.observe(event) && ::inputConfig.isInitialized) {
+            lifecycleScope.launch { inputConfig.refreshInputMappings() }
+        }
+    }
+
+    @SuppressLint("RestrictedApi")
+    private fun dispatchKeyFrom(event: KeyEvent, source: KeyPressGate.Source, coreBound: Boolean): Boolean {
+        if (event.action == KeyEvent.ACTION_UP) {
+            val release = keyPressGate.onUp(event.deviceId, event.keyCode, source)
+            if (release.toHotkeys && ::hotkeyDispatcher.isInitialized) hotkeyDispatcher.onKeyUp(event.keyCode)
+            if (!release.toCore && !isAnyMenuOpen) return true
+        } else if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
+            !isAnyMenuOpen && ::hotkeyDispatcher.isInitialized
+        ) {
+            val controllerId = event.device?.let { controllerIdOf(it) }
+            val forward = keyPressGate.onDown(event.deviceId, event.keyCode, source, coreBound) {
+                hotkeyDispatcher.onKeyDown(event.keyCode, controllerId)
+            }
+            if (!forward) return true
+        }
+        if (isAnyMenuOpen) {
+            if (isMenuHotkeyEvent(event)) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && menuVisible) hideMenu()
+                return true
+            }
+            if (gamepadInputBridge.handleKeyEvent(event)) return true
+            if (menuInputHandler.mapKeyToEvent(event.keyCode) != null) return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun isMenuHotkeyEvent(event: KeyEvent): Boolean {
+        if (!::hotkeyDispatcher.isInitialized) return false
+        val controllerId = event.device?.let { controllerIdOf(it) }
+        return hotkeyDispatcher.isMenuToggleKey(event.keyCode, controllerId)
+    }
+
+    fun dispatchTouchKey(action: Int, keyCode: Int) {
+        if (isAnyMenuOpen) return
+        val event = KeyEvent(action, keyCode)
+        if (action == KeyEvent.ACTION_DOWN) {
+            val forward = keyPressGate.onDown(event.deviceId, keyCode, KeyPressGate.Source.Touch, coreBound = true) {
+                hotkeyDispatcher.onKeyDown(keyCode, null)
+            }
+            if (!forward) return
+            if (hotkeyDispatcher.isPotentialComboKey(keyCode, null)) {
+                deferredCoreKeys.hold(keyCode, event)
+                return
+            }
+            if (retroView.onKeyDown(keyCode, event)) coreHeldKeys[keyCode] = event
+        } else {
+            val release = keyPressGate.onUp(event.deviceId, keyCode, KeyPressGate.Source.Touch)
+            if (release.toHotkeys) hotkeyDispatcher.onKeyUp(keyCode)
+            if (!release.toCore) return
+            if (deferredCoreKeys.release(keyCode, event)) return
+            coreHeldKeys.remove(keyCode)
+            retroView.onKeyUp(keyCode, event)
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (isAnyMenuOpen) return super.onKeyDown(keyCode, event)
+
+        if (event.repeatCount > 0 && keyPressGate.isWithheld(event.deviceId, keyCode)) return true
+        if (event.repeatCount > 0 && deferredCoreKeys.isHolding(keyCode)) return true
+        if (event.repeatCount == 0) {
+            val controllerId = event.device?.let { controllerIdOf(it) }
+            if (hotkeyDispatcher.isPotentialComboKey(keyCode, controllerId)) {
+                deferredCoreKeys.hold(keyCode, event)
+                return true
+            }
+        }
+
+        if (shouldFilterShoulderButton(keyCode, event.device)) return true
+
+        val handled = retroView.onKeyDown(keyCode, event)
+        if (handled) {
+            coreHeldKeys[keyCode] = event
+            return true
+        }
+
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.repeatCount == 0) startBackHold()
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_BUTTON_MODE) return true
+
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun startBackHold() {
+        backHoldJob?.cancel()
+        backHoldFired = false
+        backHoldJob = lifecycleScope.launch {
+            delay(BACK_HOLD_MS)
+            backHoldFired = true
+            onBackHeld()
+        }
+    }
+
+    private fun releaseBackHold(): Boolean {
+        val job = backHoldJob ?: return false
+        job.cancel()
+        backHoldJob = null
+        if (!backHoldFired && !isAnyMenuOpen) showMenu()
+        return true
+    }
+
+    private fun onBackHeld() {
+        if (isAnyMenuOpen) return
+        if (!quickPanelOverlay.show(gameDisplayId(), resultOwner = this)) {
+            showMenu()
+            return
+        }
+        quickPanelOpen = true
+        if (!netplay.inSession) pauseForMenu()
+    }
+
+    private fun gameDisplayId(): Int {
+        val current = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) display else null
+        @Suppress("DEPRECATION")
+        return (current ?: windowManager.defaultDisplay).displayId
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && releaseBackHold()) return true
+        if (isAnyMenuOpen) return super.onKeyUp(keyCode, event)
+
+        if (deferredCoreKeys.release(keyCode, event)) return true
+
+        if (shouldFilterShoulderButton(keyCode, event.device)) return true
+
+        coreHeldKeys.remove(keyCode)
+        return retroView.onKeyUp(keyCode, event) ||
+            keyCode == KeyEvent.KEYCODE_BUTTON_MODE ||
+            super.onKeyUp(keyCode, event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        observeVirtualPad(event)
+        connectedControllerTracker.noteInput(event)
+        val device = event.device
+        triggerAxisKeyEmitter.emitByAxis(event).forEach { (axis, key) ->
+            val analogMapped = device != null && inputMapper.hasAnalogMappingForAxis(device, axis)
+            if (!analogMapped || !isAnyMenuOpen) {
+                dispatchKeyFrom(key, KeyPressGate.Source.Axis(axis), coreBound = !analogMapped)
+            }
+        }
+
+        if (isAnyMenuOpen) {
+            if (gamepadInputBridge.handleMotionEvent(event)) return true
+            return super.onGenericMotionEvent(event)
+        }
+
+        if (motionProcessor.processGamepadMotion(event)) return true
+
+        return retroView.onGenericMotionEvent(event) || super.onGenericMotionEvent(event)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        leaveVeil?.let { veil ->
+            (veil.parent as? android.view.ViewGroup)?.removeView(veil)
+            leaveVeil = null
+        }
+        if (suspendedByHome) {
+            // Back from a suspend: the game is the active session again on both screens.
+            suspendedByHome = false
+            gameSessionManager.onBuiltInResumed(gameId)
+            com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
+                gameId,
+                isHardcore = hardcoreMode,
+                channelName = playSessionTracker.activeSession.value?.channelName
+            )
+        }
+        autoSaveStateCaptured = false
+        window.hideSystemBars()
+        retroView.onResume()
+        setUpSecondScreen()
+        showSecondScreen()
+        startRollingSave()
+    }
+
+    /**
+     * Puts the console's lower screen on the other display, for the cores that have one.
+     *
+     * The crops assume the core's own screen arrangement, so the layout option that produces it is
+     * set alongside them rather than left to whatever the user last chose.
+     */
+    private fun setUpSecondScreen() {
+        val output = DualScreenOutput.forCore(resolvedCoreId)
+            ?.takeIf {
+                !isDockedDark() &&
+                    !com.nendo.argosy.util.DesktopMode.isActive(this) &&
+                    secondScreenDisplay() != null
+            }
+        if (output == null) {
+            clearScreenSplit()
+            return
+        }
+
+        dualScreenOutput = output
+        output.coreOptions.forEach { (key, value) ->
+            if (hardcoreBlocks(key, value)) {
+                achievementBridge.sessionManager?.abandonHardcore("$key=$value")
+                inGameMessage = getString(R.string.ingame_libretro_hardcore_off_core_setting, key, value)
+            }
+            retroView.updateVariables(Variable(key, value))
+        }
+        retroView.setScreenSplit(output.primary, output.primaryAspect)
+        retroView.secondaryCrop = output.secondary
+        retroView.secondaryAspectRatio = output.secondaryAspect
+        applyMatchedScreens(output, secondScreenDisplay())
+    }
+
+    private fun applyMatchedScreens(output: DualScreenOutput, secondDisplay: android.view.Display?) {
+        val panels = KnownPanels.forModel()
+        @Suppress("DEPRECATION")
+        val primaryPanel = windowManager.defaultDisplay.panelSpec(panels)
+        val secondaryPanel = secondDisplay?.panelSpec(panels)
+        matchedScreens = if (
+            dualScreenMatchSize && output.matchesScreenSize && primaryPanel != null && secondaryPanel != null
+        ) {
+            MatchedScreens.of(primaryPanel, secondaryPanel, output.primaryAspect, output.secondaryAspect)
+        } else {
+            null
+        }
+        val column = splitColumn ?: return
+        column.post {
+            val padding = matchedScreens?.primaryPadding(column.width, column.height)
+            column.setPadding(padding?.left ?: 0, padding?.top ?: 0, padding?.right ?: 0, 0)
+            column.setBackgroundColor(if (padding != null) android.graphics.Color.BLACK else android.graphics.Color.TRANSPARENT)
+        }
+    }
+
+    private fun android.view.Display.panelSpec(panels: List<PanelSpec>): PanelSpec? {
+        val mode = mode
+        return KnownPanels.specFor(panels, mode.physicalWidth, mode.physicalHeight)
+    }
+
+    /**
+     * Puts the frame back the way a one-screen console needs it. The emulator is a single object
+     * for the life of the process, so a split left behind is drawn over the next game loaded.
+     */
+    private fun clearScreenSplit() {
+        dualScreenOutput = null
+        matchedScreens = null
+        splitColumn?.setPadding(0, 0, 0, 0)
+        splitColumn?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        if (!::retroView.isInitialized) return
+        retroView.setScreenSplit(null, 0f)
+        retroView.secondaryCrop = RectF(0f, 0f, 0f, 0f)
+        retroView.secondaryAspectRatio = 0f
+    }
+
+    private fun isDockedDark(): Boolean =
+        com.nendo.argosy.util.DisplayAffinityHelper.dockedExternalDisplayId(this) != null
+
+    private fun secondScreenDisplay(): android.view.Display? =
+        screenCatalog.secondScreenFor(windowManager.defaultDisplay.displayId)
+            ?.takeIf { it.displayId != android.view.Display.DEFAULT_DISPLAY }
+
+    /**
+     * Rebuilds the second screen's window. Its surface belongs to the display, not to us, so it is
+     * taken down whenever this activity leaves and built again on the way back rather than kept.
+     */
+    private fun showSecondScreen() {
+        if (dualScreenOutput == null || secondScreen != null) return
+        val display = secondScreenDisplay()
+        if (display == null) {
+            Log.w(TAG, "Second screen: no display to show on yet")
+            return
+        }
+        val presentation = SecondScreenPresentation(
+            context = this,
+            display = display,
+            arrivesCovered = !arrivalRevealed,
+            pictureHeightPx = matchedScreens?.secondary?.height,
+            onSurfaceChanged = { surface ->
+                if (::retroView.isInitialized) retroView.setSecondaryOutput(surface)
+            },
+            onTouch = { x, y, width, height ->
+                val output = dualScreenOutput
+                if (output != null && ::retroView.isInitialized) {
+                    retroView.sendSecondaryTouch(output.frameTouchAt(x, y, width, height))
+                }
+            },
+            onTouchReleased = {
+                if (::retroView.isInitialized) retroView.sendSecondaryTouch(null)
+            }
+        )
+        val shown = runCatching { presentation.show() }
+            .onFailure { Log.w(TAG, "Second screen could not be shown: ${it.message}") }
+            .isSuccess
+        secondScreen = presentation.takeIf { shown }
+        Log.i(TAG, "Second screen: show on display ${display.displayId} shown=$shown")
+        if (shown && !arrivalRevealed) {
+            lifecycleScope.launch {
+                snapshotFlow { arrivalRevealed }.first { it }
+                if (secondScreen === presentation) presentation.reveal()
+            }
+        }
+    }
+
+    private fun hideSecondScreen() {
+        secondScreen?.let { presentation ->
+            secondScreen = null
+            runCatching { presentation.dismiss() }
+        }
+        if (::retroView.isInitialized) retroView.setSecondaryOutput(null)
+    }
+
+    private val isHwCore: Boolean
+        get() = LibretroCoreRegistry.isHardwareRendered(resolvedCoreId)
+
+    private val perGameMappingId: Long?
+        get() = gameId.takeIf { perGameControlsEnabled && it != -1L }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        com.nendo.argosy.DualScreenManagerHolder.instance
+            ?.onSessionChanged(-1L)
+        if (canSuspend()) {
+            // Cocoon-style suspend: leave the game paused in its own task instead of quitting.
+            // onPause, which runs next, pauses the core and writes the save as it always has.
+            suspendedByHome = true
+            gameSessionManager.suspendBuiltIn(
+                gameId = gameId,
+                title = gameName,
+                platformName = platformSlug,
+                snapshot = captureFrameOrNull()
+            )
+            // Android slides the game away on Home and an app cannot stop that, so the game goes
+            // black the instant Home is pressed (its last frame is already saved for the card):
+            // the slide then moves nothing visible, and the top screen fades up from black.
+            if (leaveVeil == null) {
+                val veil = android.view.View(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
+                (window.decorView as? android.view.ViewGroup)?.addView(
+                    veil,
+                    android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
+                leaveVeil = veil
+            }
+            // Home is the system's transition, but while this activity is still pausing it may
+            // name the animation: the game shrinks into its card over a still launcher, in place
+            // of the sideways slide.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                overrideActivityTransition(
+                    android.app.Activity.OVERRIDE_TRANSITION_CLOSE,
+                    com.nendo.argosy.R.anim.cocoon_hold,
+                    com.nendo.argosy.R.anim.cocoon_game_zoom_out
+                )
+            }
+            @Suppress("DEPRECATION")
+            overridePendingTransition(
+                com.nendo.argosy.R.anim.cocoon_hold,
+                com.nendo.argosy.R.anim.cocoon_game_zoom_out
+            )
+        } else {
+            finish()
+        }
+    }
+
+    /**
+     * A game can be left suspended unless something would break while it waits in the background:
+     * a netplay session (the peer keeps running), a guest seat, or a core that never loaded.
+     */
+    private fun canSuspend(): Boolean =
+        gameId != -1L && coreLoadedSuccessfully && !coreDestroyed && !isClosing &&
+            !isGuestJoinedSession && !(::netplay.isInitialized && netplay.inSession)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        when (intent.action) {
+            ACTION_SHOW_MENU -> showMenu()
+            ACTION_QUIT -> finish()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            window.hideSystemBars()
+        }
+    }
+
+    override fun onPause() {
+        releaseCoreHeldKeys()
+        hideSecondScreen()
+        stopRollingSave()
+        Log.i(
+            TAG,
+            "[SRAM] onPause gates | isClosing=$isClosing coreLoaded=$coreLoadedSuccessfully " +
+                "isFinishing=$isFinishing coreDestroyed=$coreDestroyed isHwCore=$isHwCore " +
+                "guest=$isGuestJoinedSession netplayInit=${::netplay.isInitialized}"
+        )
+        if (::netplay.isInitialized) netplay.gracefullyEndIfActive()
+        if (isClosing) {
+            Log.w(TAG, "[SRAM] onPause SKIP ALL | isClosing=true, no sram write on this path")
+            super.onPause()
+            return
+        }
+        if (!coreLoadedSuccessfully) {
+            Log.w(TAG, "[SRAM] onPause SKIP ALL | coreLoadedSuccessfully=false, no sram write")
+        }
+        if (coreLoadedSuccessfully) {
+            if (!isFinishing && !coreDestroyed && isHwCore && !isGuestJoinedSession &&
+                !(::netplay.isInitialized && netplay.inSession)
+            ) {
+                saveStateManager.saveSram(retroView)
+                retroView.onPause()
+                super.onPause()
+                return
+            }
+            val pauseFrame = if (coreDestroyed) null else captureFrameOrNull()
+            performAutoSaveState(pauseFrame)
+            if (!isGuestJoinedSession && !coreDestroyed) {
+                saveStateManager.saveSram(retroView)
+            }
+            if (pauseFrame != null) {
+                cacheTouchBackdrop(pauseFrame)
+            }
+            if (isFinishing && !coreDestroyed) {
+                coreDestroyed = true
+                retroView.destroyNative()
+            }
+            retroView.onPause()
+        }
+        super.onPause()
+    }
+
+    private fun applyOrientationLock(locked: Boolean) {
+        requestedOrientation = if (!locked) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+        } else if (currentOrientationState == android.content.res.Configuration.ORIENTATION_PORTRAIT) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
+        } else {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+        }
+    }
+
+    private fun captureFrameOrNull(): Bitmap? = try { retroView.captureRawFrame() } catch (_: Exception) { null }
+
+    private fun cacheTouchBackdrop(bmp: Bitmap) {
+        if (platformSlug.isBlank()) {
+            bmp.recycle()
+            return
+        }
+        val orientation = currentOrientationState
+        val ctx = applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                com.nendo.argosy.libretro.touch.TouchBackdropCache.save(ctx, platformSlug, orientation, bmp)
+            } finally {
+                bmp.recycle()
+            }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        currentOrientationState = newConfig.orientation
+        currentRotationState = windowManager.defaultDisplay.rotation
+        val displayId = currentDisplayId()
+        if (displayId != hostDisplayId) onMovedToDisplay(displayId)
+        splitColumn?.let { applyPortraitSplit(it) }
+        splitRow?.let { applySidePanelSplit(it) }
+    }
+
+    private fun refreshGamepadPresence() {
+        val connected = com.nendo.argosy.core.input.ControllerDetector.isAnyGamepadConnected()
+        if (connected != isGamepadConnectedState) {
+            isGamepadConnectedState = connected
+            splitColumn?.let { applyPortraitSplit(it) }
+            splitRow?.let { applySidePanelSplit(it) }
+        }
+    }
+
+    private fun registerGamepadDetection() {
+        val im = getSystemService(android.hardware.input.InputManager::class.java) ?: return
+        val listener = object : android.hardware.input.InputManager.InputDeviceListener {
+            override fun onInputDeviceAdded(deviceId: Int) = refreshGamepadPresence()
+            override fun onInputDeviceRemoved(deviceId: Int) {
+                releaseCoreHeldKeys()
+                if (::inputConfig.isInitialized) inputConfig.releaseDisconnectedControllers()
+                refreshGamepadPresence()
+            }
+            override fun onInputDeviceChanged(deviceId: Int) = refreshGamepadPresence()
+        }
+        inputDeviceListener = listener
+        im.registerInputDeviceListener(listener, null)
+    }
+
+    private fun unregisterGamepadDetection() {
+        val l = inputDeviceListener ?: return
+        getSystemService(android.hardware.input.InputManager::class.java)?.unregisterInputDeviceListener(l)
+        inputDeviceListener = null
+    }
+
+    private fun registerOrientationListener() {
+        val listener = object : android.view.OrientationEventListener(this) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == android.view.OrientationEventListener.ORIENTATION_UNKNOWN) return
+                val rot = windowManager.defaultDisplay.rotation
+                if (rot != currentRotationState) currentRotationState = rot
+            }
+        }
+        if (listener.canDetectOrientation()) {
+            listener.enable()
+            orientationEventListener = listener
+        }
+    }
+
+    private fun unregisterOrientationListener() {
+        orientationEventListener?.disable()
+        orientationEventListener = null
+    }
+
+    /**
+     * Third door into save states, alongside HotkeyDispatcher and InGameMenu, so it carries the
+     * same hardcore block. Check hardcoreMode per call, not at registration: registration
+     * precedes launch-mode parsing and switchToHardcore promotes mid-session.
+     */
+    private fun createSessionQuickActions() = object : com.nendo.argosy.DualScreenManager.SessionQuickActions {
+        override fun quickSave() {
+            runOnUiThread {
+                if (coreDestroyed || !::retroView.isInitialized) return@runOnUiThread
+                if (netplay.inSession && netplay.role != NetplayMenuRole.Host) {
+                    notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_netplay_blocked))
+                    return@runOnUiThread
+                }
+                if (hardcoreMode) {
+                    notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_save_hardcore_blocked))
+                    return@runOnUiThread
+                }
+                if (!canSerialize) {
+                    notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_save_unsupported_core))
+                    return@runOnUiThread
+                }
+                val frame = try { retroView.captureRawFrame() } catch (_: Exception) { null }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val stateData = try { retroView.serializeState() } catch (_: Exception) { null }
+                    val ok = stateData != null && saveStateManager.performQuickSave(stateData, frame)
+                    notifyQuickAction(
+                        ok,
+                        getString(R.string.ingame_libretro_quickaction_save_success),
+                        getString(R.string.ingame_libretro_quickaction_save_failure)
+                    )
+                }
+            }
+        }
+
+        override fun loadState(slotNumber: Int, savedAtMillis: Long) {
+            runOnUiThread {
+                if (coreDestroyed || !::retroView.isInitialized) return@runOnUiThread
+                if (netplay.inSession) {
+                    notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_netplay_blocked))
+                    return@runOnUiThread
+                }
+                if (hardcoreMode) {
+                    notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_load_hardcore_blocked))
+                    return@runOnUiThread
+                }
+                if (!canSerialize) {
+                    notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_load_unsupported_core))
+                    return@runOnUiThread
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    if (saveStateManager.slotSavedAtMillis(slotNumber) != savedAtMillis) {
+                        publishSessionControls()
+                        notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_load_replaced))
+                        return@launch
+                    }
+                    val ok = try {
+                        saveStateManager.performSlotLoad(retroView, slotNumber)
+                    } catch (_: Exception) {
+                        false
+                    }
+                    notifyQuickAction(
+                        ok,
+                        getString(R.string.ingame_libretro_quickaction_load_success),
+                        getString(R.string.ingame_libretro_quickaction_load_failure)
+                    )
+                }
+            }
+        }
+
+        override fun openCheats() {
+            runOnUiThread {
+                if (coreDestroyed || isClosing) return@runOnUiThread
+                if (netplay.inSession) {
+                    notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_cheats_netplay_blocked))
+                    return@runOnUiThread
+                }
+                if (hardcoreMode || !PlatformWeightRegistry.supportsCheats(platformSlug)) return@runOnUiThread
+                showMenu()
+                handleMenuAction(InGameMenuAction.Cheats)
+            }
+        }
+
+        override fun openGameSettings() {
+            runOnUiThread {
+                if (coreDestroyed || isClosing) return@runOnUiThread
+                showMenu()
+                handleMenuAction(InGameMenuAction.Settings)
+            }
+        }
+
+        override fun quit() {
+            runOnUiThread {
+                if (coreDestroyed || isClosing) return@runOnUiThread
+                handleMenuAction(InGameMenuAction.Quit)
+            }
+        }
+
+        override fun screenshot() {
+            runOnUiThread {
+                if (coreDestroyed || !::retroView.isInitialized) return@runOnUiThread
+                val frame = try { retroView.captureRawFrame() } catch (_: Exception) { null }
+                if (frame == null) {
+                    notifyQuickAction(false, "", getString(R.string.ingame_libretro_quickaction_screenshot_capture_failed))
+                    return@runOnUiThread
+                }
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val ok = saveFrameToGallery(frame)
+                    notifyQuickAction(
+                        ok,
+                        getString(R.string.ingame_libretro_quickaction_screenshot_success),
+                        getString(R.string.ingame_libretro_quickaction_screenshot_failure)
+                    )
+                }
+            }
+        }
+    }
+
+    private fun notifyQuickAction(ok: Boolean, successTitle: String, failureTitle: String) {
+        com.nendo.argosy.data.social.SocialOverlayService.show(
+            this, if (ok) successTitle else failureTitle
+        )
+    }
+
+    private fun saveFrameToGallery(frame: android.graphics.Bitmap): Boolean {
+        return try {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "argosy_${System.currentTimeMillis()}.png")
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Argosy")
+            }
+            val uri = contentResolver.insert(
+                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
+            ) ?: return false
+            contentResolver.openOutputStream(uri)?.use { out ->
+                frame.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            } ?: return false
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "saveFrameToGallery failed", e)
+            false
+        }
+    }
+
+    override fun onDestroy() {
+        Log.d(TAG, "onDestroy: isFinishing=$isFinishing, isChangingConfigurations=$isChangingConfigurations")
+        quickPanelOverlay.hideNow()
+        hideSecondScreen()
+        if (!coreDestroyed && ::retroView.isInitialized) retroView.destroyNative()
+        coreDestroyed = true
+        if (isFinishing) speedrunTimer.disarm()
+        unregisterGamepadDetection()
+        unregisterOrientationListener()
+        if (::audioController.isInitialized) audioController.abandonAudioFocus()
+        com.nendo.argosy.DualScreenManagerHolder.instance?.let { dsm ->
+            dsm.emulatorKeyDispatcher = null
+            dsm.emulatorMotionDispatcher = null
+            dsm.sessionQuickActions = null
+            dsm.sessionRefocus = null
+            dsm.unregisterLiveMoveHost(liveMoveHost)
+        }
+        if (::netplay.isInitialized) netplay.shutdown()
+        if (::achievementBridge.isInitialized) achievementBridge.destroy()
+        if (isFinishing && gameId != -1L) {
+            gameSessionManager.onBuiltInFinished(gameId)
+            com.nendo.argosy.DualScreenManagerHolder.instance
+                ?.onSessionChanged(-1L)
+            playSessionTracker.endSessionInBackground(skipSaveSync = isGuestJoinedSession)
+        }
+        super.onDestroy()
+    }
+
+    private fun rightStickDeadzoneForPlatform(): Float {
+        val canonical = com.nendo.argosy.data.platform.PlatformDefinitions.getCanonicalSlug(platformSlug)
+        return if (canonical in PLATFORMS_WITH_DIGITAL_RIGHT_STICK) DIGITAL_RIGHT_STICK_DEADZONE else 0f
+    }
+
+    private fun hardcoreBlocks(key: String?, value: String?): Boolean =
+        hardcoreMode && key != null && value != null && !LibretroDroid.isCoreSettingAllowed(key, value)
+
+    private fun enforceHardcoreCoreSettings() {
+        if (!hardcoreMode) return
+        val blocked = coreVariablesFromIntent().firstOrNull { variable ->
+            val key = variable.key ?: return@firstOrNull false
+            val value = variable.value ?: return@firstOrNull false
+            !LibretroDroid.isCoreSettingAllowed(key, value)
+        } ?: return
+        achievementBridge.sessionManager?.abandonHardcore("${blocked.key}=${blocked.value}")
+        inGameMessage = getString(R.string.ingame_libretro_hardcore_off_core_setting, blocked.key, blocked.value)
+    }
+
+    private fun coreVariablesFromIntent(): Array<Variable> {
+        val keys = intent.getStringArrayExtra(EXTRA_CORE_VAR_KEYS) ?: return emptyArray()
+        val values = intent.getStringArrayExtra(EXTRA_CORE_VAR_VALUES) ?: return emptyArray()
+        return keys.zip(values) { k, v -> Variable(k, v) }.toTypedArray()
+    }
+
+    private fun vulkanDriverFromIntent(): VulkanDriver? {
+        val directory = intent.getStringExtra(EXTRA_VULKAN_DRIVER_DIR) ?: return null
+        val library = intent.getStringExtra(EXTRA_VULKAN_DRIVER_LIBRARY) ?: return null
+        return VulkanDriver(directory, library)
+    }
+
+    /**
+     * Releases every key the core is still holding. Key ups stop reaching the core the moment a
+     * menu opens, so a button held across that boundary stays down for the rest of the session.
+     */
+    private fun releaseCoreHeldKeys() {
+        if (::hotkeyDispatcher.isInitialized) hotkeyDispatcher.releaseHeldInput()
+        keyPressGate.clear()
+        deferredCoreKeys.clear()
+        if (coreHeldKeys.isEmpty()) return
+        val held = coreHeldKeys.toMap()
+        coreHeldKeys.clear()
+        held.forEach { (keyCode, down) ->
+            retroView.onKeyUp(keyCode, KeyEvent.changeAction(down, KeyEvent.ACTION_UP))
+        }
+    }
+
+    /**
+     * A console without shoulders should not receive a stray trigger press, but the decision has to
+     * follow where the user's mapping sends the key rather than the key itself: a shoulder bound to
+     * a face button is a binding the console can honour, and dropping it by keycode would void an
+     * explicit remap.
+     */
+    private fun shouldFilterShoulderButton(keyCode: Int, device: InputDevice?): Boolean {
+        val isShoulder = keyCode == KeyEvent.KEYCODE_BUTTON_L1 || keyCode == KeyEvent.KEYCODE_BUTTON_R1 ||
+            keyCode == KeyEvent.KEYCODE_BUTTON_L2 || keyCode == KeyEvent.KEYCODE_BUTTON_R2
+        if (!isShoulder) return false
+
+        val buttons = MappingPlatforms.profileForSlug(platformSlug).buttons
+        val mappedRetroButton = device?.let { inputMapper.retroButtonFor(it, keyCode) }
+        if (mappedRetroButton != null) return mappedRetroButton !in buttons
+
+        val isL1R1 = keyCode == KeyEvent.KEYCODE_BUTTON_L1 || keyCode == KeyEvent.KEYCODE_BUTTON_R1
+        if (isL1R1) return RetroButton.L !in buttons && RetroButton.R !in buttons
+        return RetroButton.L2 !in buttons && RetroButton.R2 !in buttons
+    }
+
+    companion object {
+        private const val TAG = "LibretroActivity"
+
+        private const val CORE_INPUT_PULSE_MS = 50L
+
+        private const val ROLLING_SAVE_INTERVAL_MS = 30_000L
+        private const val SAVE_SCREENSHOT_DELAY_MS = 250L
+        private const val SAVE_WRITE_CHECK_INTERVAL_MS = 5_000L
+        private const val SAVE_INDICATOR_MERGE_MS = 5_000L
+        private const val BACK_HOLD_MS = 500L
+
+        private const val FPS_SAMPLE_INTERVAL_MS = 1_000L
+
+        private const val HUD_TICK_INTERVAL_MS = 1_000L
+
+        private const val HUD_DURATION_WIDTH = 4
+        private const val HUD_FPS_DIGITS = 3
+
+        private const val SPEEDRUN_PANEL_FRACTION_DEFAULT = 0.30f
+        private val SPEEDRUN_PANEL_FRACTION_RANGE = 0.20f..0.40f
+
+        const val EXTRA_ROM_PATH = "rom_path"
+        const val EXTRA_CORE_PATH = "core_path"
+        const val EXTRA_SYSTEM_DIR = "system_dir"
+        const val EXTRA_GAME_NAME = "game_name"
+        const val EXTRA_GAME_ID = "game_id"
+        const val EXTRA_VARIANT_FILE_ID = "variant_file_id"
+        const val EXTRA_DISC_M3U_PATH = "disc_m3u_path"
+        const val EXTRA_PLATFORM_SLUG = "platform_slug"
+        const val EXTRA_CORE_NAME = "core_name"
+        const val EXTRA_CORE_VAR_KEYS = "core_var_keys"
+        const val EXTRA_CORE_VAR_VALUES = "core_var_values"
+        const val EXTRA_PREFER_VULKAN = "prefer_vulkan"
+        const val EXTRA_VULKAN_DRIVER_DIR = "vulkan_driver_dir"
+        const val EXTRA_VULKAN_DRIVER_LIBRARY = "vulkan_driver_library"
+        const val EXTRA_SAVES_DIR = "saves_dir"
+        const val EXTRA_STATES_DIR = "states_dir"
+        const val EXTRA_NETPLAY_JOIN_SESSION_ID = "netplay_join_session_id"
+        const val EXTRA_NETPLAY_JOIN_HOST_USER_ID = "netplay_join_host_user_id"
+        const val EXTRA_LAUNCH_CONTROLLER_ID = "launch_controller_id"
+        const val ACTION_SHOW_MENU = "com.nendo.argosy.action.SHOW_MENU"
+        const val ACTION_QUIT = "com.nendo.argosy.action.QUIT"
+
+        private const val DIGITAL_RIGHT_STICK_DEADZONE = 0.5f
+        private val PLATFORMS_WITH_DIGITAL_RIGHT_STICK = setOf("n64", "n64dd")
+    }
+}

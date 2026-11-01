@@ -1,0 +1,691 @@
+package com.nendo.argosy.libretro.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import com.nendo.argosy.R
+import com.nendo.argosy.libretro.SaveStateManager
+import com.nendo.argosy.ui.common.ScreenshotImage
+import com.nendo.argosy.util.formatSaveSize
+import com.nendo.argosy.util.formatSaveTimestamp
+import com.nendo.argosy.ui.components.FooterBarWithState
+import com.nendo.argosy.ui.components.FooterHintItem
+import com.nendo.argosy.ui.components.InputButton
+import com.nendo.argosy.ui.components.NestedModal
+import com.nendo.argosy.ui.input.InputHandler
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.ui.util.clickableNoFocus
+
+enum class StateManagerViewMode { SPLIT, CAROUSEL }
+
+@Composable
+fun InGameStateManager(
+    slots: List<SaveStateManager.SlotInfo>,
+    channelName: String?,
+    focusedIndex: Int,
+    viewMode: StateManagerViewMode,
+    showDeleteConfirmation: Boolean,
+    onFocusChange: (Int) -> Unit,
+    onViewModeToggle: () -> Unit,
+    onSave: (Int) -> Unit,
+    onLoadRequest: (Int) -> Unit,
+    onDeleteRequest: (Int) -> Unit,
+    onDeleteConfirm: () -> Unit,
+    onDeleteCancel: () -> Unit,
+    onDismiss: () -> Unit,
+    loadAllowed: Boolean = true,
+    showLoadConfirmation: Boolean = false,
+    onLoadConfirm: () -> Unit = {},
+    onLoadCancel: () -> Unit = {}
+): InputHandler {
+    val currentFocusedIndex = rememberUpdatedState(focusedIndex)
+    val currentSlots = rememberUpdatedState(slots)
+    val currentShowDelete = rememberUpdatedState(showDeleteConfirmation)
+    val currentOnFocusChange = rememberUpdatedState(onFocusChange)
+    val currentOnViewModeToggle = rememberUpdatedState(onViewModeToggle)
+    val currentOnSave = rememberUpdatedState(onSave)
+    val currentOnLoadRequest = rememberUpdatedState(onLoadRequest)
+    val currentOnDeleteRequest = rememberUpdatedState(onDeleteRequest)
+    val currentOnDeleteConfirm = rememberUpdatedState(onDeleteConfirm)
+    val currentOnDeleteCancel = rememberUpdatedState(onDeleteCancel)
+    val currentOnDismiss = rememberUpdatedState(onDismiss)
+    val currentViewMode = rememberUpdatedState(viewMode)
+    val currentLoadAllowed = rememberUpdatedState(loadAllowed)
+    val currentShowLoadConfirm = rememberUpdatedState(showLoadConfirmation)
+    val currentOnLoadConfirm = rememberUpdatedState(onLoadConfirm)
+    val currentOnLoadCancel = rememberUpdatedState(onLoadCancel)
+    val effectiveModeState = remember { mutableStateOf(viewMode) }
+
+    val inputHandler = remember {
+        object : InputHandler {
+            override fun onUp(): InputResult {
+                if (currentShowDelete.value || currentShowLoadConfirm.value) return InputResult.HANDLED
+                val mode = currentViewMode.value
+                if (mode == StateManagerViewMode.SPLIT) {
+                    val idx = currentFocusedIndex.value
+                    val newIndex = (idx - SPLIT_GRID_COLUMNS).coerceAtLeast(0)
+                    if (newIndex != idx) currentOnFocusChange.value(newIndex)
+                } else {
+                }
+                return InputResult.HANDLED
+            }
+
+            override fun onDown(): InputResult {
+                if (currentShowDelete.value || currentShowLoadConfirm.value) return InputResult.HANDLED
+                val mode = currentViewMode.value
+                if (mode == StateManagerViewMode.SPLIT) {
+                    val idx = currentFocusedIndex.value
+                    val lastIndex = currentSlots.value.lastIndex
+                    val newIndex = (idx + SPLIT_GRID_COLUMNS).coerceAtMost(lastIndex)
+                    if (newIndex != idx) currentOnFocusChange.value(newIndex)
+                }
+                return InputResult.HANDLED
+            }
+
+            override fun onLeft(): InputResult {
+                if (currentShowDelete.value || currentShowLoadConfirm.value) return InputResult.HANDLED
+                val idx = currentFocusedIndex.value
+                val atLeftEdge = if (effectiveModeState.value == StateManagerViewMode.SPLIT) {
+                    idx % SPLIT_GRID_COLUMNS == 0
+                } else {
+                    idx <= 0
+                }
+                if (atLeftEdge) return InputResult.UNHANDLED
+                currentOnFocusChange.value(idx - 1)
+                return InputResult.HANDLED
+            }
+
+            override fun onRight(): InputResult {
+                if (currentShowDelete.value || currentShowLoadConfirm.value) return InputResult.HANDLED
+                val idx = currentFocusedIndex.value
+                val lastIndex = currentSlots.value.lastIndex
+                val newIndex = (idx + 1).coerceAtMost(lastIndex)
+                if (newIndex != idx) currentOnFocusChange.value(newIndex)
+                return InputResult.HANDLED
+            }
+
+            override fun onConfirm(): InputResult {
+                if (currentShowDelete.value) {
+                    currentOnDeleteConfirm.value()
+                    return InputResult.HANDLED
+                }
+                if (currentShowLoadConfirm.value) {
+                    currentOnLoadConfirm.value()
+                    return InputResult.HANDLED
+                }
+                val slot = currentSlots.value.getOrNull(currentFocusedIndex.value) ?: return InputResult.HANDLED
+                if (slot.file != null && currentLoadAllowed.value) {
+                    currentOnLoadRequest.value(slot.slotNumber)
+                }
+                return InputResult.HANDLED
+            }
+
+            override fun onContextMenu(): InputResult {
+                if (currentShowDelete.value || currentShowLoadConfirm.value) return InputResult.HANDLED
+                val slot = currentSlots.value.getOrNull(currentFocusedIndex.value) ?: return InputResult.HANDLED
+                currentOnSave.value(slot.slotNumber)
+                return InputResult.HANDLED
+            }
+
+            override fun onSecondaryAction(): InputResult {
+                if (currentShowDelete.value || currentShowLoadConfirm.value) return InputResult.HANDLED
+                val slot = currentSlots.value.getOrNull(currentFocusedIndex.value) ?: return InputResult.HANDLED
+                if (slot.file != null) {
+                    currentOnDeleteRequest.value(slot.slotNumber)
+                }
+                return InputResult.HANDLED
+            }
+
+            override fun onSelect(): InputResult {
+                if (currentShowDelete.value || currentShowLoadConfirm.value) return InputResult.HANDLED
+                currentOnViewModeToggle.value()
+                return InputResult.HANDLED
+            }
+
+            override fun onBack(): InputResult {
+                if (currentShowDelete.value) {
+                    currentOnDeleteCancel.value()
+                    return InputResult.HANDLED
+                }
+                if (currentShowLoadConfirm.value) {
+                    currentOnLoadCancel.value()
+                    return InputResult.HANDLED
+                }
+                currentOnDismiss.value()
+                return InputResult.HANDLED
+            }
+        }
+    }
+
+    val focusedSlot = slots.getOrNull(focusedIndex)
+    val isOccupied = focusedSlot?.file != null
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .focusProperties { canFocus = false }
+    ) {
+        val isSquarish = maxWidth < 500.dp || (maxWidth / maxHeight < 1.4f)
+        val effectiveMode = viewMode
+        SideEffect { effectiveModeState.value = effectiveMode }
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.ingame_states_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (channelName != null) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.ingame_states_channel, channelName),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Box(modifier = Modifier.weight(1f)) {
+                when (effectiveMode) {
+                    StateManagerViewMode.SPLIT -> SplitLayout(
+                        slots = slots,
+                        showPreview = !isSquarish,
+                        focusedIndex = focusedIndex,
+                        onFocusChange = onFocusChange,
+                        onSave = onSave,
+                        onLoadRequest = onLoadRequest,
+                        loadAllowed = loadAllowed
+                    )
+                    StateManagerViewMode.CAROUSEL -> CarouselLayout(
+                        slots = slots,
+                        focusedIndex = focusedIndex,
+                        onFocusChange = onFocusChange,
+                        onSave = onSave
+                    )
+                }
+            }
+
+            val footerHints = buildFooterHints(isOccupied, effectiveMode, loadAllowed)
+            FooterBarWithState(
+                hints = footerHints,
+                onHintClick = { button ->
+                    when (button) {
+                        InputButton.A -> if (isOccupied && loadAllowed) focusedSlot?.let { onLoadRequest(it.slotNumber) }
+                        InputButton.X -> focusedSlot?.let { onSave(it.slotNumber) }
+                        InputButton.Y -> if (isOccupied) focusedSlot?.let { onDeleteRequest(it.slotNumber) }
+                        InputButton.SELECT -> onViewModeToggle()
+                        InputButton.B -> onDismiss()
+                        else -> {}
+                    }
+                }
+            )
+        }
+
+        if (showDeleteConfirmation) {
+            NestedModal(
+                title = stringResource(R.string.ingame_states_delete_title),
+                onDismiss = onDeleteCancel,
+                footerHints = listOf(
+                    InputButton.A to stringResource(R.string.ingame_states_delete_confirm),
+                    InputButton.B to stringResource(R.string.ingame_states_delete_cancel)
+                )
+            ) {
+                Text(
+                    text = stringResource(R.string.ingame_states_delete_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        if (showLoadConfirmation) {
+            NestedModal(
+                title = stringResource(R.string.ingame_states_load_title),
+                onDismiss = onLoadCancel,
+                footerHints = listOf(
+                    InputButton.A to stringResource(R.string.ingame_states_load_confirm),
+                    InputButton.B to stringResource(R.string.ingame_states_load_cancel)
+                )
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val screenshotFile = focusedSlot?.screenshotFile
+                    if (screenshotFile != null && screenshotFile.exists()) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(screenshotFile)
+                                .memoryCacheKey("${screenshotFile.absolutePath}_${focusedSlot?.timestamp}")
+                                .diskCachePolicy(CachePolicy.DISABLED)
+                                .build(),
+                            contentDescription = stringResource(R.string.ingame_states_load_preview_description),
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(140.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
+                    if (focusedSlot?.timestamp != null) {
+                        Text(
+                            text = formatSaveTimestamp(LocalContext.current, focusedSlot.timestamp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.ingame_states_load_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+    }
+
+    return inputHandler
+}
+
+@Composable
+private fun SplitLayout(
+    slots: List<SaveStateManager.SlotInfo>,
+    showPreview: Boolean,
+    focusedIndex: Int,
+    onFocusChange: (Int) -> Unit,
+    onSave: (Int) -> Unit,
+    onLoadRequest: (Int) -> Unit,
+    loadAllowed: Boolean = true
+) {
+    Row(modifier = Modifier.fillMaxSize()) {
+        if (showPreview) Box(
+            modifier = Modifier
+                .weight(0.4f)
+                .fillMaxHeight()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            val focusedSlot = slots.getOrNull(focusedIndex)
+            val screenshotFile = focusedSlot?.screenshotFile
+            if (screenshotFile != null && screenshotFile.exists()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(screenshotFile)
+                        .memoryCacheKey("${screenshotFile.absolutePath}_${focusedSlot.timestamp}")
+                        .diskCachePolicy(CachePolicy.DISABLED)
+                        .build(),
+                    contentDescription = slotLabel(focusedSlot.slotNumber),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().padding(16.dp)
+                )
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = if (focusedSlot?.file != null) {
+                            stringResource(R.string.ingame_states_preview_no_screenshot)
+                        } else {
+                            stringResource(R.string.ingame_states_preview_empty_slot)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+                }
+            }
+
+            if (focusedSlot != null) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = slotLabel(focusedSlot.slotNumber),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    if (focusedSlot.timestamp != null) {
+                        Text(
+                            text = formatSaveTimestamp(LocalContext.current, focusedSlot.timestamp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = formatSaveSize(focusedSlot.size),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+            }
+        }
+
+        val gridState = rememberLazyGridState()
+
+        LaunchedEffect(focusedIndex) {
+            if (slots.isNotEmpty() && focusedIndex in slots.indices) {
+                val viewportHeight = gridState.layoutInfo.viewportSize.height
+                val itemHeight = gridState.layoutInfo.visibleItemsInfo.firstOrNull()?.size?.height ?: 0
+                val centerOffset = if (itemHeight > 0) (viewportHeight - itemHeight) / 2 else 0
+                gridState.animateScrollToItem(focusedIndex, -centerOffset)
+            }
+        }
+
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Fixed(SPLIT_GRID_COLUMNS),
+            modifier = Modifier
+                .weight(0.6f)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)),
+            contentPadding = PaddingValues(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            itemsIndexed(slots) { index, slot ->
+                SlotCard(
+                    slot = slot,
+                    isFocused = index == focusedIndex,
+                    onClick = { onFocusChange(index) },
+                    onDoubleAction = {
+                        if (slot.file != null) {
+                            if (loadAllowed) onLoadRequest(slot.slotNumber)
+                        } else onSave(slot.slotNumber)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CarouselLayout(
+    slots: List<SaveStateManager.SlotInfo>,
+    focusedIndex: Int,
+    onFocusChange: (Int) -> Unit,
+    onSave: (Int) -> Unit
+) {
+    val focusedSlot = slots.getOrNull(focusedIndex)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center
+    ) {
+        val screenshotFile = focusedSlot?.screenshotFile
+        if (screenshotFile != null && screenshotFile.exists()) {
+            AsyncImage(
+                model = screenshotFile,
+                contentDescription = focusedSlot.let { slotLabel(it.slotNumber) },
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp)
+            )
+        } else {
+            Text(
+                text = if (focusedSlot?.file != null) {
+                    stringResource(R.string.ingame_states_carousel_no_screenshot)
+                } else {
+                    stringResource(R.string.ingame_states_carousel_no_state)
+                },
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White.copy(alpha = 0.5f)
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp)
+                .background(
+                    Color.Black.copy(alpha = 0.6f),
+                    RoundedCornerShape(8.dp)
+                )
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            slots.forEachIndexed { index, slot ->
+                val dotColor = when {
+                    index == focusedIndex && slot.file != null -> MaterialTheme.colorScheme.primary
+                    index == focusedIndex -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                    slot.file != null -> Color.White.copy(alpha = 0.7f)
+                    else -> Color.White.copy(alpha = 0.2f)
+                }
+                Box(
+                    modifier = Modifier
+                        .size(if (index == focusedIndex) 10.dp else 6.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(dotColor)
+                        .clickableNoFocus { onFocusChange(index) }
+                )
+            }
+        }
+
+        if (focusedSlot != null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = slotLabel(focusedSlot.slotNumber),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                if (focusedSlot.timestamp != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = formatSaveTimestamp(LocalContext.current, focusedSlot.timestamp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = formatSaveSize(focusedSlot.size),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.5f)
+                        )
+                    }
+                } else {
+                    Text(
+                        text = stringResource(R.string.ingame_states_carousel_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.4f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SlotCard(
+    slot: SaveStateManager.SlotInfo,
+    isFocused: Boolean,
+    onClick: () -> Unit,
+    onDoubleAction: () -> Unit
+) {
+    val isEmpty = slot.file == null
+    val backgroundColor = when {
+        isFocused -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f)
+        isEmpty -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+    }
+
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(backgroundColor)
+            .then(
+                if (isFocused) Modifier.border(
+                    width = 2.dp,
+                    color = MaterialTheme.colorScheme.secondary,
+                    shape = RoundedCornerShape(8.dp)
+                ) else Modifier
+            )
+            .clickableNoFocus(onClick = onClick)
+            .padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(4f / 3f)
+                .clip(RoundedCornerShape(4.dp))
+                .background(
+                    if (isEmpty) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    else Color.Black
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            val screenshotFile = slot.screenshotFile
+            if (screenshotFile != null && screenshotFile.exists()) {
+                ScreenshotImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(screenshotFile)
+                        .memoryCacheKey("${screenshotFile.absolutePath}_${slot.timestamp}")
+                        .diskCachePolicy(CachePolicy.DISABLED)
+                        .build(),
+                    contentDescription = slotLabel(slot.slotNumber),
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Text(
+                    text = if (isEmpty) "--" else "?",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = slotLabel(slot.slotNumber),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (isFocused) FontWeight.Bold else FontWeight.Normal,
+            color = if (isFocused) MaterialTheme.colorScheme.onSecondaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        if (!isEmpty && slot.timestamp != null) {
+            Text(
+                text = formatSaveTimestamp(LocalContext.current, slot.timestamp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = formatSaveSize(slot.size),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun slotLabel(slotNumber: Int): String {
+    return when (slotNumber) {
+        SaveStateManager.AUTO_SLOT -> stringResource(R.string.ingame_states_slot_auto)
+        else -> stringResource(R.string.ingame_states_slot_numbered, slotNumber)
+    }
+}
+
+@Composable
+private fun buildFooterHints(
+    isOccupied: Boolean,
+    viewMode: StateManagerViewMode,
+    loadAllowed: Boolean
+): List<FooterHintItem> {
+    val modeLabel = when (viewMode) {
+        StateManagerViewMode.SPLIT -> stringResource(R.string.ingame_states_footer_mode_carousel)
+        StateManagerViewMode.CAROUSEL -> stringResource(R.string.ingame_states_footer_mode_grid)
+    }
+    val loadLabel = stringResource(R.string.ingame_states_footer_load)
+    val saveOverLabel = stringResource(R.string.ingame_states_footer_save_over)
+    val deleteLabel = stringResource(R.string.ingame_states_footer_delete)
+    val saveLabel = stringResource(R.string.ingame_states_footer_save)
+    val backLabel = stringResource(R.string.ingame_states_footer_back)
+    return buildList {
+        if (isOccupied) {
+            if (loadAllowed) {
+                add(FooterHintItem(InputButton.A, loadLabel))
+            }
+            add(FooterHintItem(InputButton.X, saveOverLabel))
+            add(FooterHintItem(InputButton.Y, deleteLabel))
+        } else {
+            add(FooterHintItem(InputButton.X, saveLabel))
+        }
+        add(FooterHintItem(InputButton.SELECT, modeLabel))
+        add(FooterHintItem(InputButton.B, backLabel))
+    }
+}
+
+private const val SPLIT_GRID_COLUMNS = 3

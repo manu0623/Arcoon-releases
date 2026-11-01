@@ -1,0 +1,348 @@
+package com.nendo.argosy.domain.usecase.save
+
+import com.nendo.argosy.data.local.dao.GameDao
+import com.nendo.argosy.data.local.entity.GameEntity
+import com.nendo.argosy.data.local.entity.SaveCacheEntity
+import com.nendo.argosy.data.remote.romm.RomMSave
+import com.nendo.argosy.data.repository.SaveCacheManager
+import com.nendo.argosy.data.repository.SaveSyncApiClient
+import com.nendo.argosy.data.repository.SaveSyncApiClient.Companion.equalsNormalized
+import com.nendo.argosy.data.repository.SaveInventoryUnavailableException
+import com.nendo.argosy.data.repository.SaveSyncRepository
+import com.nendo.argosy.domain.model.UnifiedSaveEntry
+import com.nendo.argosy.util.Logger
+import java.io.File
+import java.time.Instant
+import javax.inject.Inject
+
+private const val LATEST_SLOT_KEY = "__latest__"
+
+private const val TAG = "GetUnifiedSaves"
+
+class GetUnifiedSavesUseCase @Inject constructor(
+    private val saveCacheManager: SaveCacheManager,
+    private val saveSyncRepository: SaveSyncRepository,
+    private val gameDao: GameDao,
+    private val activeSaveRepository: com.nendo.argosy.data.repository.ActiveSaveRepository
+) {
+    suspend operator fun invoke(
+        gameId: Long,
+        expandHistory: Boolean = false,
+        includeServer: Boolean = true
+    ): List<UnifiedSaveEntry> =
+        buildUnifiedSaves(gameId, gameDao.getById(gameId), expandHistory, includeServer)
+
+    private suspend fun buildUnifiedSaves(
+        gameId: Long,
+        game: GameEntity?,
+        expandHistory: Boolean,
+        includeServer: Boolean
+    ): List<UnifiedSaveEntry> {
+        saveCacheManager.dedupeIdenticalCaches(gameId)
+        val localCaches = saveCacheManager.getCachesForGameOnce(gameId)
+        val rommId = game?.rommId
+        val romBaseName = game?.localPath?.let { File(it).nameWithoutExtension }
+
+        val serverSaves = if (rommId != null && includeServer) {
+            try {
+                saveSyncRepository.checkSavesForGame(gameId, rommId)
+            } catch (e: SaveInventoryUnavailableException) {
+                Logger.warn(TAG, "Server saves unavailable for gameId=$gameId, showing local saves: ${e.message}")
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+
+        val entries = mergeEntries(localCaches, serverSaves, romBaseName, expandHistory)
+        val sorted = sortEntries(entries)
+
+        val both = entries.count { it.source == UnifiedSaveEntry.Source.BOTH }
+        val localOnly = entries.count { it.source == UnifiedSaveEntry.Source.LOCAL }
+        val serverOnly = entries.count { it.source == UnifiedSaveEntry.Source.SERVER }
+        val droppedServerByClaimedSlot = (serverSaves.size - (both + serverOnly)).coerceAtLeast(0)
+        val deviceBreakdown: Map<String?, Int> = serverSaves
+            .flatMap { it.deviceSyncs.orEmpty().map { sync -> sync.deviceId as String? } }
+            .groupingBy { it }
+            .eachCount()
+        com.nendo.argosy.util.SaveDebugLogger.logUnifiedBuilt(
+            gameId = gameId,
+            totalLocal = localCaches.size,
+            totalServer = serverSaves.size,
+            mergedBoth = both,
+            localOnly = localOnly,
+            serverOnly = serverOnly,
+            unmatchedServerByClaimedSlot = droppedServerByClaimedSlot,
+            serverDeviceBreakdown = deviceBreakdown
+        )
+        return sorted
+    }
+
+    suspend fun localOnly(gameId: Long): List<UnifiedSaveEntry> {
+        saveCacheManager.dedupeIdenticalCaches(gameId)
+        val localCaches = saveCacheManager.getCachesForGameOnce(gameId)
+        val romBaseName = gameDao.getById(gameId)?.localPath?.let {
+            File(it).nameWithoutExtension
+        }
+        val entries = mergeEntries(localCaches, emptyList(), romBaseName, expandHistory = false)
+        return sortEntries(entries)
+    }
+
+    /**
+     * Resolves which save is active over the unified cache+server view -- the single seam for
+     * "which save is active", replacing ad-hoc cache-only checks that miss server-only cloud saves.
+     * [includeServer] should be the caller's online state (mirrors [invoke]); offline callers pass
+     * false to skip the network fetch. Resolves against the game's stored coordinates. Null when
+     * the game has no save at all.
+     */
+    suspend fun resolveActive(gameId: Long, includeServer: Boolean = true): UnifiedSaveEntry? {
+        val game = gameDao.getById(gameId)
+        val entries = buildUnifiedSaves(gameId, game, expandHistory = false, includeServer = includeServer)
+        return resolveActiveEntry(
+            entries,
+            activeSaveRepository.getActiveChannel(gameId),
+            activeSaveRepository.getActiveTimestamp(gameId)
+        )
+    }
+
+    /**
+     * [resolveActive] for callers holding coordinates that may differ from the stored ones -- e.g. a
+     * save event carrying a channel the game row has not been updated to yet. Resolving against the
+     * stored coordinates there would mix two channels' data into one status.
+     */
+    suspend fun resolveActive(
+        gameId: Long,
+        activeChannel: String?,
+        activeSaveTimestamp: Long?,
+        includeServer: Boolean
+    ): UnifiedSaveEntry? {
+        val entries = buildUnifiedSaves(
+            gameId, gameDao.getById(gameId), expandHistory = false, includeServer = includeServer
+        )
+        return resolveActiveEntry(entries, activeChannel, activeSaveTimestamp)
+    }
+
+    private fun mergeEntries(
+        localCaches: List<SaveCacheEntity>,
+        serverSaves: List<RomMSave>,
+        romBaseName: String?,
+        expandHistory: Boolean
+    ): List<UnifiedSaveEntry> {
+        val result = mutableListOf<UnifiedSaveEntry>()
+        val usedServerIds = mutableSetOf<Long>()
+        val claimedSlots = mutableSetOf<String>()
+        val serverSaveById = serverSaves.associateBy { it.id }
+
+        val slottedChannels = serverSaves
+            .mapNotNull { it.slot?.takeIf { s -> s.isNotBlank() } }
+            .toSet()
+
+        val mostRecentByChannel = localCaches
+            .filter { it.channelName != null }
+            .groupBy { it.channelName }
+            .mapValues { (_, caches) -> caches.maxByOrNull { it.cachedAt }?.id }
+
+        val mostRecentNonChannel = localCaches
+            .filter { it.channelName == null }
+            .maxByOrNull { it.cachedAt }?.id
+
+        for (cache in localCaches) {
+            val channelName = cache.channelName
+            val isMostRecentForChannel = if (channelName != null) {
+                mostRecentByChannel[channelName] == cache.id
+            } else {
+                mostRecentNonChannel == cache.id
+            }
+
+            val matchingServer = if (cache.rommSaveId != null) {
+                serverSaveById[cache.rommSaveId]
+            } else if (isMostRecentForChannel) {
+                serverSaves.find { serverSave -> matchesLocalCache(serverSave, channelName, romBaseName) }
+            } else {
+                null
+            }
+
+            val localIsArchival = channelName == null && !cache.isHardcore
+
+            if (matchingServer != null) {
+                usedServerIds.add(matchingServer.id)
+                val isLatest = !localIsArchival && isLatestSlot(matchingServer, romBaseName)
+                val serverChannelName = if (isLatest) null
+                    else SaveSyncApiClient.resolveServerChannelName(matchingServer, romBaseName)
+                val mergedChannelName = if (localIsArchival) null else (channelName ?: serverChannelName)
+                val isLocked = !localIsArchival && (mergedChannelName != null || cache.isLocked)
+                val deviceSyncCurrent = saveSyncRepository.getDeviceId()?.let { devId ->
+                    matchingServer.deviceSyncs?.find { it.deviceId == devId }?.isCurrent
+                }
+                val slotKey = resolveSlotKey(matchingServer.slot, matchingServer.fileName, romBaseName)
+                claimedSlots.add(slotKey)
+                result.add(
+                    UnifiedSaveEntry(
+                        localCacheId = cache.id,
+                        serverSaveId = matchingServer.id,
+                        timestamp = cache.cachedAt,
+                        size = cache.saveSize,
+                        channelName = mergedChannelName,
+                        source = UnifiedSaveEntry.Source.BOTH,
+                        serverFileName = matchingServer.fileName,
+                        serverContentHash = matchingServer.contentHash,
+                        isLatest = isLatest,
+                        isLocked = isLocked,
+                        isHardcore = cache.isHardcore,
+                        cheatsUsed = cache.cheatsUsed,
+                        isRollback = cache.isRollback,
+                        isUserCreatedSlot = !localIsArchival && cache.isLocked,
+                        isCurrent = deviceSyncCurrent ?: false,
+                        isArchival = localIsArchival,
+                        localCopyUploaded = cache.rommSaveId != null
+                    )
+                )
+            } else {
+                val shouldBeLocked = !localIsArchival && isMostRecentForChannel && channelName != null
+                result.add(
+                    UnifiedSaveEntry(
+                        localCacheId = cache.id,
+                        timestamp = cache.cachedAt,
+                        size = cache.saveSize,
+                        channelName = if (localIsArchival) null else channelName,
+                        source = UnifiedSaveEntry.Source.LOCAL,
+                        isLocked = shouldBeLocked,
+                        isHardcore = cache.isHardcore,
+                        cheatsUsed = cache.cheatsUsed,
+                        isRollback = cache.isRollback,
+                        isUserCreatedSlot = !localIsArchival && cache.isLocked,
+                        isArchival = localIsArchival
+                    )
+                )
+            }
+        }
+
+        val unmatchedServerSaves = serverSaves
+            .filter { it.id !in usedServerIds }
+            .sortedByDescending { parseServerTimestamp(it.updatedAt) ?: Instant.EPOCH }
+
+        for (serverSave in unmatchedServerSaves) {
+            val timestamp = parseServerTimestamp(serverSave.updatedAt) ?: Instant.now()
+            val deviceSyncCurrent = saveSyncRepository.getDeviceId()?.let { devId ->
+                serverSave.deviceSyncs?.find { it.deviceId == devId }?.isCurrent
+            }
+
+            if (serverSave.slot == null) {
+                if (!expandHistory) continue
+                result.add(
+                    UnifiedSaveEntry(
+                        serverSaveId = serverSave.id,
+                        timestamp = timestamp,
+                        size = serverSave.fileSizeBytes,
+                        channelName = null,
+                        source = UnifiedSaveEntry.Source.SERVER,
+                        serverFileName = serverSave.fileName,
+                        serverContentHash = serverSave.contentHash,
+                        isLatest = false,
+                        isLocked = false,
+                        isUserCreatedSlot = false,
+                        isCurrent = deviceSyncCurrent ?: false,
+                        isArchival = true
+                    )
+                )
+                continue
+            }
+
+            val slotKey = resolveSlotKey(serverSave.slot, serverSave.fileName, romBaseName)
+            if (!expandHistory && slotKey in claimedSlots) continue
+
+            val isLatest = isLatestSlot(serverSave, romBaseName)
+            val serverChannelName = if (isLatest) null else serverSave.slot
+            val isLocked = serverChannelName != null
+
+            if (!expandHistory) claimedSlots.add(slotKey)
+            result.add(
+                UnifiedSaveEntry(
+                    serverSaveId = serverSave.id,
+                    timestamp = timestamp,
+                    size = serverSave.fileSizeBytes,
+                    channelName = serverChannelName,
+                    source = UnifiedSaveEntry.Source.SERVER,
+                    serverFileName = serverSave.fileName,
+                    serverContentHash = serverSave.contentHash,
+                    isLatest = isLatest,
+                    isLocked = isLocked,
+                    isUserCreatedSlot = true,
+                    isCurrent = deviceSyncCurrent ?: false
+                )
+            )
+        }
+
+        return result
+    }
+
+    private fun resolveSlotKey(slot: String?, fileName: String, romBaseName: String?): String {
+        if (slot != null) return slot.lowercase()
+        val baseName = File(fileName).nameWithoutExtension.lowercase()
+        if (romBaseName != null && SaveSyncApiClient.isLatestSaveFileName(fileName, romBaseName)) {
+            return LATEST_SLOT_KEY
+        }
+        return baseName
+    }
+
+    private fun matchesLocalCache(
+        serverSave: RomMSave,
+        channelName: String?,
+        romBaseName: String?
+    ): Boolean {
+        if (channelName != null) {
+            if (serverSave.slot != null) return equalsNormalized(serverSave.slot, channelName)
+            val serverBaseName = File(serverSave.fileName).nameWithoutExtension
+            return equalsNormalized(channelName, serverBaseName)
+        }
+        if (serverSave.slot != null) return SaveSyncApiClient.isLatestSaveFileName(serverSave.slot, romBaseName)
+        return SaveSyncApiClient.isLatestSaveFileName(serverSave.fileName, romBaseName)
+    }
+
+    private fun isLatestSlot(serverSave: RomMSave, romBaseName: String?): Boolean =
+        SaveSyncApiClient.isLatestSlot(serverSave, romBaseName)
+
+    private fun sortEntries(entries: List<UnifiedSaveEntry>): List<UnifiedSaveEntry> {
+        val latest = entries.filter { it.isLatest }
+        val channels = entries.filter { it.isChannel && !it.isLatest }
+        val dated = entries.filter { !it.isChannel && !it.isLatest }
+
+        val sortedDated = dated.sortedByDescending { it.timestamp }
+        val sortedChannels = channels.sortedBy { it.channelName?.lowercase() }
+
+        return latest + sortedDated + sortedChannels
+    }
+
+    private fun parseServerTimestamp(timestamp: String): Instant? =
+        com.nendo.argosy.data.repository.SaveSyncApiClient.parseTimestampOrNull(timestamp)
+
+}
+
+/**
+ * Decides which of [entries] is the active save from the stored coordinates -- the single place
+ * "which save is active" is resolved over the unified cache+server view. A pinned
+ * [activeSaveTimestamp] wins; else the [activeChannel] (autosave-normalized to the latest bucket via
+ * [SaveSyncApiClient.namedChannelOrNull], so a literal "autosave" coordinate is never looked up as a
+ * named channel); else the most-recent non-archival entry. Null when there is no save at all, or
+ * when a named [activeChannel] holds none.
+ */
+fun resolveActiveEntry(
+    entries: List<UnifiedSaveEntry>,
+    activeChannel: String?,
+    activeSaveTimestamp: Long?
+): UnifiedSaveEntry? {
+    if (entries.isEmpty()) return null
+    if (activeSaveTimestamp != null) {
+        entries.firstOrNull { it.timestamp.toEpochMilli() == activeSaveTimestamp }?.let { return it }
+    }
+    val candidates = entries.filterNot { it.isArchival || it.isRollback }.ifEmpty { entries }
+    val namedChannel = SaveSyncApiClient.namedChannelOrNull(activeChannel)
+    if (namedChannel != null) {
+        return candidates
+            .filter { it.channelName != null && equalsNormalized(it.channelName, namedChannel) }
+            .maxByOrNull { it.timestamp }
+    }
+    candidates.firstOrNull { it.isLatest }?.let { return it }
+    candidates.filter { it.channelName == null }.maxByOrNull { it.timestamp }?.let { return it }
+    return candidates.maxByOrNull { it.timestamp }
+}

@@ -1,0 +1,1546 @@
+package com.nendo.argosy.ui.screens.settings
+
+import androidx.lifecycle.viewModelScope
+import com.nendo.argosy.data.local.entity.getDisplayName
+import com.nendo.argosy.ui.input.InputDispatcher.Companion.computeWrappedIndex
+import com.nendo.argosy.data.steam.SteamConnectionState
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.ui.input.UiShortcut
+import com.nendo.argosy.core.input.SoundType
+import com.nendo.argosy.core.emulator.LibretroSettingDef
+import com.nendo.argosy.libretro.frame.FrameRegistry
+import com.nendo.argosy.ui.screens.settings.sections.AboutItem
+import com.nendo.argosy.ui.screens.settings.sections.PresentationItem
+import com.nendo.argosy.ui.screens.settings.sections.presentationItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.presentationMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.AmbientLedItem
+import com.nendo.argosy.ui.screens.settings.sections.ambientLedItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.ambientLedMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.BiosItem
+import com.nendo.argosy.ui.components.toggleHomeLayoutField
+import com.nendo.argosy.ui.screens.settings.sections.BuiltinEmulatorItem
+import com.nendo.argosy.ui.screens.settings.sections.PlatformDetailItem
+import com.nendo.argosy.ui.screens.settings.sections.platformDetailItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.platformDetailMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.biosItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.biosMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.BoxArtItem
+import com.nendo.argosy.ui.screens.settings.sections.AudioItem
+import com.nendo.argosy.ui.screens.settings.sections.InstallerItem
+import com.nendo.argosy.ui.screens.settings.sections.NavigationItem
+import com.nendo.argosy.ui.screens.settings.sections.installerItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.installersMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.DisplaysItem
+import com.nendo.argosy.ui.screens.settings.sections.DisplaysLayoutState
+import com.nendo.argosy.ui.screens.settings.sections.ControllerGripItem
+import com.nendo.argosy.ui.screens.settings.sections.HomeScreenItem
+import com.nendo.argosy.ui.screens.settings.sections.InterfaceItem
+import com.nendo.argosy.ui.screens.settings.sections.InterfaceLayoutState
+import com.nendo.argosy.ui.screens.settings.sections.AccountsItem
+import com.nendo.argosy.ui.screens.settings.sections.accountsItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.accountsMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.MainSettingsItem
+import com.nendo.argosy.ui.screens.settings.sections.StorageItem
+import com.nendo.argosy.data.preferences.FontSlot
+import com.nendo.argosy.ui.screens.settings.sections.ThemeBackdropItem
+import com.nendo.argosy.ui.screens.settings.sections.ThemeBackdropLayoutState
+import com.nendo.argosy.ui.screens.settings.sections.ThemeFontsItem
+import com.nendo.argosy.ui.screens.settings.sections.ThemeFontsLayoutState
+import com.nendo.argosy.ui.screens.settings.sections.ThemeItem
+import com.nendo.argosy.ui.screens.settings.sections.ThemeMusicItem
+import com.nendo.argosy.ui.screens.settings.sections.ThemeMusicLayoutState
+import com.nendo.argosy.ui.screens.settings.sections.ThemeSoundsItem
+import com.nendo.argosy.ui.screens.settings.sections.ThemeSoundsLayoutState
+import com.nendo.argosy.ui.screens.settings.sections.themeBackdropItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeBackdropMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeFontsItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeFontsMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeMusicItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeMusicMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeSoundsItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.themeSoundsMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.aboutHasChangelog
+import com.nendo.argosy.ui.screens.settings.sections.aboutItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.boxArtItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.audioItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.audioMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.navigationItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.displaysItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.createStorageLayoutInfo
+import com.nendo.argosy.ui.screens.settings.sections.controllerGripItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.homeScreenItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.interfaceItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.mainSettingsItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.aboutMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.SteamItem
+import com.nendo.argosy.ui.screens.settings.sections.steamItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.steamMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.boxArtMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.builtinControlsMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.builtinVideoMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.builtinSavesMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.navigationMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.displaysMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.screensMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.EmulatorsItem
+import com.nendo.argosy.ui.screens.settings.sections.createEmulatorsLayoutInfo
+import com.nendo.argosy.ui.screens.settings.sections.emulatorsItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.emulatorsMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.controllerGripMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.homeScreenMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.interfaceMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.mainSettingsMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.permissionsMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.permissionsItemAt
+import com.nendo.argosy.ui.screens.settings.sections.confirm
+import com.nendo.argosy.ui.screens.settings.sections.storageItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.StorageGamesItem
+import com.nendo.argosy.ui.screens.settings.sections.createStorageGamesLayoutInfo
+import com.nendo.argosy.ui.screens.settings.sections.storageGamesItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.storageGamesMaxFocusIndex
+import com.nendo.argosy.domain.usecase.storage.GameStorageBucket
+import com.nendo.argosy.ui.screens.settings.sections.StoragePlatformGamesItem
+import com.nendo.argosy.ui.screens.settings.sections.createStoragePlatformGamesLayoutInfo
+import com.nendo.argosy.ui.screens.settings.sections.storagePlatformGamesItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.storagePlatformGamesMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.StorageMediaItem
+import com.nendo.argosy.ui.screens.settings.sections.createStorageMediaLayoutInfo
+import com.nendo.argosy.ui.screens.settings.sections.storageMediaItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.storageMediaMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.PlayTimeItem
+import com.nendo.argosy.ui.screens.settings.sections.createPlayTimeLayoutInfo
+import com.nendo.argosy.ui.screens.settings.sections.createPlayTimeListLayoutInfo
+import com.nendo.argosy.ui.screens.settings.sections.PlayTimeConfirmAction
+import com.nendo.argosy.ui.screens.settings.sections.playTimeConfirmActionOf
+import com.nendo.argosy.ui.screens.settings.sections.playTimeFigureOf
+import com.nendo.argosy.ui.screens.settings.sections.playTimeItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.playTimeListMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.playTimeMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.playTimeScrubIndex
+import com.nendo.argosy.ui.screens.settings.sections.StorageCachesItem
+import com.nendo.argosy.ui.screens.settings.sections.createStorageCachesLayoutInfo
+import com.nendo.argosy.ui.screens.settings.sections.storageCachesItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.storageCachesMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.components.JELLYFIN_CONFIG_CANCEL_INDEX
+import com.nendo.argosy.ui.screens.settings.components.JELLYFIN_CONFIG_SAVE_INDEX
+import com.nendo.argosy.ui.screens.settings.components.JELLYFIN_LOGIN_CANCEL_INDEX
+import com.nendo.argosy.ui.screens.settings.components.JELLYFIN_LOGIN_SUBMIT_INDEX
+import com.nendo.argosy.ui.screens.settings.components.rommConfigIndices
+import com.nendo.argosy.ui.screens.settings.components.rommConfigMaxIndex
+import com.nendo.argosy.ui.screens.settings.sections.JellyfinItem
+import com.nendo.argosy.ui.screens.settings.sections.JellyfinLayoutState
+import com.nendo.argosy.ui.screens.settings.sections.jellyfinItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.jellyfinMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.RomMItem
+import com.nendo.argosy.ui.screens.settings.sections.SavesItem
+import com.nendo.argosy.ui.screens.settings.sections.SavesLayoutState
+import com.nendo.argosy.ui.screens.settings.sections.SyncSettingsItem
+import com.nendo.argosy.ui.screens.settings.sections.coreManagementMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.buildRomMItemsFromState
+import com.nendo.argosy.ui.screens.settings.sections.rommItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.rommMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.savesItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.savesMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.syncSettingsItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.syncSettingsMaxFocusIndex
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import com.nendo.argosy.ui.screens.settings.sections.libraryMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.libraryItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.LibraryItem
+import com.nendo.argosy.ui.screens.settings.sections.LibraryLayoutState
+
+private fun nextRommAuthMethod(current: RomMAuthMethod): RomMAuthMethod = when (current) {
+    RomMAuthMethod.DEVICE -> RomMAuthMethod.PAIRING_CODE
+    RomMAuthMethod.PAIRING_CODE -> RomMAuthMethod.DEVICE
+}
+
+internal fun routeConfirm(vm: SettingsViewModel): InputResult {
+    val state = vm._uiState.value
+    return when (state.currentSection) {
+        SettingsSection.MAIN -> {
+            val item = mainSettingsItemAtFocusIndex(state.focusedIndex, state.controls)
+            when (item) {
+                is MainSettingsItem.Header -> Unit
+                MainSettingsItem.ManagedInstallers ->
+                    vm.navigateToSection(SettingsSection.MANAGED_INSTALLERS)
+                MainSettingsItem.DeviceSettings -> vm.viewModelScope.launch { vm._openDeviceSettingsEvent.emit(Unit) }
+                MainSettingsItem.RomM -> vm.navigateToSection(SettingsSection.ROMM)
+                MainSettingsItem.Saves -> vm.navigateToSection(SettingsSection.SAVES)
+                MainSettingsItem.RetroAchievements -> vm.navigateToSection(SettingsSection.RETRO_ACHIEVEMENTS)
+                MainSettingsItem.Storage -> vm.navigateToSection(SettingsSection.STORAGE)
+                MainSettingsItem.PlayTime -> vm.navigateToSection(SettingsSection.PLAY_TIME)
+                MainSettingsItem.Theme -> vm.navigateToSection(SettingsSection.THEME)
+                MainSettingsItem.Interface -> vm.navigateToSection(SettingsSection.INTERFACE)
+                MainSettingsItem.Navigation -> vm.navigateToSection(SettingsSection.NAVIGATION)
+                MainSettingsItem.Audio -> vm.navigateToSection(SettingsSection.AUDIO)
+                MainSettingsItem.Displays -> vm.navigateToSection(SettingsSection.DISPLAYS)
+                MainSettingsItem.Platforms -> vm.navigateToSection(SettingsSection.PLATFORMS)
+                MainSettingsItem.BuiltinEmulator -> vm.navigateToSection(SettingsSection.BUILTIN_EMULATOR)
+                MainSettingsItem.Bios -> vm.navigateToSection(SettingsSection.BIOS)
+                MainSettingsItem.Drivers -> vm.navigateToSection(SettingsSection.DRIVERS)
+                MainSettingsItem.Permissions -> vm.navigateToSection(SettingsSection.PERMISSIONS)
+                MainSettingsItem.About -> vm.navigateToSection(SettingsSection.ABOUT)
+                MainSettingsItem.Social -> vm.navigateToSection(SettingsSection.SOCIAL)
+                MainSettingsItem.Steam -> vm.navigateToSection(SettingsSection.STEAM_SETTINGS)
+                MainSettingsItem.Jellyfin -> vm.navigateToSection(SettingsSection.JELLYFIN)
+                null -> {}
+            }
+            InputResult.HANDLED
+        }
+        SettingsSection.ACCOUNTS -> routeAccountsConfirm(vm, state)
+        SettingsSection.ROMM -> routeRomMConfirm(vm, state)
+        SettingsSection.SAVES -> routeSavesConfirm(vm, state)
+        SettingsSection.STEAM_SETTINGS -> routeSteamConfirm(vm, state)
+        SettingsSection.JELLYFIN -> routeJellyfinConfirm(vm, state)
+        SettingsSection.RETRO_ACHIEVEMENTS -> {
+            val ra = state.retroAchievements
+            if (ra.showLoginForm) {
+                when (state.focusedIndex) {
+                    0, 1 -> vm.raDelegate.setFocusField(state.focusedIndex)
+                    2 -> vm.loginToRA()
+                    3 -> vm.hideRALoginForm()
+                }
+            } else {
+                if (ra.isLoggedIn) {
+                    val pushIndex = raLoggedInPushIndex(ra.proxyEnabled)
+                    when (state.focusedIndex) {
+                        RA_LOGGED_IN_LOGOUT_INDEX -> vm.logoutFromRA()
+                        RA_LOGGED_IN_WEB_API_KEY_INDEX -> {
+                            vm.openRAWebApiKeyEditor()
+                            return InputResult.handled(SoundType.OPEN_MODAL)
+                        }
+                        RA_LOGGED_IN_PLAY_MODE_INDEX -> {
+                            if (!state.syncSettings.secureSaves) return InputResult.HANDLED
+                            vm.cycleRADefaultMode(1)
+                            return InputResult.handled(SoundType.SELECT)
+                        }
+                        RA_LOGGED_IN_PROXY_TOGGLE_INDEX -> vm.setRAProxyEnabled(!ra.proxyEnabled)
+                        pushIndex -> if (ra.canPushToRetroArch) vm.pushRACredentialsToRetroArch()
+                        RA_LOGGED_IN_PROXY_FIELD_INDEX -> if (ra.proxyEnabled) vm.raDelegate.setFocusField(RA_LOGGED_IN_PROXY_FIELD_INDEX)
+                    }
+                } else {
+                    when (state.focusedIndex) {
+                        0 -> vm.showRALoginForm()
+                        1 -> vm.setRAProxyEnabled(!ra.proxyEnabled)
+                        2 -> if (ra.proxyEnabled) vm.raDelegate.setFocusField(2)
+                    }
+                }
+            }
+            InputResult.HANDLED
+        }
+        SettingsSection.SYNC_SETTINGS -> {
+            when (syncSettingsItemAtFocusIndex(state.focusedIndex)) {
+                SyncSettingsItem.PlatformFilters -> vm.showPlatformFiltersModal()
+                SyncSettingsItem.MetadataFilters -> vm.showSyncFiltersModal()
+                SyncSettingsItem.RegionPriority -> vm.showRegionPriority()
+                SyncSettingsItem.CacheScreenshots -> { vm.toggleSyncScreenshots(); return InputResult.handled(SoundType.TOGGLE) }
+                SyncSettingsItem.CacheBoxArt -> { vm.toggleBoxArtCache(); return InputResult.handled(SoundType.TOGGLE) }
+                SyncSettingsItem.UploadScreenshots -> {
+                    if (!state.server.screenshotUploadSupported) return InputResult.HANDLED
+                    vm.toggleUploadScreenshots()
+                    return InputResult.handled(SoundType.TOGGLE)
+                }
+                SyncSettingsItem.ImageCacheLocation -> {
+                    if (!state.syncSettings.isImageCacheMigrating) {
+                        if (state.syncSettings.imageCacheActionIndex == 0) {
+                            vm.openImageCachePicker()
+                        } else {
+                            vm.resetImageCacheToDefault()
+                        }
+                    }
+                }
+                is SyncSettingsItem.CategoryDefault -> {
+                    val item = syncSettingsItemAtFocusIndex(state.focusedIndex) as SyncSettingsItem.CategoryDefault
+                    val current = state.syncSettings.downloadDefaults[item.categoryKey]
+                        ?: (com.nendo.argosy.data.preferences.DownloadDefaults.FACTORY[item.categoryKey] ?: false)
+                    vm.setDownloadCategoryDefault(item.categoryKey, !current)
+                    return InputResult.handled(SoundType.TOGGLE)
+                }
+                SyncSettingsItem.MediaHeader, SyncSettingsItem.ImageCacheProgressIndicator,
+                SyncSettingsItem.DownloadDefaultsHeader, null -> {}
+            }
+            InputResult.HANDLED
+        }
+        SettingsSection.STORAGE -> routeStorageConfirm(vm, state)
+        SettingsSection.STORAGE_GAMES -> routeStorageGamesConfirm(vm, state)
+        SettingsSection.STORAGE_MEDIA -> routeStorageMediaConfirm(vm, state)
+        SettingsSection.STORAGE_PLATFORM_GAMES -> routeStoragePlatformGamesConfirm(vm, state)
+        SettingsSection.STORAGE_CACHES -> routeStorageCachesConfirm(vm, state)
+        SettingsSection.PLAY_TIME -> routePlayTimeConfirm(vm, state)
+        SettingsSection.PLAY_TIME_PLATFORMS,
+        SettingsSection.PLAY_TIME_DEVICES,
+        SettingsSection.PLAY_TIME_GAMES -> InputResult.HANDLED
+        SettingsSection.THEME -> routeThemeConfirm(vm, state)
+        SettingsSection.AUDIO -> routeAudioConfirm(vm, state)
+        SettingsSection.THEME_SOUNDS -> routeThemeSoundsConfirm(vm, state)
+        SettingsSection.THEME_MUSIC -> routeThemeMusicConfirm(vm, state)
+        SettingsSection.THEME_FONTS -> routeThemeFontsConfirm(vm, state)
+        SettingsSection.THEME_BACKDROP -> routeThemeBackdropConfirm(vm, state)
+        SettingsSection.INTERFACE -> routeInterfaceConfirm(vm, state)
+        SettingsSection.CONTROLLER_GRIP -> routeControllerGripConfirm(vm, state)
+        SettingsSection.HOME_SCREEN -> routeHomeScreenConfirm(vm, state)
+        SettingsSection.PRESENTATION -> routePresentationConfirm(vm, state)
+        SettingsSection.LIBRARY_VIEW -> routeLibraryViewConfirm(vm, state)
+        SettingsSection.BOX_ART -> routeBoxArtConfirm(vm, state)
+        SettingsSection.DISPLAYS -> routeDisplaysConfirm(vm, state)
+        SettingsSection.AMBIENT_LED -> routeAmbientLedConfirm(vm, state)
+        SettingsSection.SCREENS -> {
+            vm.openScreenRoleModal()
+            InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        SettingsSection.LAUNCH_TARGETS -> if (vm.openLaunchTargetPicker()) {
+            InputResult.handled(SoundType.OPEN_MODAL)
+        } else {
+            InputResult.handled(SoundType.SILENT)
+        }
+        SettingsSection.NAVIGATION -> routeNavigationConfirm(vm, state)
+        SettingsSection.PLATFORMS -> routeEmulatorsConfirm(vm, state)
+        SettingsSection.BUILTIN_EMULATOR -> routeBuiltinEmulatorConfirm(vm, state)
+        SettingsSection.PLATFORM_DETAIL -> routePlatformDetailConfirm(vm, state)
+        SettingsSection.BIOS -> routeBiosConfirm(vm, state)
+        SettingsSection.PERMISSIONS -> routePermissionsConfirm(vm, state)
+        SettingsSection.DRIVERS -> InputResult.HANDLED
+        SettingsSection.ABOUT -> routeAboutConfirm(vm, state)
+        SettingsSection.BUILTIN_VIDEO -> InputResult.HANDLED
+        SettingsSection.BUILTIN_CONTROLS -> InputResult.HANDLED
+        SettingsSection.BUILTIN_SAVES -> InputResult.HANDLED
+        SettingsSection.SHADER_STACK -> InputResult.HANDLED
+        SettingsSection.FRAME_PICKER -> routeFramePickerConfirm(vm, state)
+        SettingsSection.CORE_MANAGEMENT -> {
+            vm.confirmCoreManagement()
+            InputResult.HANDLED
+        }
+        SettingsSection.CORE_OPTIONS -> InputResult.HANDLED
+        SettingsSection.SOCIAL -> vm.handleSocialConfirm(state)
+        SettingsSection.MANAGED_INSTALLERS -> routeInstallersConfirm(vm, state)
+    }
+}
+
+private fun routeInstallersConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val installers = state.managedInstallers
+    if (installers.busyId != null) return InputResult.HANDLED
+
+    return when (val item = installerItemAtFocusIndex(state.focusedIndex, installers)) {
+        InstallerItem.AddRepo -> {
+            vm.openInstallerAddModal()
+            InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        is InstallerItem.Entry -> {
+            vm.installManagedInstaller(item.row.id)
+            InputResult.handled(SoundType.SELECT)
+        }
+        is InstallerItem.ImeEnable -> {
+            vm.openInstallerImeSettings()
+            InputResult.handled(SoundType.SELECT)
+        }
+        is InstallerItem.ImeSelect -> {
+            vm.showInstallerImePicker()
+            InputResult.handled(SoundType.SELECT)
+        }
+        is InstallerItem.Remove -> {
+            vm.requestInstallerRemove(item.row.id)
+            InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        null -> InputResult.HANDLED
+    }
+}
+
+/**
+ * Accounts owns its confirm routing rather than reusing the server section's, whose pairing
+ * branch gates the whole section on `rommDevicePairing` and cancels the single stored connection.
+ */
+private fun routeAccountsConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val accounts = state.accounts
+    if (accounts.pairing.active) {
+        if (accounts.pairing.error != null) {
+            vm.retryAddAccountPairing()
+        } else {
+            vm.cancelAddAccount()
+        }
+        return InputResult.HANDLED
+    }
+    if (accounts.switchInProgress) return InputResult.HANDLED
+
+    when (val item = accountsItemAtFocusIndex(state.focusedIndex, accounts)) {
+        is AccountsItem.Account -> {
+            val account = item.account
+            when (accounts.selectedActionFor(account)) {
+                AccountRowAction.SWITCH -> vm.requestAccountSwitch(account.id)
+                AccountRowAction.REMOVE -> if (accounts.canRemove(account)) {
+                    vm.requestAccountRemoval(account.id)
+                }
+                null -> {}
+            }
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        AccountsItem.AddAccount -> {
+            vm.startAddAccount()
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeRomMConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val isOnline = state.server.connectionStatus == ConnectionStatus.ONLINE
+    if (state.server.rommConfiguring) {
+        if (state.server.rommDevicePairing) {
+            vm.cancelRommConfig()
+            return InputResult.HANDLED
+        }
+        val indices = rommConfigIndices(state.server)
+        indices.addressRowAt(state.focusedIndex)?.let { row ->
+            vm.openRommAddressMenu(row)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        when (state.focusedIndex) {
+            indices.authMethodIndex -> {
+                vm.requestEnumPicker(ROMM_AUTH_METHOD_PICKER_KEY)
+                return InputResult.handled(SoundType.OPEN_MODAL)
+            }
+            indices.addAddressIndex -> {
+                vm.addRommAddress()
+                return InputResult.handled(SoundType.OPEN_MODAL)
+            }
+            indices.connectIndex -> vm.connectToRomm()
+            indices.scanIndex -> vm.showRommScanner()
+            indices.certificateIndex -> vm.requestCertificatePicker()
+            indices.cancelIndex -> vm.cancelRommConfig()
+            else -> vm._uiState.update { it.copy(server = it.server.copy(rommFocusField = state.focusedIndex)) }
+        }
+        return InputResult.HANDLED
+    }
+
+    val items = buildRomMItemsFromState(state)
+    when (rommItemAtFocusIndex(state.focusedIndex, items)) {
+        RomMItem.RomManager -> vm.startRommConfig()
+        RomMItem.RomMSignOut -> vm.requestRommSignOut()
+        RomMItem.Accounts -> vm.navigateToSection(SettingsSection.ACCOUNTS)
+        RomMItem.SyncSettings -> vm.navigateToSection(SettingsSection.SYNC_SETTINGS)
+        RomMItem.SyncLibrary -> if (isOnline) vm.syncRomm()
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeJellyfinConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    if (state.jellyfin.configuring) {
+        when (state.focusedIndex) {
+            JELLYFIN_CONFIG_SAVE_INDEX -> vm.commitJellyfinConfig()
+            JELLYFIN_CONFIG_CANCEL_INDEX -> vm.cancelJellyfinConfig()
+            else -> vm.setJellyfinConfigFocusField(state.focusedIndex)
+        }
+        return InputResult.HANDLED
+    }
+
+    if (state.jellyfin.showLoginForm) {
+        when (state.focusedIndex) {
+            JELLYFIN_LOGIN_SUBMIT_INDEX -> vm.submitJellyfinPasswordSignIn()
+            JELLYFIN_LOGIN_CANCEL_INDEX -> vm.hideJellyfinLoginForm()
+            else -> vm.setJellyfinLoginFocusField(state.focusedIndex)
+        }
+        return InputResult.HANDLED
+    }
+
+    val layoutState = JellyfinLayoutState.from(state)
+    val item = jellyfinItemAtFocusIndex(state.focusedIndex, layoutState) ?: return InputResult.HANDLED
+    when (item) {
+        JellyfinItem.MediaServer -> vm.startJellyfinConfig()
+        JellyfinItem.Account -> when {
+            state.jellyfin.isSignedIn -> {
+                vm.requestJellyfinSignOut()
+                return InputResult.handled(SoundType.OPEN_MODAL)
+            }
+            state.jellyfin.quickConnectRequested -> vm.cancelJellyfinSignIn()
+            else -> vm.requestJellyfinSignIn()
+        }
+        JellyfinItem.PasswordSignIn -> vm.showJellyfinLoginForm()
+        JellyfinItem.SyncLibrary -> if (state.jellyfin.isSignedIn) vm.syncJellyfinLibrary()
+        JellyfinItem.StreamingQuality -> return InputResult.handled(SoundType.SILENT)
+        JellyfinItem.AudioLanguage, JellyfinItem.Subtitles,
+        JellyfinItem.SubtitleLanguage, JellyfinItem.DownloadQuality -> {
+            vm.requestEnumPicker(item.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        JellyfinItem.BurnInSubtitles -> {
+            vm.setJellyfinBurnInImageSubtitles(!state.jellyfin.burnInImageSubtitles)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        JellyfinItem.ConfirmPlayerExit -> {
+            vm.setJellyfinConfirmPlayerExit(!state.jellyfin.confirmPlayerExit)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        JellyfinItem.SharePresence -> {
+            vm.setJellyfinSharePresence(!state.jellyfin.sharePresence)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        JellyfinItem.MediaLocation -> vm.openMediaLocationPicker()
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeSavesConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    when (savesItemAtFocusIndex(state.focusedIndex, SavesLayoutState.from(state))) {
+        SavesItem.SaveSync -> {
+            vm.toggleSaveSync()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        SavesItem.SecureSaves -> {
+            vm.toggleSecureSaves()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        SavesItem.SaveCacheLimit -> {
+            vm.requestEnumPicker(SavesItem.SaveCacheLimit.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        SavesItem.ManageSaveSync -> vm.navigateToSaveSyncScreen()
+        SavesItem.SaveCaches -> vm.navigateToStorageCaches()
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeSteamConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    when (val item = steamItemAtFocusIndex(state.focusedIndex, state.steam)) {
+        SteamItem.PreLogin -> routeSteamPreLoginConfirm(vm, state)
+        SteamItem.GnInstall -> {}
+        SteamItem.SyncLibrary -> vm.syncSteamLibrary()
+        SteamItem.AddManual -> vm.showAddSteamGameDialog()
+        SteamItem.GameNativeLibrary -> {
+            if (state.steam.gameNativeActionIndex == 0) {
+                vm.openGameNativeFoldersModal()
+                return InputResult.handled(SoundType.OPEN_MODAL)
+            }
+            if (!state.steam.isGameNativeScanning) vm.rescanGameNativeStores()
+        }
+        SteamItem.Disconnect -> vm.disconnectSteam()
+        SteamItem.ResetLibrary -> vm.resetSteamLibrary()
+        is SteamItem.InstalledLauncher -> {
+            if (state.steam.hasStoragePermission && !state.steam.isSyncing) {
+                vm.confirmLauncherAction()
+            }
+        }
+        SteamItem.RefreshMetadata -> if (!state.steam.isSyncing) vm.refreshSteamMetadata()
+        is SteamItem.NotInstalledLauncher -> {
+            if (state.steam.downloadingLauncherId == null) {
+                vm.installSteamLauncher(item.data.emulatorId)
+            }
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+/**
+ * A GameNative install is handled by the card's own click. A visible QR means A cancels it,
+ * and any idle state (disconnected, connected after a cancel, or errored) starts a fresh
+ * connect plus QR auth rather than resuming a flow that is no longer running.
+ */
+private fun routeSteamPreLoginConfirm(vm: SettingsViewModel, state: SettingsUiState) {
+    val steam = state.steam
+    when {
+        !steam.gnInstalled -> {}
+        steam.qrUrl != null -> vm.cancelSteamQrAuth()
+        !steam.authPolling && steam.connectionState != SteamConnectionState.CONNECTING -> {
+            vm.connectToSteam()
+            vm.startSteamQrAuth()
+        }
+    }
+}
+
+private fun routeStorageConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val info = createStorageLayoutInfo(state)
+    when (storageItemAtFocusIndex(state.focusedIndex, info)) {
+        StorageItem.RecomputeRow -> if (!state.attribution.isRefreshing) vm.refreshStorageAttribution()
+        StorageItem.GamesTile -> vm.navigateToStorageGames()
+        StorageItem.MediaTile -> vm.navigateToStorageMedia()
+        StorageItem.MusicTile -> vm.navigateToThemeMusic()
+        StorageItem.CachesTile -> vm.navigateToStorageCaches()
+        StorageItem.SteamTile -> vm.navigateToSection(SettingsSection.STEAM_SETTINGS)
+        StorageItem.GlobalRomPath -> vm.openFolderPicker()
+        StorageItem.ImageCache -> if (!state.syncSettings.isImageCacheMigrating) vm.openImageCachePicker()
+        StorageItem.MusicLocation -> vm.openMusicLocationPicker()
+        StorageItem.BiosFolder -> if (!state.bios.isBiosMigrating) vm.openBiosFolderPicker()
+        StorageItem.BuiltinSavePath -> vm.openBuiltinSavePathBrowser()
+        StorageItem.BuiltinStatePath -> vm.openBuiltinStatePathBrowser()
+        StorageItem.MaxDownloads -> vm.cycleMaxConcurrentDownloads()
+        StorageItem.RemoteInstalls -> {
+            vm.toggleAllowRemoteInstalls()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        StorageItem.AutoStartDownloads -> {
+            vm.toggleAutoStartDownloads()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        StorageItem.Threshold -> {
+            vm.requestEnumPicker(StorageItem.Threshold.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        StorageItem.InternalStaging -> {
+            vm.toggleStageDownloadsInternally()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        StorageItem.FolderNameFromRom -> {
+            vm.toggleFolderNameFromRom()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        StorageItem.ResetLibrary -> vm.requestPurgeAll()
+        StorageItem.HardReset -> {
+            if (!state.storage.isHardResetting && !state.storage.isPurgingAll) vm.requestHardReset()
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routePlayTimeConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val isOnline = state.server.connectionStatus == ConnectionStatus.ONLINE
+    val playTime = state.playTime
+    val focused = playTimeItemAtFocusIndex(state.focusedIndex, createPlayTimeLayoutInfo(state))
+    val action = playTimeConfirmActionOf(focused) ?: return InputResult.handled(SoundType.SILENT)
+    if (action == PlayTimeConfirmAction.INSPECT) {
+        val figure = playTimeFigureOf(focused) ?: return InputResult.handled(SoundType.SILENT)
+        vm.setPlayTimeEngagedFigure(figure.takeIf { it != playTime.engagedFigure })
+        return InputResult.handled(SoundType.TOGGLE)
+    }
+    when (focused) {
+        PlayTimeItem.PlatformsTile -> vm.navigateToPlayTimePlatforms()
+        PlayTimeItem.DevicesTile -> vm.navigateToPlayTimeDevices()
+        PlayTimeItem.MosaicCard, PlayTimeItem.GamesTile -> vm.navigateToPlayTimeGames()
+        PlayTimeItem.LastMonthRecap -> {
+            vm.openLastMonthRecap()
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        PlayTimeItem.UploadNow -> {
+            if (!isOnline || playTime.isUploading) return InputResult.handled(SoundType.SILENT)
+            vm.uploadPlaySessionsNow()
+        }
+        PlayTimeItem.RefreshFromRomm -> {
+            if (!isOnline || playTime.isPulling) return InputResult.handled(SoundType.SILENT)
+            vm.refreshPlaySessionsFromRomm()
+        }
+        else -> return InputResult.handled(SoundType.SILENT)
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeStorageGamesConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val info = createStorageGamesLayoutInfo(state)
+    when (val item = storageGamesItemAtFocusIndex(state.focusedIndex, info)) {
+        StorageGamesItem.IntegrityToggle -> {
+            vm.toggleWeeklyIntegrityCheck(!state.storage.weeklyIntegrityCheckEnabled)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        is StorageGamesItem.PlatformRow -> vm.openStoragePlatformGames(item.usage.platformId)
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeStorageMediaConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val info = createStorageMediaLayoutInfo(state)
+    when (storageMediaItemAtFocusIndex(state.focusedIndex, info)) {
+        StorageMediaItem.RecomputeRow -> if (!state.attribution.isRefreshing) vm.refreshStorageAttribution()
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeStoragePlatformGamesConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val info = createStoragePlatformGamesLayoutInfo(state)
+    val item = storagePlatformGamesItemAtFocusIndex(state.focusedIndex, info)
+    if (item !is StoragePlatformGamesItem.GameCard) return InputResult.HANDLED
+    val game = state.storagePlatformGames.games.firstOrNull { it.gameId == item.gameId }
+    val buckets = game?.buckets ?: return InputResult.HANDLED
+    if (buckets.isEmpty()) return InputResult.HANDLED
+    val index = state.storagePlatformGames.highlightedCategoryIndex.coerceIn(0, buckets.size - 1)
+    if (buckets[index].bucket == GameStorageBucket.BASE) {
+        vm.requestStoragePlatformGameDelete(item.gameId)
+    } else {
+        vm.requestStoragePlatformCategoryDelete(item.gameId, buckets[index].bucket)
+    }
+    return InputResult.handled(SoundType.OPEN_MODAL)
+}
+
+private fun routeStorageCachesConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val isOnline = state.server.connectionStatus == ConnectionStatus.ONLINE
+    val syncSettings = state.syncSettings
+    val pendingUploads = syncSettings.pendingUploadsCount
+    val item = storageCachesItemAtFocusIndex(state.focusedIndex, createStorageCachesLayoutInfo(state))
+    when (item) {
+        StorageCachesItem.PendingUploads -> if (isOnline && !syncSettings.isSyncing) vm.requestSyncSaves()
+        StorageCachesItem.SaveCacheClear -> {
+            val totalCached = syncSettings.saveCacheCount + syncSettings.stateCacheCount
+            if (!syncSettings.isResettingSaveCache && totalCached > 0) vm.requestResetSaveCache()
+        }
+        StorageCachesItem.StateCacheClear -> {
+            if (!syncSettings.isClearingStateCache && syncSettings.stateCacheCount > 0) vm.requestClearStateCache()
+        }
+        StorageCachesItem.PathCacheClear -> {
+            if (!syncSettings.isClearingPathCache && syncSettings.pathCacheCount > 0 && pendingUploads == 0) {
+                vm.requestClearPathCache()
+            }
+        }
+        StorageCachesItem.StateCacheToggle -> {
+            vm.toggleStateCache()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        StorageCachesItem.SaveCacheLimit -> {
+            vm.requestEnumPicker(StorageCachesItem.SaveCacheLimit.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        StorageCachesItem.ImageCacheClear -> {
+            if (!syncSettings.isImageCacheMigrating && !state.storage.isValidatingCache) {
+                vm.requestCachesClear(CachesClearTarget.IMAGE_CACHE)
+            }
+        }
+        StorageCachesItem.ValidateImageCache -> if (!state.storage.isValidatingCache) vm.validateImageCache()
+        StorageCachesItem.ScreenshotsToggle -> {
+            vm.toggleSyncScreenshots()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        StorageCachesItem.BoxArtToggle -> {
+            vm.toggleBoxArtCache()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        StorageCachesItem.RomExtractionClear -> vm.requestCachesClear(CachesClearTarget.ROM_EXTRACTION)
+        StorageCachesItem.RomStagingClear -> vm.requestCachesClear(CachesClearTarget.ROM_STAGING)
+        StorageCachesItem.SfxCacheClear -> vm.requestCachesClear(CachesClearTarget.SFX_CACHE)
+        StorageCachesItem.EmulatorApksClear -> vm.requestCachesClear(CachesClearTarget.EMULATOR_APKS)
+        StorageCachesItem.MiscDownloadsClear -> vm.requestCachesClear(CachesClearTarget.MISC_DOWNLOADS)
+        StorageCachesItem.ShadersCatalogClear -> vm.requestCachesClear(CachesClearTarget.SHADERS_CATALOG)
+        StorageCachesItem.FramesClear -> vm.requestCachesClear(CachesClearTarget.FRAMES)
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeInterfaceConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val layoutState = InterfaceLayoutState.from(state)
+    when (interfaceItemAtFocusIndex(state.focusedIndex, layoutState)) {
+        InterfaceItem.Language -> {
+            vm.requestEnumPicker(InterfaceItem.Language.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        InterfaceItem.CompactFooter -> vm.setCompactFooter(!state.display.compactFooter)
+        InterfaceItem.HideSystemNavigationBar ->
+            vm.setHideSystemNavigationBar(!state.display.hideSystemNavigationBar)
+        InterfaceItem.HideSystemStatusBar -> vm.setHideSystemStatusBar(!state.display.hideSystemStatusBar)
+        InterfaceItem.QuickPanelInEmulators -> vm.setQuickPanelInEmulators(!state.display.quickPanelInEmulators)
+        InterfaceItem.LockScreenArt -> vm.setLockScreenArt(!state.display.lockScreenArt)
+        InterfaceItem.HomeApp -> vm.setHomeAppAvailable(!state.display.homeAppAvailable)
+        InterfaceItem.StatusClock -> vm.setShowStatusClock(!state.display.showStatusClock)
+        InterfaceItem.StatusBattery -> vm.setShowStatusBattery(!state.display.showStatusBattery)
+        InterfaceItem.StatusNetwork -> vm.setShowStatusNetwork(!state.display.showStatusNetwork)
+        InterfaceItem.PreLaunchRecaps -> vm.setPreLaunchRecaps(!state.display.preLaunchRecaps)
+        InterfaceItem.MonthlyRecap -> vm.setMonthlyRecap(!state.display.monthlyRecap)
+        InterfaceItem.ControllerGrip -> vm.navigateToControllerGrip()
+        InterfaceItem.HomeScreen -> vm.navigateToHomeScreen()
+        InterfaceItem.LibraryView -> vm.navigateToLibraryView()
+        InterfaceItem.BoxArt -> vm.navigateToBoxArt()
+        InterfaceItem.Presentation -> vm.navigateToPresentation()
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeDisplaysConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val layoutState = DisplaysLayoutState.from(state)
+    when (displaysItemAtFocusIndex(state.focusedIndex, layoutState)) {
+        DisplaysItem.ScreenDimmer -> vm.toggleScreenDimmer()
+        DisplaysItem.DimAfter -> {
+            vm.requestEnumPicker(DisplaysItem.DimAfter.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        DisplaysItem.DimLevel -> vm.cycleScreenDimmerLevel()
+        DisplaysItem.LidSleep -> vm.setLidSleepEnabled(!state.display.lidSleepEnabled)
+        DisplaysItem.DualScreenEnabled -> vm.setDualScreenEnabled(!state.display.dualScreenEnabled)
+        DisplaysItem.DualScreenMatchSize -> vm.setDualScreenMatchSize(!state.display.dualScreenMatchSize)
+        DisplaysItem.DisplayRoles -> {
+            vm.requestEnumPicker(DisplaysItem.DisplayRoles.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        DisplaysItem.ScreenLayout -> vm.navigateToScreens()
+        DisplaysItem.AmbientLedSettings -> vm.navigateToAmbientLed()
+        DisplaysItem.GamesTarget -> {
+            vm.requestEnumPicker(DisplaysItem.GamesTarget.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        DisplaysItem.AppsTarget -> {
+            vm.requestEnumPicker(DisplaysItem.AppsTarget.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        DisplaysItem.ByPlatformAndApp -> vm.navigateToLaunchTargets()
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routePresentationConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val style = state.display.presentationStyle
+    return when (val item = presentationItemAtFocusIndex(state.focusedIndex, style)) {
+        PresentationItem.Layout, PresentationItem.Scrim, PresentationItem.Art,
+        PresentationItem.BackgroundBlur -> InputResult.handled(SoundType.SILENT)
+        is PresentationItem.Stat -> {
+            vm.setPresentationStyle(style.withStat(item.stat, !style.shows(item.stat)))
+            InputResult.handled(SoundType.TOGGLE)
+        }
+        else -> InputResult.HANDLED
+    }
+}
+
+private fun routeAudioConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    when (audioItemAtFocusIndex(state.focusedIndex)) {
+        AudioItem.Sounds -> vm.navigateToThemeSounds()
+        AudioItem.Music -> vm.navigateToThemeMusic()
+        null -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeThemeConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    when (themeItemAtFocusIndex(state.focusedIndex)) {
+        ThemeItem.Mode -> return InputResult.handled(SoundType.SILENT)
+        ThemeItem.TintBleed -> vm.cycleSurfaceTintBleed()
+        ThemeItem.AccentFooter -> vm.setUseAccentColorFooter(!state.display.useAccentColorFooter)
+        ThemeItem.CocoonJingles -> {
+            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        ThemeItem.CocoonPersonal -> {
+            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        ThemeItem.CocoonThemes -> {
+            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value = true
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        ThemeItem.Backdrop -> vm.navigateToThemeBackdrop()
+        ThemeItem.Fonts -> vm.navigateToThemeFonts()
+        ThemeItem.IconPack -> {
+            if (state.display.iconPacks.isEmpty()) return InputResult.handled(SoundType.SILENT)
+            vm.requestEnumPicker(ThemeItem.IconPack.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeThemeMusicConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val layoutState = ThemeMusicLayoutState.from(state)
+    when (themeMusicItemAtFocusIndex(state.focusedIndex, layoutState)) {
+        ThemeMusicItem.BgmToggle -> {
+            val newEnabled = !state.ambientAudio.enabled
+            vm.setAmbientAudioEnabled(newEnabled)
+            return InputResult.toggled(newEnabled, if (newEnabled) SoundType.TOGGLE else SoundType.SILENT)
+        }
+        ThemeMusicItem.BgmVolume -> vm.cycleAmbientAudioVolume()
+        ThemeMusicItem.BgmPlaylist -> vm.openBgmPlaylistManager()
+        ThemeMusicItem.BrowseServerMusic -> vm.openMusicBrowserBgm()
+        ThemeMusicItem.BrowseLocalMusic -> vm.openBgmAddMusicBrowser()
+        ThemeMusicItem.MusicLocation -> vm.openMusicLocationPicker()
+        ThemeMusicItem.BgmShuffle -> {
+            val shuffle = !state.ambientAudio.shuffle
+            vm.setAmbientAudioShuffle(shuffle)
+            return InputResult.toggled(shuffle)
+        }
+        ThemeMusicItem.GameThemeToggle -> {
+            val enabled = !state.ambientAudio.gameDetailThemeEnabled
+            vm.setGameDetailThemeEnabled(enabled)
+            return InputResult.toggled(enabled)
+        }
+        is ThemeMusicItem.Header, is ThemeMusicItem.SectionSpacer, null -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeThemeSoundsConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val layoutState = ThemeSoundsLayoutState.from(state)
+    when (val item = themeSoundsItemAtFocusIndex(state.focusedIndex, layoutState)) {
+        ThemeSoundsItem.UiSoundsToggle -> {
+            val newEnabled = !state.sounds.enabled
+            vm.setSoundEnabled(newEnabled)
+            if (newEnabled) {
+                vm.soundManager.setEnabled(true)
+                vm.soundManager.playSound(SoundType.TOGGLE)
+            }
+            return InputResult.toggled(newEnabled, SoundType.SILENT)
+        }
+        ThemeSoundsItem.UiSoundsVolume -> vm.cycleSoundVolume()
+        is ThemeSoundsItem.SoundTypeItem -> vm.showSoundPicker(item.soundType)
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeThemeFontsConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val layoutState = ThemeFontsLayoutState.from(state)
+    when (themeFontsItemAtFocusIndex(state.focusedIndex, layoutState)) {
+        ThemeFontsItem.DisplaySlot -> {
+            vm.openFontPicker(FontSlot.DISPLAY)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        ThemeFontsItem.DisplayScale -> vm.cycleFontScale(FontSlot.DISPLAY)
+        ThemeFontsItem.DisplayRevert -> vm.revertFont(FontSlot.DISPLAY)
+        ThemeFontsItem.BodySlot -> {
+            vm.openFontPicker(FontSlot.BODY)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        ThemeFontsItem.BodyScale -> vm.cycleFontScale(FontSlot.BODY)
+        ThemeFontsItem.BodyRevert -> vm.revertFont(FontSlot.BODY)
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeThemeBackdropConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val layoutState = ThemeBackdropLayoutState.from(state)
+    when (themeBackdropItemAtFocusIndex(state.focusedIndex, layoutState)) {
+        ThemeBackdropItem.Enabled -> {
+            vm.setBackdropEnabled(!state.display.surfaceBackdrop.enabled)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        ThemeBackdropItem.Preset -> {
+            vm.requestEnumPicker(ThemeBackdropItem.Preset.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        ThemeBackdropItem.EdgeLines -> {
+            vm.requestEnumPicker(ThemeBackdropItem.EdgeLines.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        ThemeBackdropItem.CornerIcons, ThemeBackdropItem.Motion -> return InputResult.handled(SoundType.SILENT)
+        ThemeBackdropItem.Direction -> {
+            vm.requestEnumPicker(ThemeBackdropItem.Direction.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        ThemeBackdropItem.Density -> vm.cycleBackdropCellSize()
+        ThemeBackdropItem.Scatter -> vm.cycleBackdropScatter()
+        ThemeBackdropItem.ScaleJitter -> vm.cycleBackdropScaleJitter()
+        ThemeBackdropItem.Strength -> vm.cycleBackdropStrength()
+        ThemeBackdropItem.Speed -> vm.cycleBackdropMotionSpeed()
+        ThemeBackdropItem.Reshuffle -> vm.reshuffleBackdropSeed()
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeControllerGripConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    return when (controllerGripItemAtFocusIndex(state.focusedIndex, state.display)) {
+        ControllerGripItem.Mode -> InputResult.handled(SoundType.SILENT)
+        ControllerGripItem.Controllers -> {
+            vm.showGripControllerModal()
+            InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        else -> InputResult.HANDLED
+    }
+}
+
+private fun routeHomeScreenConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    when (val focused = homeScreenItemAtFocusIndex(state.focusedIndex, state.display)) {
+        HomeScreenItem.Background -> return InputResult.handled(SoundType.SILENT)
+        HomeScreenItem.GameArtwork -> {
+            vm.setUseGameBackground(!state.display.useGameBackground)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        HomeScreenItem.CustomImage -> vm.openBackgroundPicker()
+        HomeScreenItem.Blur -> vm.cycleBackgroundBlur()
+        HomeScreenItem.Saturation -> vm.cycleBackgroundSaturation()
+        HomeScreenItem.Opacity -> vm.cycleBackgroundOpacity()
+        HomeScreenItem.VideoWallpaper -> {
+            vm.setVideoWallpaperEnabled(!state.display.videoWallpaperEnabled)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        HomeScreenItem.VideoDelay -> {
+            vm.requestEnumPicker(HomeScreenItem.VideoDelay.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        HomeScreenItem.VideoMuted -> {
+            vm.setVideoWallpaperMuted(!state.display.videoWallpaperMuted)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        HomeScreenItem.InstalledOnly -> {
+            vm.setInstalledOnlyHome(!state.display.installedOnlyHome)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        HomeScreenItem.LayoutSelector, HomeScreenItem.BoxArt -> return InputResult.handled(SoundType.SILENT)
+        is HomeScreenItem.LayoutField -> {
+            val updated = toggleHomeLayoutField(state.display.homeLayout, focused.field)
+            if (updated == state.display.homeLayout) return InputResult.handled(SoundType.SILENT)
+            vm.setHomeLayout(updated)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeBoxArtConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val item = boxArtItemAtFocusIndex(state.focusedIndex, state.display)
+    when (item) {
+        BoxArtItem.Shape, BoxArtItem.BorderThickness, BoxArtItem.BorderStyle, BoxArtItem.GradientPresetItem,
+        BoxArtItem.IndicatorStyle, BoxArtItem.IndicatorContent, BoxArtItem.IconPad, BoxArtItem.OuterEffect,
+        BoxArtItem.OuterThickness, BoxArtItem.GlowColor, BoxArtItem.InnerThickness ->
+            return InputResult.handled(SoundType.SILENT)
+        BoxArtItem.CornerRadius, BoxArtItem.GlassTint, BoxArtItem.IconPos, BoxArtItem.GlowIntensity,
+        BoxArtItem.InnerEffect, BoxArtItem.SampleGrid, BoxArtItem.SampleRadius, BoxArtItem.MinSaturation,
+        BoxArtItem.MinBrightness, BoxArtItem.HueDistance, BoxArtItem.SaturationBoost,
+        BoxArtItem.BrightnessClamp -> {
+            vm.requestEnumPicker(item.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        BoxArtItem.GradientAdvanced -> {
+            vm.toggleGradientAdvancedMode()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeAmbientLedConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    when (ambientLedItemAtFocusIndex(state.focusedIndex, state.display)) {
+        AmbientLedItem.Enable -> vm.setAmbientLedEnabled(!state.display.ambientLedEnabled)
+        AmbientLedItem.CustomColor -> vm.setAmbientLedCustomColor(!state.display.ambientLedCustomColor)
+        AmbientLedItem.AchievementFlash -> vm.setAmbientLedAchievementFlash(!state.display.ambientLedAchievementFlash)
+        AmbientLedItem.CoverArtColors -> vm.setAmbientLedCoverArtEnabled(!state.display.ambientLedCoverArtEnabled)
+        AmbientLedItem.TransitionSpeed -> {
+            vm.requestEnumPicker(AmbientLedItem.TransitionSpeed.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        AmbientLedItem.AudioBrightness -> vm.setAmbientLedAudioBrightness(!state.display.ambientLedAudioBrightness)
+        AmbientLedItem.AudioColors -> vm.setAmbientLedAudioColors(!state.display.ambientLedAudioColors)
+        AmbientLedItem.ScreenColors -> {
+            if (!state.display.ambientLedScreenEnabled && !state.display.hasScreenCapturePermission) {
+                vm.requestScreenCapturePermission()
+            }
+            vm.setAmbientLedScreenEnabled(!state.display.ambientLedScreenEnabled)
+        }
+        AmbientLedItem.ScreenColorMode -> {
+            vm.requestEnumPicker(AmbientLedItem.ScreenColorMode.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeNavigationConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    when (navigationItemAtFocusIndex(state.focusedIndex, state.controls)) {
+        NavigationItem.HapticFeedback -> {
+            val newEnabled = !state.controls.hapticEnabled
+            vm.setHapticEnabled(newEnabled)
+            return InputResult.toggled(newEnabled, if (newEnabled) SoundType.TOGGLE else SoundType.SILENT)
+        }
+        NavigationItem.VibrationStrength -> vm.cycleVibrationStrength()
+        NavigationItem.ControllerLayout, NavigationItem.SelectLCombo, NavigationItem.SelectRCombo,
+        NavigationItem.MenuWrap, NavigationItem.SelectSwap -> return InputResult.handled(SoundType.SILENT)
+        NavigationItem.SwapAB -> {
+            val swapped = !state.controls.swapAB
+            vm.setSwapAB(swapped)
+            return InputResult.toggled(swapped)
+        }
+        NavigationItem.SwapXY -> {
+            val swapped = !state.controls.swapXY
+            vm.setSwapXY(swapped)
+            return InputResult.toggled(swapped)
+        }
+        NavigationItem.SwapStartSelect -> {
+            val swapped = !state.controls.swapStartSelect
+            vm.setSwapStartSelect(swapped)
+            return InputResult.toggled(swapped)
+        }
+        NavigationItem.IgnoreControllerTouchpad -> {
+            val enabled = !state.controls.ignoreControllerTouchpad
+            vm.setIgnoreControllerTouchpad(enabled)
+            return InputResult.toggled(enabled)
+        }
+        NavigationItem.QuickNavigation -> {
+            val enabled = !state.controls.quickNavigation
+            vm.setQuickNavigation(enabled)
+            return InputResult.toggled(enabled)
+        }
+        NavigationItem.NavBarAutoHide -> {
+            val autoHide = !state.controls.navBarAutoHide
+            vm.setNavBarAutoHide(autoHide)
+            return InputResult.toggled(autoHide)
+        }
+        NavigationItem.NavBarPages -> {
+            vm.showNavRingModal()
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        NavigationItem.OpenNavigationShortcut -> {
+            vm.startShortcutCapture(UiShortcut.OPEN_NAVIGATION)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        NavigationItem.OpenQuickPanelShortcut -> {
+            vm.startShortcutCapture(UiShortcut.OPEN_QUICK_PANEL)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeLibraryViewConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val layoutState = LibraryLayoutState.from(state)
+    val item = libraryItemAtFocusIndex(state.focusedIndex, layoutState) ?: return InputResult.HANDLED
+    return when (item) {
+        LibraryItem.InstalledFirst -> {
+            vm.setSortInstalledFirst(!state.display.sortInstalledFirst)
+            InputResult.handled(SoundType.TOGGLE)
+        }
+        LibraryItem.FavoritesFirst -> {
+            vm.setSortFavoritesFirst(!state.display.sortFavoritesFirst)
+            InputResult.handled(SoundType.TOGGLE)
+        }
+        LibraryItem.LayoutItem, LibraryItem.ListStyleItem, LibraryItem.GridDensityItem,
+        LibraryItem.BoxArtItem, LibraryItem.DefaultSource ->
+            InputResult.handled(SoundType.SILENT)
+        else -> {
+            vm.requestEnumPicker(item.key)
+            InputResult.handled(SoundType.OPEN_MODAL)
+        }
+    }
+}
+
+private fun routeEmulatorsConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val info = createEmulatorsLayoutInfo(state.emulators.platforms)
+    when (val item = emulatorsItemAtFocusIndex(state.focusedIndex, info)) {
+        EmulatorsItem.CloseOnSessionEnd -> {
+            vm.setCloseEmulatorOnSessionEnd(!state.emulators.closeEmulatorOnSessionEnd)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        EmulatorsItem.CheckForUpdates -> vm.forceCheckEmulatorUpdates()
+        is EmulatorsItem.PlatformItem -> vm.navigateToPlatformDetail(item.index)
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeBiosConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val bios = state.bios
+    when (val item = biosItemAtFocusIndex(state.focusedIndex, bios.platformGroups, bios.expandedPlatformIndex)) {
+        BiosItem.Summary -> {
+            val actionIndex = bios.actionIndex
+            if (actionIndex == 0) {
+                vm.downloadAllBios()
+            } else if (actionIndex == 1 && bios.downloadedFiles > 0) {
+                vm.distributeAllBios()
+            }
+        }
+        BiosItem.BiosPath -> {
+            if (!bios.isBiosMigrating) {
+                if (bios.biosPathActionIndex == 0) {
+                    vm.openBiosFolderPicker()
+                } else {
+                    vm.resetBiosToDefault()
+                }
+            }
+        }
+        is BiosItem.Platform -> {
+            val group = item.group
+            if (bios.platformSubFocusIndex == 1) {
+                vm.downloadBiosForPlatform(group.platformSlug)
+            } else {
+                vm.toggleBiosPlatformExpanded(item.index)
+            }
+        }
+        is BiosItem.FirmwareFile -> {
+            if (!item.firmware.isDownloaded) {
+                vm.downloadSingleBios(item.firmware.rommId)
+            }
+        }
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routePermissionsConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    permissionsItemAt(state.focusedIndex, state.permissions)?.confirm(vm)
+    return InputResult.HANDLED
+}
+
+private fun routeAboutConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val hasLogPath = state.fileLoggingPath != null
+    val hasChangelog = aboutHasChangelog(state.updateCheck)
+    when (aboutItemAtFocusIndex(state.focusedIndex, hasLogPath, hasChangelog)) {
+        AboutItem.CheckUpdates -> {
+            if (state.aboutUpdateActionIndex == 1) {
+                vm.openChangelog()
+            } else if (state.updateCheck.updateAvailable) {
+                vm.viewModelScope.launch { vm._downloadUpdateEvent.emit(Unit) }
+            } else {
+                vm.checkForUpdates()
+            }
+        }
+        AboutItem.ChangelogPreview -> vm.openChangelog()
+        AboutItem.BetaUpdates -> {
+            vm.setBetaUpdatesEnabled(!state.betaUpdatesEnabled)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        AboutItem.FileLogging -> {
+            if (hasLogPath) {
+                vm.toggleFileLogging(!state.fileLoggingEnabled)
+            } else {
+                vm.openLogFolderPicker()
+            }
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        AboutItem.LogLevel -> return InputResult.handled(SoundType.SILENT)
+        AboutItem.SaveDebugLogging -> {
+            vm.setSaveDebugLoggingEnabled(!state.saveDebugLoggingEnabled)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        AboutItem.ExportSettings -> vm.exportSettings()
+        AboutItem.ImportSettings -> {
+            vm.requestImportSettings()
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        AboutItem.SystemizeHelper -> vm.applyRootScript(com.nendo.argosy.data.model.RootScript.SYSTEMIZE)
+        AboutItem.RestartApp -> vm.restartApp()
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeFramePickerConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val registry = vm.getFrameRegistry()
+    val allFrames = registry.getAllFrames()
+    val installedIds = registry.getInstalledIds()
+    when (state.focusedIndex) {
+        0 -> vm.updatePlatformLibretroSetting(LibretroSettingDef.Frame, null)
+        1 -> vm.updatePlatformLibretroSetting(LibretroSettingDef.Frame, FrameRegistry.NO_FRAME_ID)
+        allFrames.size + 2 -> vm.requestCustomFramePicker()
+        else -> {
+            val frameIndex = state.focusedIndex - 2
+            if (frameIndex in allFrames.indices) {
+                val frame = allFrames[frameIndex]
+                if (frame.id in installedIds) {
+                    vm.updatePlatformLibretroSetting(LibretroSettingDef.Frame, frame.id)
+                } else {
+                    vm.downloadAndSelectFrame(frame.id)
+                }
+            }
+        }
+    }
+    return InputResult.HANDLED
+}
+
+/**
+ * Back for the whole settings tree: overlays first, then the section stack. Returning false
+ * means nothing here consumed it and the caller should leave settings.
+ */
+internal fun routeNavigateBack(vm: SettingsViewModel): Boolean {
+    if (routeDismissTopOverlay(vm)) return true
+    return routePopSection(vm)
+}
+
+/**
+ * Modals, pickers and in-place prompts drawn over a section. These consume Back ahead of the
+ * section itself, matching the order [ModalInputRouter] already applies to the modals it owns.
+ */
+private fun routeDismissTopOverlay(vm: SettingsViewModel): Boolean {
+    val state = vm._uiState.value
+    return when {
+        state.playTime.engagedFigure != null -> { vm.setPlayTimeEngagedFigure(null); true }
+        state.changelog.visible -> { vm.closeChangelog(); true }
+        state.rootScriptDialog != null -> { vm.dismissRootScriptDialog(); true }
+        state.storagePlatformGames.deleteConfirm != null -> { vm.dismissStoragePlatformGameDelete(); true }
+        state.storagePlatformGames.categoryDeleteConfirm != null -> { vm.dismissStoragePlatformCategoryDelete(); true }
+        state.playTime.deleteConfirm != null -> { vm.dismissPlayTimeGameDelete(); true }
+        state.emulators.showSavePathModal -> { vm.dismissSavePathModal(); true }
+        state.emulators.showMemcardPicker -> { vm.dismissMemcardPicker(); true }
+        state.storage.platformSettingsModalId != null -> { vm.closePlatformSettingsModal(); true }
+        state.steam.showAddGameDialog -> { vm.dismissAddSteamGameDialog(); true }
+        state.sounds.showSoundPicker -> { vm.dismissSoundPicker(); true }
+        state.syncSettings.showRegionPriority -> { vm.backRegionPriority(); true }
+        state.syncSettings.showRegionPicker -> { vm.dismissRegionPicker(); true }
+        state.syncSettings.showPlatformFiltersModal -> { vm.dismissPlatformFiltersModal(); true }
+        state.syncSettings.showSyncFiltersModal -> { vm.dismissSyncFiltersModal(); true }
+        state.syncSettings.showForceSyncConfirm -> { vm.cancelSyncSaves(); true }
+        state.emulators.showEmulatorPicker -> { vm.dismissEmulatorPicker(); true }
+        state.bios.showDistributeResultModal -> { vm.dismissDistributeResultModal(); true }
+        state.bios.showDownloadFailureModal -> { vm.dismissDownloadFailureModal(); true }
+        state.builtinControls.showControllerOrderModal -> { vm.hideControllerOrderModal(); true }
+        state.builtinControls.showInputMappingModal -> { vm.hideInputMappingModal(); true }
+        state.builtinControls.showHotkeysModal -> { vm.hideHotkeysModal(); true }
+        state.controls.shortcutCaptureTarget != null -> { vm.cancelShortcutCapture(); true }
+        state.controls.showNavRingModal -> { vm.backNavRing(); true }
+        vm.shaderChainManager.shaderStack.isReordering -> { vm.cancelShaderLift(); true }
+        state.accounts.pairing.active -> { vm.cancelAddAccount(); true }
+        state.accounts.switchInProgress -> true
+        state.server.rommAddressVerifyPrompt != null -> { vm.cancelUnverifiedRommAddress(); true }
+        state.server.rommAddressEditor != null -> { vm.closeRommAddressEditor(); true }
+        state.server.rommAddressMenu != null -> { vm.closeRommAddressMenu(); true }
+        state.server.rommConfiguring -> { vm.cancelRommConfig(); true }
+        state.jellyfin.configuring -> { vm.cancelJellyfinConfig(); true }
+        state.jellyfin.showLoginForm -> { vm.hideJellyfinLoginForm(); true }
+        state.retroAchievements.webApiKeyEditor != null -> { vm.closeRAWebApiKeyEditor(); true }
+        state.retroAchievements.showLoginForm -> { vm.hideRALoginForm(); true }
+        state.currentSection == SettingsSection.PLATFORM_DETAIL && state.platformDetail.showRemoveConfirm -> {
+            vm._uiState.update { it.copy(platformDetail = it.platformDetail.copy(showRemoveConfirm = false)) }; true
+        }
+        state.currentSection == SettingsSection.PLATFORM_DETAIL && state.platformDetail.combineRestoreCount > 0 -> {
+            vm.dismissCombineRestore(); true
+        }
+        else -> false
+    }
+}
+
+internal fun routeMoveFocus(vm: SettingsViewModel, delta: Int): Boolean {
+    if (vm._uiState.value.controls.showNavRingModal) {
+        vm.moveNavRingFocus(delta); return true
+    }
+    if (vm._uiState.value.emulators.showSavePathModal) {
+        vm.emulatorDelegate.moveSavePathModalFocus(delta); return true
+    }
+    if (vm._uiState.value.emulators.showMemcardPicker) {
+        vm.emulatorDelegate.moveMemcardPickerFocus(delta); return true
+    }
+    if (vm._uiState.value.storage.platformSettingsModalId != null) {
+        vm.storageDelegate.movePlatformSettingsFocus(delta); return true
+    }
+    if (vm._uiState.value.sounds.showSoundPicker) {
+        vm.soundsDelegate.moveSoundPickerFocus(delta); return true
+    }
+    if (vm._uiState.value.syncSettings.showRegionPriority) {
+        vm.syncDelegate.moveRegionPriorityFocus(delta); return true
+    }
+    if (vm._uiState.value.syncSettings.showRegionPicker) {
+        vm.syncDelegate.moveRegionPickerFocus(delta); return true
+    }
+    if (vm._uiState.value.emulators.showEmulatorPicker) {
+        vm.emulatorDelegate.moveEmulatorPickerFocus(delta); return true
+    }
+    if (vm._uiState.value.currentSection == SettingsSection.CORE_MANAGEMENT) {
+        vm.moveCoreManagementPlatformFocus(delta); return true
+    }
+    var moved = false
+    vm._uiState.update { state ->
+        val isConnected = state.server.connectionStatus == ConnectionStatus.ONLINE ||
+            state.server.connectionStatus == ConnectionStatus.OFFLINE
+        val maxIndex = computeMaxFocusIndex(vm, state, isConnected)
+        val newIndex = computeWrappedIndex(state.focusedIndex, delta, maxIndex, state.controls.menuWrapMode)
+        moved = newIndex != state.focusedIndex
+        state.copy(focusedIndex = newIndex)
+    }
+    routeResetRowSubFocus(vm)
+    return moved
+}
+
+internal fun routeTouchFocus(vm: SettingsViewModel, index: Int) {
+    val before = vm._uiState.value.focusedIndex
+    vm._uiState.update { it.touchFocused(index, routeMaxFocusIndexOf(vm, it)) }
+    if (vm._uiState.value.focusedIndex != before) routeResetRowSubFocus(vm)
+}
+
+private fun routeResetRowSubFocus(vm: SettingsViewModel) {
+    when (vm._uiState.value.currentSection) {
+        SettingsSection.PLATFORMS -> vm.emulatorDelegate.resetPlatformSubFocus()
+        SettingsSection.BIOS -> {
+            vm.biosDelegate.resetPlatformSubFocus()
+            vm.biosDelegate.resetBiosPathActionFocus()
+        }
+        SettingsSection.ACCOUNTS -> vm.accountsDelegate.resetRowActionFocus()
+        else -> Unit
+    }
+}
+
+/**
+ * Highest focusable row of the section [state] is currently on. Used both to clamp movement
+ * and to keep a focus index restored by Back inside a parent whose rows changed while a
+ * child was open.
+ */
+internal fun routeMaxFocusIndexOf(vm: SettingsViewModel, state: SettingsUiState): Int =
+    computeMaxFocusIndex(vm, state, isConnected = false)
+
+private fun computeMaxFocusIndex(
+    vm: SettingsViewModel,
+    state: SettingsUiState,
+    isConnected: Boolean
+): Int = when (state.currentSection) {
+    SettingsSection.MAIN -> mainSettingsMaxFocusIndex(state.controls)
+    SettingsSection.ACCOUNTS -> if (state.accounts.pairing.active || state.accounts.switchInProgress) {
+        0
+    } else {
+        accountsMaxFocusIndex(state.accounts)
+    }
+    SettingsSection.ROMM -> if (state.server.rommConfiguring) {
+        rommConfigMaxIndex(state.server)
+    } else {
+        rommMaxFocusIndex(buildRomMItemsFromState(state))
+    }
+    SettingsSection.SAVES -> savesMaxFocusIndex(SavesLayoutState.from(state))
+    SettingsSection.SYNC_SETTINGS -> syncSettingsMaxFocusIndex()
+    SettingsSection.STEAM_SETTINGS -> steamMaxFocusIndex(state.steam)
+    SettingsSection.JELLYFIN -> when {
+        state.jellyfin.configuring -> JELLYFIN_CONFIG_CANCEL_INDEX
+        state.jellyfin.showLoginForm -> JELLYFIN_LOGIN_CANCEL_INDEX
+        else -> jellyfinMaxFocusIndex(JellyfinLayoutState.from(state))
+    }
+    SettingsSection.RETRO_ACHIEVEMENTS -> when {
+        state.retroAchievements.showLoginForm -> 3
+        state.retroAchievements.isLoggedIn -> raLoggedInMaxFocusIndex(
+            proxyEnabled = state.retroAchievements.proxyEnabled,
+            canPushToRetroArch = state.retroAchievements.canPushToRetroArch
+        )
+        state.retroAchievements.proxyEnabled -> RA_PROXY_FIELD_INDEX
+        else -> RA_PROXY_TOGGLE_INDEX
+    }
+    SettingsSection.STORAGE -> createStorageLayoutInfo(state).let { it.layout.maxFocusIndex(it.state) }
+    SettingsSection.STORAGE_GAMES -> storageGamesMaxFocusIndex(createStorageGamesLayoutInfo(state))
+    SettingsSection.STORAGE_MEDIA -> storageMediaMaxFocusIndex(createStorageMediaLayoutInfo(state))
+    SettingsSection.STORAGE_PLATFORM_GAMES -> storagePlatformGamesMaxFocusIndex(createStoragePlatformGamesLayoutInfo(state))
+    SettingsSection.STORAGE_CACHES -> storageCachesMaxFocusIndex(createStorageCachesLayoutInfo(state))
+    SettingsSection.PLAY_TIME -> playTimeMaxFocusIndex(createPlayTimeLayoutInfo(state))
+    SettingsSection.PLAY_TIME_PLATFORMS -> playTimeListMaxFocusIndex(createPlayTimeListLayoutInfo(state, PlayTimeListKind.PLATFORMS))
+    SettingsSection.PLAY_TIME_DEVICES -> playTimeListMaxFocusIndex(createPlayTimeListLayoutInfo(state, PlayTimeListKind.DEVICES))
+    SettingsSection.PLAY_TIME_GAMES -> playTimeListMaxFocusIndex(createPlayTimeListLayoutInfo(state, PlayTimeListKind.GAMES))
+    SettingsSection.THEME -> themeMaxFocusIndex()
+    SettingsSection.AUDIO -> audioMaxFocusIndex()
+    SettingsSection.THEME_SOUNDS -> themeSoundsMaxFocusIndex(ThemeSoundsLayoutState.from(state))
+    SettingsSection.THEME_MUSIC -> themeMusicMaxFocusIndex(ThemeMusicLayoutState.from(state))
+    SettingsSection.THEME_FONTS -> themeFontsMaxFocusIndex(ThemeFontsLayoutState.from(state))
+    SettingsSection.THEME_BACKDROP -> themeBackdropMaxFocusIndex(ThemeBackdropLayoutState.from(state))
+    SettingsSection.INTERFACE -> interfaceMaxFocusIndex(InterfaceLayoutState.from(state))
+    SettingsSection.CONTROLLER_GRIP -> controllerGripMaxFocusIndex(state.display)
+    SettingsSection.HOME_SCREEN -> homeScreenMaxFocusIndex(state.display)
+    SettingsSection.PRESENTATION -> presentationMaxFocusIndex(state.display.presentationStyle)
+    SettingsSection.LIBRARY_VIEW -> libraryMaxFocusIndex(LibraryLayoutState.from(state))
+    SettingsSection.BOX_ART -> boxArtMaxFocusIndex(state.display)
+    SettingsSection.DISPLAYS -> displaysMaxFocusIndex(DisplaysLayoutState.from(state))
+    SettingsSection.AMBIENT_LED -> ambientLedMaxFocusIndex(state.display)
+    SettingsSection.SCREENS -> screensMaxFocusIndex(state.display.screens)
+    SettingsSection.LAUNCH_TARGETS -> launchTargetsLayout(state.launchTargets).maxFocusIndex
+    SettingsSection.NAVIGATION -> navigationMaxFocusIndex(state.controls)
+    SettingsSection.MANAGED_INSTALLERS -> installersMaxFocusIndex(state.managedInstallers)
+    SettingsSection.PLATFORMS -> emulatorsMaxFocusIndex(state.emulators.platforms)
+    SettingsSection.BUILTIN_EMULATOR -> when {
+        !state.emulators.builtinLibretroEnabled -> BuiltinEmulatorItem.ENABLE.focusIndex
+        state.emulators.hudEnabled -> BuiltinEmulatorItem.HUD_LAST_SAVE.focusIndex
+        else -> BuiltinEmulatorItem.HUD_ENABLED.focusIndex
+    }
+    SettingsSection.PLATFORM_DETAIL -> platformDetailMaxFocusIndex(state)
+    SettingsSection.BUILTIN_VIDEO -> builtinVideoMaxFocusIndex(state.builtinVideo, state.platformLibretro.platformSettings)
+    SettingsSection.BUILTIN_CONTROLS -> builtinControlsMaxFocusIndex(state.builtinControls)
+    SettingsSection.BUILTIN_SAVES -> builtinSavesMaxFocusIndex(state.builtinVideo, state.platformLibretro.platformSettings)
+    SettingsSection.CORE_MANAGEMENT -> coreManagementMaxFocusIndex(state.coreManagement)
+    SettingsSection.CORE_OPTIONS -> com.nendo.argosy.ui.screens.settings.sections.coreOptionsMaxFocusIndex(state.coreOptions)
+    SettingsSection.SHADER_STACK -> com.nendo.argosy.ui.screens.settings.sections.shaderStackMaxFocusIndex(vm.shaderChainManager.shaderStack)
+    SettingsSection.FRAME_PICKER -> com.nendo.argosy.ui.screens.settings.sections.framePickerMaxFocusIndex(vm.getFrameRegistry())
+    SettingsSection.BIOS -> biosMaxFocusIndex(state.bios.platformGroups, state.bios.expandedPlatformIndex)
+    SettingsSection.PERMISSIONS -> permissionsMaxFocusIndex(state.permissions)
+    SettingsSection.DRIVERS -> (state.drivers.groups.size - 1).coerceAtLeast(0)
+    SettingsSection.ABOUT -> aboutMaxFocusIndex(state.fileLoggingPath != null, aboutHasChangelog(state.updateCheck))
+    SettingsSection.SOCIAL -> com.nendo.argosy.ui.screens.settings.sections.socialMaxFocusIndex(state.social)
+}
+
+private fun routePlatformDetailConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val config = state.emulators.platforms.getOrNull(state.platformDetail.platformIndex) ?: return InputResult.HANDLED
+    val storageConfig = state.storage.platformConfigs.find { it.platformId == config.platform.id }
+    val syncEnabled = storageConfig?.syncEnabled ?: true
+    val item = platformDetailItemAtFocusIndex(
+        state.focusedIndex, config, state.platformDetail, syncEnabled,
+        storageConfig?.folderMemcardCount ?: -1
+    ) ?: return InputResult.HANDLED
+    when (item) {
+        PlatformDetailItem.Emulator -> {
+            val hasInstallableKnown = config.availableEmulators.isNotEmpty() ||
+                config.downloadableEmulators.isNotEmpty()
+            if (hasInstallableKnown) {
+                vm.showEmulatorPicker(config)
+            } else {
+                vm.openAppPickerModal(config.platform.id)
+            }
+        }
+        PlatformDetailItem.Core -> {
+            vm.requestEnumPicker(PlatformDetailItem.Core.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        PlatformDetailItem.Extension -> {
+            vm.requestEnumPicker(PlatformDetailItem.Extension.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        PlatformDetailItem.DisplayTarget -> {
+            vm.requestEnumPicker(PlatformDetailItem.DisplayTarget.key)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        PlatformDetailItem.DownloadDefaults -> {
+            vm.openPlatformDownloadDefaults(config.platform.slug)
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
+        PlatformDetailItem.LegacyMode -> vm.toggleLegacyMode(config)
+        PlatformDetailItem.LaunchArgs -> vm.openLaunchArgsModal(config.platform.id)
+        PlatformDetailItem.BuiltinVideo -> vm.navigateToBuiltinVideoForPlatform(state.platformDetail.platformIndex)
+        PlatformDetailItem.BuiltinControls -> vm.navigateToBuiltinControlsForPlatform(state.platformDetail.platformIndex)
+        PlatformDetailItem.BuiltinSaves -> vm.navigateToBuiltinSavesForPlatform(state.platformDetail.platformIndex)
+        PlatformDetailItem.BuiltinCoreOptions -> vm.navigateToCoreOptionsForPlatform()
+        PlatformDetailItem.ClearArtCache -> vm.clearPlatformArtCache(config.platform.slug)
+        PlatformDetailItem.ScanFiles -> vm.scanFilesForPlatform(config.platform.id)
+        PlatformDetailItem.ScanApps -> vm.scanInstalledAndroidGames()
+        PlatformDetailItem.RomPath -> vm.openPlatformFolderPicker(config.platform.id)
+        PlatformDetailItem.SavePath -> vm.launchSavePathPicker(config.platform.id)
+        PlatformDetailItem.MemoryCard -> vm.openMemcardPicker(config)
+        PlatformDetailItem.StatePath -> vm.launchStatePathPicker(config.platform.id)
+        PlatformDetailItem.SyncToggle -> {
+            val currentSync = state.storage.platformConfigs
+                .find { it.platformId == config.platform.id }
+                ?.syncEnabled ?: true
+            vm.togglePlatformSync(config.platform.id, !currentSync)
+        }
+        PlatformDetailItem.CombineContent -> {
+            val current = state.storage.platformConfigs
+                .find { it.platformId == config.platform.id }
+                ?.combineContent ?: false
+            vm.togglePlatformCombineContent(config.platform.id, !current)
+        }
+        PlatformDetailItem.SkipFullSync -> {
+            val current = storageConfig?.skipFullSync ?: false
+            vm.togglePlatformSkipFullSync(config.platform.id, !current)
+        }
+        PlatformDetailItem.SyncNow -> vm.syncPlatform(config.platform.id, config.platform.getDisplayName())
+        PlatformDetailItem.RemoveFiles -> vm.requestRemoveLocalFiles()
+        PlatformDetailItem.BiosDownload -> vm.downloadBiosForPlatform(config.platform.slug)
+        PlatformDetailItem.BiosInstall -> vm.distributeAllBios()
+        PlatformDetailItem.BiosCopy -> vm.launchBiosCopyPicker(config.platform.slug)
+        else -> {}
+    }
+    return InputResult.HANDLED
+}
+
+private fun routeBuiltinEmulatorConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
+    val builtinEnabled = state.emulators.builtinLibretroEnabled
+    when (BuiltinEmulatorItem.entries.getOrNull(state.focusedIndex)) {
+        BuiltinEmulatorItem.ENABLE -> vm.setBuiltinLibretroEnabled(!builtinEnabled)
+        BuiltinEmulatorItem.ARCHITECTURE, BuiltinEmulatorItem.HUD_CORNER -> return InputResult.handled(SoundType.SILENT)
+        BuiltinEmulatorItem.VIDEO -> if (builtinEnabled) vm.navigateToBuiltinVideo()
+        BuiltinEmulatorItem.CONTROLS -> if (builtinEnabled) vm.navigateToBuiltinControls()
+        BuiltinEmulatorItem.SAVES -> if (builtinEnabled) vm.navigateToBuiltinSaves()
+        BuiltinEmulatorItem.CORE_MANAGEMENT -> if (builtinEnabled) vm.navigateToCoreManagement()
+        BuiltinEmulatorItem.CORE_OPTIONS -> if (builtinEnabled) vm.navigateToCoreOptions()
+        BuiltinEmulatorItem.TWO_COLUMN ->
+            if (builtinEnabled) vm.setIngameMenuTwoColumn(!state.emulators.ingameMenuTwoColumn)
+        BuiltinEmulatorItem.HUD_ENABLED ->
+            if (builtinEnabled) vm.setHudEnabled(!state.emulators.hudEnabled)
+        BuiltinEmulatorItem.HUD_BATTERY ->
+            if (builtinEnabled) vm.setHudShowBattery(!state.emulators.hudShowBattery)
+        BuiltinEmulatorItem.HUD_CLOCK ->
+            if (builtinEnabled) vm.setHudShowClock(!state.emulators.hudShowClock)
+        BuiltinEmulatorItem.HUD_PLAYTIME ->
+            if (builtinEnabled) vm.setHudShowPlaytime(!state.emulators.hudShowPlaytime)
+        BuiltinEmulatorItem.HUD_FPS ->
+            if (builtinEnabled) vm.setHudShowFps(!state.emulators.hudShowFps)
+        BuiltinEmulatorItem.HUD_LAST_SAVE ->
+            if (builtinEnabled) vm.setHudShowLastSave(!state.emulators.hudShowLastSave)
+        null -> {}
+    }
+    return InputResult.HANDLED
+}
+
+

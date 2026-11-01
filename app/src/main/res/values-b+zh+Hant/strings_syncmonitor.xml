@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="syncmonitor_title">媒體庫同步</string>
+    <string name="syncmonitor_drawer_title">媒體庫同步</string>
+
+    <string name="syncmonitor_progress_starting">正在啟動</string>
+    <string name="syncmonitor_never_synced">從未同步</string>
+    <string name="syncmonitor_last_synced">上次同步 %1$s</string>
+    <string name="syncmonitor_finished_with_failures">%1$d 個平台失敗</string>
+    <string name="syncmonitor_not_connected">未連線到 RomM</string>
+    <string name="syncmonitor_library_summary">%1$d 個平台 · %2$d 個遊戲 · %3$d 個已下載</string>
+
+    <string name="syncmonitor_group_disabled">已停用</string>
+
+    <string name="syncmonitor_row_summary">%1$d 個遊戲 · %2$d 個已下載 · %3$d 個有存檔</string>
+    <string name="syncmonitor_row_excluded">已排除 · %1$d 個遊戲 · %2$d 個已下載</string>
+
+    <string name="syncmonitor_state_queued">排隊中</string>
+    <string name="syncmonitor_state_syncing">%1$d / %2$d</string>
+    <string name="syncmonitor_state_failed">失敗</string>
+
+    <string name="syncmonitor_action_sync">同步</string>
+    <string name="syncmonitor_action_enable">啟用並同步</string>
+
+    <string name="syncmonitor_badge_added">新增 %1$d</string>
+    <string name="syncmonitor_badge_updated">更新 %1$d</string>
+    <string name="syncmonitor_badge_removed">移除 %1$d</string>
+
+    <string name="syncmonitor_empty_idle">同步以從 RomM 取得你的媒體庫</string>
+    <string name="syncmonitor_empty_disconnected">連線到 RomM 以同步你的媒體庫</string>
+
+    <string name="syncmonitor_footer_sync_all">全部同步</string>
+    <string name="syncmonitor_footer_back">返回</string>
+</resources>

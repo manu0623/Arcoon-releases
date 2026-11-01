@@ -1,0 +1,383 @@
+import java.io.File
+import java.util.Properties
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
+}
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        load(keystorePropertiesFile.inputStream())
+    }
+}
+
+val envPropertiesFile = rootProject.file(".env")
+val envProperties = Properties().apply {
+    if (envPropertiesFile.exists()) {
+        load(envPropertiesFile.inputStream())
+    }
+}
+
+fun envString(key: String, default: String = ""): String =
+    envProperties.getProperty(key, System.getenv(key) ?: default)
+
+android {
+    namespace = "com.nendo.argosy"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.nendo.argosy"
+        minSdk = 26
+        targetSdk = 35
+        versionCode = 368
+        versionName = "2.27.3"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary = true
+        }
+
+        ksp {
+            arg("room.schemaLocation", "$projectDir/schemas")
+        }
+
+        buildConfigField("String", "TITLEDB_API_SECRET", "\"${envString("TITLEDB_API_SECRET")}\"")
+        buildConfigField("String", "TITLEDB_API_URL", "\"${envString("TITLEDB_API_URL", "https://api.argosy.dev")}\"")
+        buildConfigField("String", "CHEATSDB_API_SECRET", "\"${envString("CHEATSDB_API_SECRET")}\"")
+        val ucdataPath = envString("UCDATA_PATH").ifEmpty { null }?.let {
+            it.replace(Regex("\\\\u([0-9A-Fa-f]{4})")) { match ->
+                match.groupValues[1].toInt(16).toChar().toString()
+            }
+        } ?: ""
+        buildConfigField("String", "UCDATA_PATH", "\"$ucdataPath\"")
+        buildConfigField("String", "DISCORD_APP_ID", "\"${envString("DISCORD_APP_ID")}\"")
+        buildConfigField("Boolean", "DISCORD_SDK_ENABLED", envString("DISCORD_SDK_ENABLED", "false"))
+        buildConfigField("String", "SOCIAL_API_URL", "\"https://api.argosy.dev/\"")
+        // QuayPass server signing pubkey(s): comma-separated base64 Ed25519
+        // public keys. Multiple values supported for zero-downtime rotation.
+        // Empty in dev/CI when no server keypair has been provisioned;
+        // QuayPassCredentialManager fails closed when empty.
+        buildConfigField(
+            "String",
+            "QUAYPASS_SERVER_PUBKEYS",
+            "\"${envString("QUAYPASS_SERVER_PUBKEYS")}\""
+        )
+        buildConfigField("int", "DOLPHIN_SYS_VERSION", "2")
+        buildConfigField("int", "PPSSPP_SYS_VERSION", "1")
+        buildConfigField("int", "ARMSX2_SYS_VERSION", "2")
+    }
+
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+        }
+        create("customRelease") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
+            applicationIdSuffix = ".release"
+            matchingFallbacks += listOf("release")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+            buildConfigField("String", "SOCIAL_API_URL", "\"https://api.argosy.dev/\"")
+        }
+        debug {
+            applicationIdSuffix = ".debug"
+            isDebuggable = true
+            isPseudoLocalesEnabled = true
+            buildConfigField("String", "SOCIAL_API_URL", "\"https://api.argosy.dev/\"")
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    lint {
+        baseline = file("lint-baseline.xml")
+        error += listOf(
+            "MissingTranslation",
+            "ExtraTranslation",
+            "StringFormatMatches",
+            "StringFormatInvalid",
+            "ImpliedQuantity",
+            "Untranslatable"
+        )
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    splits {
+        abi {
+            isEnable = project.hasProperty("allAbis")
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            isUniversalApk = true
+        }
+    }
+
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
+    sourceSets {
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+// Feed the Compose compiler a stability config for pervasive external types (flows,
+// java.time, ...) and the app's immutable state packages. This short-circuits
+// StabilityInferencer's deep recursion over the UI state graph, which is otherwise the
+// dominant compile hotspot: a cold :app:compileDebugKotlin drops from >42 min to ~12 min.
+// See compose_stability_config.conf for the rationale and safety notes.
+//   -PnoStability     disable the config (to benchmark the compile cost)
+//   -PcomposeMetrics  emit stability metrics/reports under build/compose_metrics
+composeCompiler {
+    if (!project.hasProperty("noStability")) {
+        stabilityConfigurationFiles.add(
+            layout.projectDirectory.file("compose_stability_config.conf")
+        )
+    }
+    featureFlags.add(org.jetbrains.kotlin.compose.compiler.gradle.ComposeFeatureFlag.IntrinsicRemember.disabled())
+    featureFlags.add(org.jetbrains.kotlin.compose.compiler.gradle.ComposeFeatureFlag.OptimizeNonSkippingGroups.disabled())
+    featureFlags.add(org.jetbrains.kotlin.compose.compiler.gradle.ComposeFeatureFlag.PausableComposition.disabled())
+    if (project.hasProperty("composeMetrics")) {
+        val dir = layout.buildDirectory.dir("compose_metrics")
+        metricsDestination.set(dir)
+        reportsDestination.set(dir)
+    }
+}
+
+/**
+ * Version code prefix per ABI. An x86 device cannot run the arm builds, so those sit above the
+ * universal apk rather than below it, and a store offering several picks the native one.
+ */
+val abiCodes = mapOf(
+    "armeabi-v7a" to 1,
+    "arm64-v8a" to 2,
+    "x86" to 4,
+    "x86_64" to 5
+)
+
+android.applicationVariants.all {
+    outputs.all {
+        val output = this as com.android.build.gradle.internal.api.ApkVariantOutputImpl
+        val abi = output.getFilter("ABI")
+        val baseVersionCode = android.defaultConfig.versionCode ?: 0
+        output.versionCodeOverride = if (abi != null) {
+            (abiCodes[abi] ?: 0) * 1_000_000 + baseVersionCode
+        } else {
+            3 * 1_000_000 + baseVersionCode
+        }
+    }
+}
+
+val runIntegrationTests = project.hasProperty("runIntegrationTests")
+
+tasks.withType<Test> {
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
+    maxHeapSize = "2g"
+    if (name == "testDebugUnitTest" || name == "testReleaseUnitTest") {
+        if (!runIntegrationTests) {
+            exclude("**/integration/**")
+        }
+    }
+    listOf(
+        "/opt/homebrew/opt/libsodium/lib",
+        "/opt/homebrew/lib",
+        "/usr/local/opt/libsodium/lib",
+        "/usr/local/lib",
+        "/usr/lib/x86_64-linux-gnu"
+    ).firstOrNull { File(it).isDirectory }?.let { libDir ->
+        systemProperty("jna.library.path", libDir)
+    }
+}
+
+dependencies {
+    // Core
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.bundles.lifecycle)
+    implementation(libs.kotlinx.coroutines.android)
+
+    // Compose
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.bundles.compose)
+    debugImplementation(libs.androidx.ui.tooling)
+    debugImplementation(libs.androidx.ui.test.manifest)
+
+    // Navigation
+    implementation(libs.androidx.navigation.compose)
+
+    // TV Compose
+    implementation(libs.androidx.tv.foundation)
+    implementation(libs.androidx.tv.material)
+
+    // Hilt
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    ksp(libs.kotlin.metadata.jvm)
+    annotationProcessor(libs.kotlin.metadata.jvm)
+    implementation(libs.hilt.navigation.compose)
+
+    // Room
+    implementation(libs.bundles.room)
+    ksp(libs.room.compiler)
+
+    // DataStore
+    implementation(libs.datastore.preferences)
+
+    // Network
+    implementation(libs.bundles.network)
+    ksp(libs.moshi.kotlin)
+    implementation(libs.socketio.client) {
+        exclude(group = "org.json", module = "json")
+    }
+
+    // CBOR (QuayPass BLE wire format)
+    implementation(libs.upokecenter.cbor)
+
+    // Media playback (Jellyfin)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.hls)
+    implementation(libs.media3.ui)
+    implementation(libs.media3.datasource.okhttp)
+
+    // Image loading
+    implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
+    // animated GIF / WebP wallpapers in Cocoon themes
+    implementation("io.coil-kt:coil-gif:2.7.0")
+
+    // QR code generation + scanning
+    implementation("com.google.zxing:core:3.5.4")
+    implementation(libs.bundles.camerax)
+
+    // Discord Social SDK (optional AAR -- place in app/libs/)
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+
+    // Color extraction
+    implementation(libs.androidx.palette)
+
+    // Archive extraction (7z, tar, zstd, etc.)
+    implementation(libs.commons.compress)
+    implementation(libs.xz)
+    implementation(libs.zstd.jni) { artifact { type = "aar" } }
+
+    // Steam (JavaSteam)
+    implementation(libs.bundles.steam)
+
+    // QuayPass credential Ed25519 verification (Conscrypt lacks an Ed25519 KeyFactory)
+    implementation(libs.bouncycastle)
+
+    // argosy-sigil — title id / serial extraction (replaces in-tree :libchdr +
+    // Iso9660Utils + AesXts + ZArchiveReader + GameCubeHeaderParser.parseRomHeader)
+    implementation(project(":sigil"))
+    // Libretro (built-in emulation) - local module for customization
+    implementation(project(":libretrodroid"))
+
+    // WorkManager
+    implementation(libs.work.runtime.ktx)
+    implementation(libs.hilt.work)
+    ksp(libs.hilt.work.compiler)
+
+    // Netplay (Phase 2 wiring) -- XChaCha20-Poly1305 AEAD + UPnP port mapping
+    implementation("com.goterl:lazysodium-android:5.2.0@aar")
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    implementation("org.bitlet:weupnp:0.1.4")
+
+    // Testing
+    testImplementation(libs.junit)
+    // The zstd aar ships Android natives only; unit tests need the JVM jar.
+    testImplementation(libs.zstd.jni)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("net.java.dev.jna:jna:5.14.0")
+    testImplementation("org.json:json:20260814")
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.ui.test.junit4)
+    androidTestImplementation(libs.room.testing)
+}
+
+val verifyQuayPassReleaseConfig = tasks.register("verifyQuayPassReleaseConfig") {
+    doLast {
+        // Arcoon (personal build): QuayPass check-in is simply off without the server keys,
+        // so this is a warning instead of stopping the build.
+        if (envString("QUAYPASS_SERVER_PUBKEYS").isBlank()) {
+            logger.warn("QUAYPASS_SERVER_PUBKEYS is empty: QuayPass check-in is disabled in this build.")
+        }
+    }
+}
+
+val verifyReleaseSigningConfig = tasks.register("verifyReleaseSigningConfig") {
+    doLast {
+        if (!keystorePropertiesFile.exists()) {
+            throw GradleException(
+                "keystore.properties is missing. A release build would fall back to the debug " +
+                    "signing key, and an APK signed with that key cannot install over an " +
+                    "existing release. Restore the file before building a release."
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
+    dependsOn(verifyQuayPassReleaseConfig)
+    dependsOn(verifyReleaseSigningConfig)
+}

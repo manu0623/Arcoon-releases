@@ -1,0 +1,2969 @@
+package com.nendo.argosy.ui.screens.gamedetail
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.nendo.argosy.data.cache.ImageCacheManager
+import com.nendo.argosy.data.download.ZipExtractor
+import com.nendo.argosy.data.emulator.BuiltinCoreResolver
+import com.nendo.argosy.data.emulator.EmulatorDetector
+import com.nendo.argosy.data.emulator.EmulatorRegistry
+import com.nendo.argosy.data.emulator.LaunchConfig
+import com.nendo.argosy.data.emulator.LaunchOrigin
+import com.nendo.argosy.data.emulator.PlaySessionTracker
+import com.nendo.argosy.data.emulator.EmulatorResolver
+import com.nendo.argosy.data.emulator.SavePathRegistry
+import com.nendo.argosy.data.emulator.TitleIdRecheck
+import com.nendo.argosy.data.launcher.SteamLaunchers
+import com.nendo.argosy.data.local.dao.EmulatorConfigDao
+import com.nendo.argosy.data.local.dao.GameDiscDao
+import com.nendo.argosy.data.local.dao.GameFileDao
+import com.nendo.argosy.data.local.entity.GameEntity
+import com.nendo.argosy.data.repository.PlatformRepository
+import com.nendo.argosy.data.model.ArtSlot
+import com.nendo.argosy.data.model.GameSource
+import com.nendo.argosy.data.remote.ra.RAConsoleIds
+import com.nendo.argosy.data.remote.romm.RomMCapabilities
+import com.nendo.argosy.data.remote.romm.RomMCoverArtType
+import com.nendo.argosy.data.remote.romm.RomMRepository
+import com.nendo.argosy.data.remote.romm.RomMResult
+import com.nendo.argosy.data.repository.GameRepository
+import com.nendo.argosy.ui.screens.gamedetail.components.MenuItem
+import com.nendo.argosy.ui.screens.gamedetail.components.MenuLayoutState
+import com.nendo.argosy.ui.screens.gamedetail.components.menuLayout
+import com.nendo.argosy.ui.screens.gamedetail.components.SaveStatusEvent
+import com.nendo.argosy.ui.screens.gamedetail.components.SaveStatusInfo
+import com.nendo.argosy.domain.usecase.cache.RepairImageCacheUseCase
+import com.nendo.argosy.domain.usecase.game.ConfigureEmulatorUseCase
+import com.nendo.argosy.ui.input.InputHandler
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.ui.input.SoundFeedbackManager
+import com.nendo.argosy.core.input.SoundType
+import com.nendo.argosy.ui.navigation.GameNavigationContext
+import com.nendo.argosy.R
+import com.nendo.argosy.core.notification.NotificationManager
+import com.nendo.argosy.core.notification.NotificationText
+import com.nendo.argosy.core.notification.showError
+import com.nendo.argosy.core.notification.showSuccess
+import com.nendo.argosy.ui.common.isAndroidApp
+import com.nendo.argosy.ui.common.labelRes
+import com.nendo.argosy.ui.common.reportTitleIdRecheck
+import com.nendo.argosy.ui.common.isSteamGame
+import com.nendo.argosy.ui.common.toHomeGameUi
+import com.nendo.argosy.util.openStorageAccessSettings
+import com.nendo.argosy.ui.screens.common.CollectionModalDelegate
+import com.nendo.argosy.ui.screens.common.GameActionsDelegate
+import com.nendo.argosy.ui.screens.common.GameLaunchDelegate
+import com.nendo.argosy.core.event.GameUpdateBus
+import com.nendo.argosy.ui.screens.gamedetail.delegates.AchievementDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.ArtworkDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.DownloadDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.MoreOptionsDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.PerGameSettingsDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.PerGameSettingsRow
+import com.nendo.argosy.ui.screens.gamedetail.delegates.PickerModalDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.PickerSelection
+import com.nendo.argosy.ui.screens.gamedetail.delegates.PlayOptionsDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.RatingsStatusDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.SaveManagementDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.ScreenshotDelegate
+import com.nendo.argosy.ui.ModalResetSignal
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+
+
+@HiltViewModel
+class GameDetailViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
+    private val gameDiscDao: GameDiscDao,
+    private val gameFileDao: GameFileDao,
+    private val platformRepository: PlatformRepository,
+    private val emulatorConfigDao: EmulatorConfigDao,
+    private val emulatorDetector: EmulatorDetector,
+    private val emulatorResolver: EmulatorResolver,
+    private val stateSupportResolver: com.nendo.argosy.data.emulator.StateSupportResolver,
+    private val prefetchGameSaveDataUseCase:
+        com.nendo.argosy.domain.usecase.sync.PrefetchGameSaveDataUseCase,
+    private val builtinCoreResolver: BuiltinCoreResolver,
+    private val notificationManager: NotificationManager,
+    private val gameRepository: GameRepository,
+    private val activeSaveRepository: com.nendo.argosy.data.repository.ActiveSaveRepository,
+    private val gameNavigationContext: GameNavigationContext,
+    private val configureEmulatorUseCase: ConfigureEmulatorUseCase,
+    private val romMRepository: RomMRepository,
+    private val soundManager: SoundFeedbackManager,
+    private val gameActions: GameActionsDelegate,
+    private val gameLaunchDelegate: GameLaunchDelegate,
+    private val playSessionTracker: PlaySessionTracker,
+    private val collectionModalDelegate: CollectionModalDelegate,
+    private val imageCacheManager: ImageCacheManager,
+    private val preferencesRepository: com.nendo.argosy.data.preferences.UserPreferencesRepository,
+    private val gameUpdateBus: GameUpdateBus,
+    private val repairImageCacheUseCase: RepairImageCacheUseCase,
+    private val modalResetSignal: ModalResetSignal,
+    private val titleIdDownloadObserver: com.nendo.argosy.data.emulator.TitleIdDownloadObserver,
+    private val gameDocumentLoader: com.nendo.argosy.data.repository.GameDocumentLoader,
+    private val documentHighlightStore: com.nendo.argosy.data.repository.DocumentHighlightStore,
+    val pickerModalDelegate: PickerModalDelegate,
+    private val achievementDelegate: AchievementDelegate,
+    private val downloadDelegate: DownloadDelegate,
+    private val saveManagement: SaveManagementDelegate,
+    private val screenshotDelegate: ScreenshotDelegate,
+    private val ratingsStatus: RatingsStatusDelegate,
+    private val artworkDelegate: ArtworkDelegate,
+    private val playOptionsDelegate: PlayOptionsDelegate,
+    private val moreOptionsDelegate: MoreOptionsDelegate,
+    private val perGameSettingsDelegate: PerGameSettingsDelegate,
+    val speedrunSplitsDelegate: com.nendo.argosy.ui.screens.gamedetail.delegates.SpeedrunSplitsDelegate,
+    private val socialRepository: com.nendo.argosy.data.social.SocialRepository,
+    private val steamLauncherLinkController: com.nendo.argosy.data.steam.SteamLauncherLinkController,
+    private val variantScanner: com.nendo.argosy.data.scanner.VariantScanner,
+    private val variantResolver: com.nendo.argosy.data.emulator.VariantResolver,
+    private val downloadManager: com.nendo.argosy.data.download.DownloadManager,
+    private val downloadFileStatusRepository: com.nendo.argosy.data.repository.DownloadFileStatusRepository,
+    private val getRelatedGamesUseCase: com.nendo.argosy.domain.usecase.game.GetRelatedGamesUseCase,
+    private val gradientExtractionDelegate: com.nendo.argosy.ui.screens.common.GradientExtractionDelegate,
+    private val gameThemeAudio: com.nendo.argosy.ui.audio.GameThemeAudioCoordinator,
+    private val siblingChoice: com.nendo.argosy.ui.screens.common.SiblingChoiceDelegate,
+    private val steamInstallReports: com.nendo.argosy.data.launcher.SteamInstallReports,
+    private val appsRepository: com.nendo.argosy.data.repository.AppsRepository
+) : ViewModel() {
+
+    val siblingChoiceState = siblingChoice.state
+
+    private val companionOwner = com.nendo.argosy.ui.dualscreen.SlotOwner.of("game.detail", this)
+    private var isDescribing = false
+    private var heldForTimeline = false
+
+    private val sessionStateStore by lazy { com.nendo.argosy.data.preferences.SessionStateStore(context) }
+
+    val gameConfirm = com.nendo.argosy.ui.common.GameConfirmController(
+        gameActions::deleteDownloadConfirm, gameActions::hideConfirm, viewModelScope
+    )
+
+    private val _uiState = MutableStateFlow(GameDetailUiState())
+    val uiState: StateFlow<GameDetailUiState> = _uiState.asStateFlow()
+
+    private val _downloadProgress = MutableStateFlow(0f)
+
+    /**
+     * Separate from [uiState] because it advances several times a second while a download runs,
+     * and every field of that state shares one invalidation.
+     */
+    val downloadProgress: StateFlow<Float> = _downloadProgress.asStateFlow()
+
+    private val _launchEvents = MutableSharedFlow<LaunchEvent>()
+    val launchEvents: SharedFlow<LaunchEvent> = _launchEvents.asSharedFlow()
+
+    private var currentGameId: Long = 0
+    private var steamLauncherRefreshVersion = 0L
+    private val documentReaderController =
+        com.nendo.argosy.ui.screens.gamedetail.components.DocumentReaderController(
+            scope = viewModelScope,
+            loader = gameDocumentLoader,
+            romMRepository = romMRepository,
+            highlightStore = documentHighlightStore
+        )
+    val documentReader = documentReaderController.state
+    val documentReaderInput = documentReaderController.inputHandler()
+    private var pendingLaunchOrigin: LaunchOrigin = LaunchOrigin.INTERNAL
+    private var lastActionTime: Long = 0
+    private val actionDebounceMs = 300L
+    private var pageLoadTime: Long = 0
+    private val pageLoadDebounceMs = 500L
+    private val achievementRefetchThresholdMs = 5 * 60 * 1000L
+
+    private var backgroundRepairPending = false
+    private var serverArtCandidates: List<ArtCandidate> = emptyList()
+    private var gameFilesObserverJob: kotlinx.coroutines.Job? = null
+    private var gameEntityObserverJob: kotlinx.coroutines.Job? = null
+    private var activeSaveObserverJob: kotlinx.coroutines.Job? = null
+
+    val saveChannelDelegate get() = saveManagement.saveChannelDelegate
+
+    val snapshotViewActions by lazy {
+        com.nendo.argosy.ui.common.savechannel.snapshot.SnapshotViewActions(
+            saveManagement.saveChannelDelegate.snapshotDelegate,
+            viewModelScope,
+            ::handleSaveStatusChanged,
+            ::openSaveTimeline
+        )
+    }
+
+    private val snapshotInput: InputHandler by lazy {
+        com.nendo.argosy.ui.common.savechannel.snapshot.SnapshotInputHandler(
+            delegate = saveManagement.saveChannelDelegate.snapshotDelegate,
+            saveState = { saveManagement.saveChannelDelegate.state.value },
+            scope = viewModelScope,
+            onSaveStatusChanged = ::handleSaveStatusChanged,
+            onOpenTimeline = ::openSaveTimeline
+        )
+    }
+
+    private fun openSaveTimeline() {
+        val gameId = currentGameId
+        heldForTimeline = true
+        viewModelScope.launch { _launchEvents.emit(LaunchEvent.OpenSaveTimeline(gameId)) }
+    }
+
+    private fun routeSnapshotInput(press: (InputHandler) -> InputResult): InputResult? =
+        if (saveManagement.saveChannelDelegate.state.value.isSnapshotSavesView) {
+            press(snapshotInput).takeIf { it.handled }
+        } else {
+            null
+        }
+
+    override fun onCleared() {
+        super.onCleared()
+        isDescribing = false
+        releaseCompanionSlot()
+        imageCacheManager.resumeBackgroundCaching()
+        gameThemeAudio.exit(currentGameId)
+    }
+
+    fun repairBackgroundImage(gameId: Long, failedPath: String) {
+        if (backgroundRepairPending) return
+        backgroundRepairPending = true
+
+        viewModelScope.launch {
+            val repairedUrl = repairImageCacheUseCase.repairBackground(gameId, failedPath)
+            if (repairedUrl != null) {
+                _uiState.update { it.copy(repairedBackgroundPath = repairedUrl) }
+            }
+            backgroundRepairPending = false
+        }
+    }
+
+    init {
+        modalResetSignal.signal.onEach { resetAllModals() }.launchIn(viewModelScope)
+
+        viewModelScope.launch {
+            _uiState.map { state -> state.game?.toCompanionDetail(state.friendsActivity) }
+                .distinctUntilChanged()
+                .collect { publishCompanionDetail(it) }
+        }
+
+        viewModelScope.launch {
+            gradientExtractionDelegate.gradients.collect { gradients ->
+                _uiState.update { state ->
+                    state.copy(
+                        relatedGames = state.relatedGames.map { game ->
+                            gradients[game.id]
+                                ?.takeIf { it != game.gradientColors }
+                                ?.let { game.copy(gradientColors = it) }
+                                ?: game
+                        }
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch { emulatorDetector.detectEmulators() }
+        viewModelScope.launch {
+            appsRepository.packageChanges.collect { packageName ->
+                if (SteamLaunchers.getByPackage(packageName) != null) refreshSteamLauncher()
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.userPreferences.collect { prefs ->
+                pickerModalDelegate.menuWrapMode = prefs.menuWrapMode
+                moreOptionsDelegate.menuWrapMode = prefs.menuWrapMode
+                perGameSettingsDelegate.menuWrapMode = prefs.menuWrapMode
+            }
+        }
+
+        viewModelScope.launch {
+            saveManagement.saveChannelDelegate.state.collect { saveState ->
+                _uiState.update { it.copy(saveChannel = saveState) }
+            }
+        }
+        viewModelScope.launch {
+            saveManagement.saveChannelDelegate.saveStatusEvents.collect { handleSaveStatusChanged(it) }
+        }
+        viewModelScope.launch {
+            gameLaunchDelegate.syncOverlayState.collect { overlayState ->
+                _uiState.update { it.copy(syncOverlayState = overlayState) }
+            }
+        }
+        viewModelScope.launch {
+            playSessionTracker.activeSession.collect { session ->
+                if (session != null) pendingLaunchOrigin = LaunchOrigin.INTERNAL
+            }
+        }
+        viewModelScope.launch {
+            gameLaunchDelegate.memcardPickerState.collect { pickerState ->
+                _uiState.update { it.copy(memcardPickerState = pickerState) }
+            }
+        }
+        viewModelScope.launch {
+            gameLaunchDelegate.variantPickerState.collect { pickerState ->
+                _uiState.update { it.copy(launchVariantPickerState = pickerState) }
+            }
+        }
+        viewModelScope.launch {
+            collectionModalDelegate.state.collect { modalState ->
+                _uiState.update {
+                    it.copy(
+                        showAddToCollectionModal = modalState.isVisible,
+                        collections = modalState.collections,
+                        collectionModalFocusIndex = modalState.focusIndex,
+                        showCreateCollectionDialog = modalState.showCreateDialog
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            pickerModalDelegate.selection.collect { selection ->
+                if (selection == null) return@collect
+                handlePickerSelection(selection)
+                pickerModalDelegate.clearSelection()
+            }
+        }
+
+        downloadDelegate.observeDownloads(viewModelScope, { currentGameId }) { gameId ->
+            loadGame(gameId)
+        }
+
+        viewModelScope.launch {
+            downloadDelegate.state.collect { dlState ->
+                _downloadProgress.value = dlState.downloadProgress
+                _uiState.update {
+                    it.copy(
+                        downloadStatus = dlState.downloadStatus,
+                        isAwaitingServer = dlState.isAwaitingServer,
+                        downloadSizeBytes = dlState.downloadSizeBytes,
+                        isRefreshingGameData = dlState.isRefreshingGameData,
+                        showExtractionFailedPrompt = dlState.showExtractionFailedPrompt,
+                        extractionFailedInfo = dlState.extractionFailedInfo,
+                        extractionPromptFocusIndex = dlState.extractionPromptFocusIndex,
+                        showMissingDiscPrompt = dlState.showMissingDiscPrompt,
+                        missingDiscNumbers = dlState.missingDiscNumbers
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            downloadDelegate.launchEvents.collect { _launchEvents.emit(it) }
+        }
+
+        viewModelScope.launch {
+            screenshotDelegate.state.collect { ssState ->
+                _uiState.update {
+                    it.copy(
+                        focusedScreenshotIndex = ssState.focusedScreenshotIndex,
+                        showScreenshotViewer = ssState.showScreenshotViewer,
+                        viewerScreenshotIndex = ssState.viewerScreenshotIndex
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            ratingsStatus.state.collect { rsState ->
+                _uiState.update {
+                    it.copy(
+                        showRatingPicker = rsState.showRatingPicker,
+                        ratingPickerType = rsState.ratingPickerType,
+                        ratingPickerValue = rsState.ratingPickerValue,
+                        showStatusPicker = rsState.showStatusPicker,
+                        statusPickerValue = rsState.statusPickerValue,
+                        showRatingsStatusMenu = rsState.showRatingsStatusMenu,
+                        ratingsStatusFocusIndex = rsState.ratingsStatusFocusIndex
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            playOptionsDelegate.state.collect { poState ->
+                _uiState.update {
+                    it.copy(
+                        showPlayOptions = poState.showPlayOptions,
+                        playOptionsFocusIndex = poState.playOptionsFocusIndex,
+                        hasCasualSaves = poState.hasCasualSaves,
+                        hasHardcoreSave = poState.hasHardcoreSave,
+                        hasRASupport = poState.hasRASupport,
+                        hardcoreAvailable = poState.hardcoreAvailable,
+                        statesAvailable = poState.statesAvailable,
+                        isOnline = poState.isOnline
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            moreOptionsDelegate.state.collect { moState ->
+                _uiState.update {
+                    it.copy(
+                        showMoreOptions = moState.showMoreOptions,
+                        moreOptionsFocusIndex = moState.moreOptionsFocusIndex,
+                        launchDisplayIndex = moState.launchDisplayIndex
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            perGameSettingsDelegate.state.collect { pgState ->
+                _uiState.update { it.copy(perGameSettings = pgState) }
+            }
+        }
+
+        viewModelScope.launch {
+            achievementDelegate.achievements.collect { achievements ->
+                _uiState.update { state ->
+                    if (state.game?.achievements == achievements) state
+                    else state.copy(game = state.game?.copy(achievements = achievements))
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            gameUpdateBus.updates.collect { update ->
+                if (update.gameId == currentGameId) {
+                    _uiState.update { state ->
+                        state.copy(
+                            game = state.game?.copy(
+                                playTimeMinutes = update.playTimeMinutes ?: state.game.playTimeMinutes,
+                                status = update.status ?: state.game.status
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            combine(
+                socialRepository.hiddenGameIds,
+                _uiState.map { it.game?.igdbId }.distinctUntilChanged()
+            ) { hiddenIds, igdbId ->
+                igdbId != null && igdbId.toInt() in hiddenIds
+            }.distinctUntilChanged().collect { isPrivate ->
+                _uiState.update { it.copy(isPrivate = isPrivate) }
+            }
+        }
+
+        viewModelScope.launch {
+            socialRepository.connectionState.collect { state ->
+                _uiState.update {
+                    it.copy(hasSocialAccount = state is com.nendo.argosy.data.social.SocialConnectionState.Connected)
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            combine(
+                socialRepository.friendsActivity,
+                _uiState.map { it.game?.igdbId }.distinctUntilChanged()
+            ) { activity, igdbId ->
+                igdbId?.let { activity[it.toInt()] }.orEmpty()
+            }.distinctUntilChanged().collect { friends ->
+                _uiState.update { it.copy(friendsActivity = friends) }
+            }
+        }
+
+        viewModelScope.launch {
+            combine(
+                socialRepository.reviewSummaries,
+                _uiState.map { it.game?.igdbId }.distinctUntilChanged()
+            ) { summaries, igdbId ->
+                igdbId?.let { summaries[it.toInt()] }
+            }.distinctUntilChanged().collect { summary ->
+                _uiState.update { it.copy(reviewSummary = summary) }
+            }
+        }
+
+        viewModelScope.launch {
+            combine(
+                socialRepository.gameReviews,
+                _uiState.map { it.game?.igdbId }.distinctUntilChanged()
+            ) { pages, igdbId ->
+                igdbId?.let { pages[it.toInt()] }
+            }.distinctUntilChanged().collect { page ->
+                _uiState.update { it.copy(reviewPage = page) }
+            }
+        }
+
+        viewModelScope.launch {
+            socialRepository.reviewWriteEvents.collect { event ->
+                _uiState.update { state ->
+                    val editor = state.reviewEditor ?: return@update state
+                    if (editor.igdbId != event.igdbId) return@update state
+                    when (event) {
+                        is com.nendo.argosy.data.social.ReviewWriteEvent.Failed ->
+                            state.copy(reviewEditor = editor.settled())
+                        is com.nendo.argosy.data.social.ReviewWriteEvent.Saved,
+                        is com.nendo.argosy.data.social.ReviewWriteEvent.Deleted ->
+                            state.copy(reviewEditor = null)
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun handlePickerSelection(selection: PickerSelection) {
+        when (selection) {
+            is PickerSelection.Emulator -> {
+                val gameId = currentGameId
+                val game = gameRepository.getById(gameId) ?: return
+                configureEmulatorUseCase.setForGame(gameId, game.platformId, game.platformSlug, selection.emulator)
+                loadGame(gameId)
+                perGameSettingsDelegate.refresh(gameId)
+            }
+            is PickerSelection.Core -> {
+                configureEmulatorUseCase.setCoreForGame(currentGameId, selection.coreId)
+                loadGame(currentGameId)
+                perGameSettingsDelegate.refresh(currentGameId)
+            }
+            is PickerSelection.SteamLauncher -> {
+                val launcher = selection.launcher
+                if (launcher == null) {
+                    gameRepository.clearSteamLauncherPin(currentGameId)
+                } else {
+                    gameRepository.updateSteamLauncher(currentGameId, launcher.packageName, true)
+                }
+                loadGame(currentGameId)
+            }
+            is PickerSelection.Disc -> {
+                gameLaunchDelegate.launchSimple(
+                    scope = viewModelScope,
+                    gameId = currentGameId,
+                    selectedDiscPath = selection.discPath,
+                    origin = pendingLaunchOrigin,
+                    callbacks = makeLaunchCallbacks()
+                )
+            }
+            is PickerSelection.Variant -> {
+                gameLaunchDelegate.launchSimple(
+                    scope = viewModelScope,
+                    gameId = currentGameId,
+                    variantFileId = selection.variantFileId,
+                    skipVariantPrompt = true,
+                    origin = pendingLaunchOrigin,
+                    callbacks = makeLaunchCallbacks()
+                )
+            }
+        }
+    }
+
+    fun loadGame(gameId: Long) {
+        if (gameId != currentGameId) downloadDelegate.reset()
+        steamLauncherRefreshVersion++
+        currentGameId = gameId
+        pageLoadTime = System.currentTimeMillis()
+        imageCacheManager.pauseBackgroundCaching()
+        gameThemeAudio.enter(gameId)
+        viewModelScope.launch { prefetchGameSaveDataUseCase(gameId) }
+        viewModelScope.launch {
+            if (emulatorDetector.installedEmulators.value.isEmpty()) {
+                emulatorDetector.detectEmulators()
+            }
+
+            val game = gameRepository.getById(gameId) ?: return@launch
+            loadRelatedGames(game)
+            val platform = platformRepository.getById(game.platformId)
+
+            val gameSpecificConfig = emulatorConfigDao.getByGameId(gameId)
+            val platformDefaultConfig = emulatorConfigDao.getDefaultForPlatform(game.platformId)
+
+            val prefs = preferencesRepository.userPreferences.first()
+
+            val emulatorName = gameSpecificConfig?.displayName
+                ?: platformDefaultConfig?.displayName
+                ?: emulatorDetector.getPreferredEmulator(game.platformSlug, prefs.builtinLibretroEnabled)?.def?.displayName
+
+            val configuredPackage = gameSpecificConfig?.packageName ?: platformDefaultConfig?.packageName
+            val emulatorDef = configuredPackage?.let { emulatorDetector.getByPackage(it) }
+                ?: emulatorDetector.getPreferredEmulator(game.platformSlug, prefs.builtinLibretroEnabled)?.def
+            val isCoreSelectable = emulatorDef?.launchConfig?.isCoreSelectable == true
+            val isBuiltInEmulator = emulatorDef?.launchConfig is LaunchConfig.BuiltIn
+
+            val platformCores = EmulatorRegistry.getSelectableCores(game.platformSlug, isBuiltInEmulator)
+            val hasMultipleCores = isCoreSelectable && platformCores.size > 1
+
+            val selectedCoreId = if (isBuiltInEmulator) {
+                builtinCoreResolver.resolveCoreId(
+                    gameId = gameId,
+                    platformId = game.platformId,
+                    platformSlug = game.platformSlug
+                )
+            } else {
+                gameSpecificConfig?.coreName
+                    ?: platformDefaultConfig?.coreName
+                    ?: EmulatorRegistry.getDefaultSelectableCore(game.platformSlug, isBuiltInEmulator)?.id
+            }
+            val selectedCoreName = if (isCoreSelectable) {
+                platformCores.find { it.id == selectedCoreId }?.displayName
+            } else null
+
+            val isSteamGame = game.isSteamGame
+            val isAndroidApp = game.isAndroidApp
+            val steamCandidates = steamLauncherCandidates(game)
+            val fileExists = gameRepository.validateAndDiscoverGame(gameId)
+
+            val steamPathExists = isSteamGame && downloadFileStatusRepository.pathExists(game.localPath)
+            val steamInstalled = isSteamGame &&
+                downloadFileStatusRepository.isSteamInstalled(game.isExternallyManaged, game.localPath)
+
+            val canPlay = when {
+                game.source == GameSource.ANDROID_APP -> true
+                isAndroidApp -> game.packageName != null
+                isSteamGame -> false
+                game.isMultiDisc -> {
+                    val downloadedCount = gameDiscDao.getDownloadedDiscCount(gameId)
+                    downloadedCount > 0 && emulatorDetector.hasAnyEmulator(game.platformSlug)
+                }
+                else -> fileExists && emulatorDetector.hasAnyEmulator(game.platformSlug)
+            }
+
+            val downloadStatus = when {
+                game.source == GameSource.ANDROID_APP -> GameDownloadStatus.DOWNLOADED
+                isAndroidApp && fileExists && game.packageName == null -> GameDownloadStatus.NEEDS_INSTALL
+                isSteamGame -> if (steamInstalled) GameDownloadStatus.DOWNLOADED else GameDownloadStatus.NOT_DOWNLOADED
+                fileExists -> GameDownloadStatus.DOWNLOADED
+                game.isMultiDisc -> {
+                    val downloadedCount = gameDiscDao.getDownloadedDiscCount(gameId)
+                    if (downloadedCount > 0) GameDownloadStatus.DOWNLOADED else GameDownloadStatus.NOT_DOWNLOADED
+                }
+                !game.hasFileOnDisk -> GameDownloadStatus.NO_FILE
+                else -> GameDownloadStatus.NOT_DOWNLOADED
+            }
+
+            var siblingIds = gameNavigationContext.getGameIds()
+            if (siblingIds.isEmpty() || !siblingIds.contains(gameId)) {
+                val platformGames = gameRepository.getByPlatform(game.platformId)
+                siblingIds = platformGames.map { it.id }
+                gameNavigationContext.setContext(siblingIds)
+            }
+            val currentIndex = gameNavigationContext.getIndex(gameId)
+
+            achievementDelegate.loadCached(gameId, game.rommId != null || game.effectiveRaId != null)
+            val cachedAchievements = achievementDelegate.achievements.value
+
+            val emulatorId = emulatorResolver.getEmulatorIdForGame(gameId, game.platformId, game.platformSlug)
+            val canManageSaves = prefs.saveSyncEnabled &&
+                downloadStatus == GameDownloadStatus.DOWNLOADED &&
+                game.rommId != null &&
+                emulatorId != null &&
+                SavePathRegistry.getConfig(emulatorId) != null
+
+            val canManageStates = prefs.saveSyncEnabled &&
+                downloadStatus == GameDownloadStatus.DOWNLOADED &&
+                emulatorId != null &&
+                stateSupportResolver.supportsStates(
+                    emulatorId = emulatorId,
+                    gameId = gameId,
+                    platformId = game.platformId,
+                    platformSlug = game.platformSlug
+                )
+
+            val activeSave = activeSaveRepository.getActiveRow(gameId)
+            val activeSaveChannel = activeSave?.channelName
+            val saveStatusInfo = if (canManageSaves) {
+                saveManagement.loadSaveStatusInfo(
+                    gameId,
+                    emulatorId!!,
+                    activeSaveChannel,
+                    activeSave?.cachedAt?.toEpochMilli(),
+                    includeServer = com.nendo.argosy.util.NetworkUtils.isOnline(context)
+                )
+            } else null
+
+            val (updateFilesUi, dlcFilesUi) = loadUpdateAndDlcFiles(gameId, game.platformSlug, game.localPath)
+
+            variantScanner.scanForVariants(game)
+            val hasVariants = variantResolver.getVariantOptions(game) != null
+            val hasSiblingGroup = siblingChoice.hasChoice(gameId)
+            val manageableFileCount = gameFileDao.getFilesForGame(gameId).size
+
+            val downloadSizeBytes = when {
+                game.isMultiDisc -> gameDiscDao.getTotalFileSize(gameId)
+                else -> game.fileSizeBytes
+            }
+
+            downloadDelegate.updateDownloadStatus(downloadStatus, if (downloadStatus == GameDownloadStatus.DOWNLOADED) 1f else 0f)
+            downloadDelegate.updateDownloadSize(downloadSizeBytes)
+
+            val isHiddenForOwner = gameRepository.isGameHidden(gameId)
+            val art = gameRepository.getArt(gameId)
+            val screenshotRows = gameRepository.getScreenshots(gameId)
+
+            val isPrivate = game.igdbId != null &&
+                game.igdbId.toInt() in socialRepository.hiddenGameIds.value
+            val hasSocial = socialRepository.connectionState.value is
+                com.nendo.argosy.data.social.SocialConnectionState.Connected
+
+            if (hasSocial && game.igdbId != null) {
+                socialRepository.requestReviewSummary(game.igdbId.toInt())
+            }
+
+            _uiState.update { state ->
+                state.copy(
+                    game = game.toGameDetailUi(
+                        art = art,
+                        screenshotRows = screenshotRows,
+                        platformName = platform?.name
+                            ?: context.getString(R.string.gamedetail_header_platform_unknown),
+                        emulatorName = emulatorName,
+                        canPlay = canPlay,
+                        isRetroArch = emulatorDef?.launchConfig is LaunchConfig.RetroArch,
+                        isBuiltIn = isBuiltInEmulator,
+                        hasMultipleCores = hasMultipleCores,
+                        selectedCoreName = selectedCoreName,
+                        achievements = cachedAchievements,
+                        canManageSaves = canManageSaves,
+                        canManageStates = canManageStates,
+                        isHidden = isHiddenForOwner
+                    ).withSteamLauncher(game, steamCandidates, steamPathExists),
+                    canSearchCovers = romMRepository.getCapabilities().supportsCoverSearch,
+                    isLoading = false,
+                    selectedCoreId = selectedCoreId,
+                    saveChannel = state.saveChannel.copy(activeChannel = activeSaveChannel),
+                    saveStatusInfo = saveStatusInfo,
+                    updateFiles = updateFilesUi,
+                    dlcFiles = dlcFilesUi,
+                    hasManageableFiles = manageableFileCount > 0,
+                    hasVariants = hasVariants,
+                    hasSiblingGroup = hasSiblingGroup,
+                    siblingGameIds = siblingIds,
+                    currentGameIndex = currentIndex,
+                    isPrivate = isPrivate,
+                    hasSocialAccount = hasSocial,
+                    syncScreenshotsEnabled = prefs.syncScreenshotsEnabled
+                )
+            }
+
+            if (game.rommId != null || game.effectiveRaId != null || RAConsoleIds.isSupported(game.platformSlug)) {
+                refreshAchievementsInBackground(game.rommId, gameId)
+            }
+
+            if (game.rommId != null) {
+                refreshUserPropsInBackground(gameId)
+                if (romMRepository.isVersionAtLeast(RomMCapabilities.SCREENSHOT_UPLOAD_MIN_VERSION)) {
+                    refreshUserScreenshotsInBackground(game.rommId)
+                }
+                if (!game.isMultiDisc && (game.fileSizeBytes == null || game.fileSizeBytes == 0L)) {
+                    downloadDelegate.refreshDownloadSizeInBackground(viewModelScope, game.rommId, gameId)
+                }
+            }
+
+            val needsTitleId = com.nendo.argosy.data.platform.PlatformDefinitions.hasTitleId(game.platformSlug)
+            if (needsTitleId && game.titleId == null && game.localPath != null) {
+                viewModelScope.launch {
+                    titleIdDownloadObserver.extractTitleIdForGame(gameId)
+                }
+            }
+
+            observeGameFiles(gameId, game.platformSlug, game.localPath)
+            observeGameEntity(gameId)
+            observeActiveSave(gameId)
+        }
+    }
+
+    private fun observeGameFiles(gameId: Long, platformSlug: String, localPath: String?) {
+        gameFilesObserverJob?.cancel()
+        gameFilesObserverJob = viewModelScope.launch {
+            gameFileDao.observeFilesForGame(gameId).collect { files ->
+                val localUpdateFileNames = if (localPath != null) {
+                    ZipExtractor.listAllUpdateFiles(localPath, platformSlug).map { it.name }.toSet()
+                } else emptySet()
+
+                val localDlcFileNames = if (localPath != null) {
+                    ZipExtractor.listAllDlcFiles(localPath, platformSlug).map { it.name }.toSet()
+                } else emptySet()
+
+                val documents = com.nendo.argosy.ui.screens.gamedetail.components.gameDocuments(
+                    game = gameRepository.getById(gameId),
+                    files = files,
+                    romMRepository = romMRepository
+                )
+                _uiState.update { it.copy(documents = documents) }
+
+                val dbUpdates = files.filter { it.category == "update" }.map { file ->
+                    UpdateFileUi(
+                        fileName = file.fileName, filePath = file.filePath,
+                        sizeBytes = file.fileSize, type = UpdateFileType.UPDATE,
+                        isDownloaded = file.isLocallyPresent() || file.fileName in localUpdateFileNames,
+                        gameFileId = file.id, rommFileId = file.rommFileId, romId = file.romId
+                    )
+                }
+
+                val dbDlc = files.filter { it.category == "dlc" }.map { file ->
+                    UpdateFileUi(
+                        fileName = file.fileName, filePath = file.filePath,
+                        sizeBytes = file.fileSize, type = UpdateFileType.DLC,
+                        isDownloaded = file.isLocallyPresent() || file.fileName in localDlcFileNames,
+                        gameFileId = file.id, rommFileId = file.rommFileId, romId = file.romId
+                    )
+                }
+
+                val localUpdates = if (localPath != null) {
+                    ZipExtractor.listAllUpdateFiles(localPath, platformSlug)
+                        .filter { file -> dbUpdates.none { it.fileName == file.name } }
+                        .map { file ->
+                            UpdateFileUi(fileName = file.name, filePath = file.absolutePath,
+                                sizeBytes = file.length(), type = UpdateFileType.UPDATE, isDownloaded = true)
+                        }
+                } else emptyList()
+
+                val localDlc = if (localPath != null) {
+                    ZipExtractor.listAllDlcFiles(localPath, platformSlug)
+                        .filter { file -> dbDlc.none { it.fileName == file.name } }
+                        .map { file ->
+                            UpdateFileUi(fileName = file.name, filePath = file.absolutePath,
+                                sizeBytes = file.length(), type = UpdateFileType.DLC, isDownloaded = true)
+                        }
+                } else emptyList()
+
+                _uiState.update { state ->
+                    state.copy(updateFiles = dbUpdates + localUpdates, dlcFiles = dbDlc + localDlc)
+                }
+            }
+        }
+    }
+
+    private fun observeGameEntity(gameId: Long) {
+        gameEntityObserverJob?.cancel()
+        gameEntityObserverJob = viewModelScope.launch {
+            var lastSeenLauncher: String? = null
+            var lastSeenManual = false
+            var launcherInitialized = false
+            var lastSeenInstall: Triple<GameSource, String?, Boolean>? = null
+            gameRepository.observeById(gameId).collect { updatedGame ->
+                if (updatedGame == null) return@collect
+
+                val install = Triple(updatedGame.source, updatedGame.packageName, updatedGame.localPath != null)
+                val installChanged = lastSeenInstall != null && lastSeenInstall != install
+                lastSeenInstall = install
+                if (installChanged) {
+                    loadGame(gameId)
+                    return@collect
+                }
+
+                val launcherChanged = launcherInitialized &&
+                    (lastSeenLauncher != updatedGame.steamLauncher || lastSeenManual != updatedGame.launcherSetManually)
+                val wasExternallyManaged = lastSeenLauncher != null && lastSeenLauncher != GameEntity.LAUNCHER_UNSPECIFIED
+                lastSeenLauncher = updatedGame.steamLauncher
+                lastSeenManual = updatedGame.launcherSetManually
+                launcherInitialized = true
+                if (launcherChanged) {
+                    if (!updatedGame.isSteamGame || wasExternallyManaged != updatedGame.isExternallyManaged) {
+                        loadGame(gameId)
+                        return@collect
+                    }
+                    refreshSteamLauncher()
+                }
+
+                _uiState.update { state ->
+                    val currentGame = state.game ?: return@update state
+                    when {
+                        currentGame.titleId != updatedGame.titleId ->
+                            state.copy(game = currentGame.copy(titleId = updatedGame.titleId))
+                        else -> state
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The active save lives on its `save_cache` row, so the games row no longer changes when the
+     * user switches slot or restores a point. This is what keeps the save status and slot
+     * highlight live on this screen.
+     */
+    private fun observeActiveSave(gameId: Long) {
+        activeSaveObserverJob?.cancel()
+        activeSaveObserverJob = viewModelScope.launch {
+            activeSaveRepository.observeActiveRow(gameId).collect { activeSave ->
+                val newChannel = activeSave?.channelName
+                val newTimestamp = activeSave?.cachedAt?.toEpochMilli()
+                _uiState.update { state ->
+                    val oldTimestamp = state.saveStatusInfo?.activeSaveTimestamp
+                    val oldChannel = state.saveChannel.activeChannel
+                    when {
+                        oldTimestamp != newTimestamp || oldChannel != newChannel -> state.copy(
+                            saveChannel = state.saveChannel.copy(activeChannel = newChannel),
+                            saveStatusInfo = state.saveStatusInfo?.copy(
+                                channelName = newChannel,
+                                activeSaveTimestamp = newTimestamp
+                            )
+                        )
+                        else -> state
+                    }
+                }
+            }
+        }
+    }
+
+    private fun refreshUserPropsInBackground(gameId: Long) {
+        viewModelScope.launch {
+            when (romMRepository.refreshUserProps(gameId)) {
+                is RomMResult.Success -> {
+                    val refreshedGame = gameRepository.getById(gameId) ?: return@launch
+                    _uiState.update { state ->
+                        state.copy(
+                            game = state.game?.copy(
+                                userRating = refreshedGame.userRating,
+                                userDifficulty = refreshedGame.userDifficulty,
+                                status = refreshedGame.status
+                            )
+                        )
+                    }
+                }
+                is RomMResult.Error -> { }
+            }
+        }
+    }
+
+    private fun refreshUserScreenshotsInBackground(rommId: Long) {
+        viewModelScope.launch {
+            val localPaths = romMRepository.fetchUserScreenshots(rommId)
+            if (localPaths.isEmpty()) return@launch
+            val userShots = localPaths.map { ScreenshotPair(remoteUrl = it, cachedPath = it) }
+            _uiState.update { state ->
+                val game = state.game ?: return@update state
+                val existing = game.screenshots.map { it.remoteUrl }.toSet()
+                val merged = game.screenshots + userShots.filter { it.remoteUrl !in existing }
+                state.copy(game = game.copy(screenshots = merged))
+            }
+        }
+    }
+
+    private fun refreshAchievementsInBackground(rommId: Long?, gameId: Long) {
+        viewModelScope.launch {
+            val entity = gameRepository.getById(gameId) ?: return@launch
+            val fetchedAt = entity.achievementsFetchedAt
+            if (fetchedAt != null &&
+                System.currentTimeMillis() - fetchedAt < achievementRefetchThresholdMs
+            ) return@launch
+            achievementDelegate.refresh(viewModelScope, gameId, rommId)
+        }
+    }
+
+    private suspend fun loadUpdateAndDlcFiles(
+        gameId: Long, platformSlug: String, localPath: String?
+    ): Pair<List<UpdateFileUi>, List<UpdateFileUi>> {
+        val remoteFiles = gameFileDao.getFilesForGame(gameId)
+
+        val localUpdateFileNames = if (localPath != null) {
+            ZipExtractor.listAllUpdateFiles(localPath, platformSlug).map { it.name }.toSet()
+        } else emptySet()
+
+        val localDlcFileNames = if (localPath != null) {
+            ZipExtractor.listAllDlcFiles(localPath, platformSlug).map { it.name }.toSet()
+        } else emptySet()
+
+        val dbUpdates = remoteFiles.filter { it.category == "update" }.map { file ->
+            val downloaded = file.fileName in localUpdateFileNames
+            UpdateFileUi(
+                fileName = file.fileName, filePath = file.filePath,
+                sizeBytes = file.fileSize, type = UpdateFileType.UPDATE,
+                isDownloaded = downloaded,
+                gameFileId = file.id, rommFileId = file.rommFileId, romId = file.romId
+            )
+        }
+
+        val dbDlc = remoteFiles.filter { it.category == "dlc" }.map { file ->
+            val downloaded = file.fileName in localDlcFileNames
+            UpdateFileUi(
+                fileName = file.fileName, filePath = file.filePath,
+                sizeBytes = file.fileSize, type = UpdateFileType.DLC,
+                isDownloaded = downloaded,
+                gameFileId = file.id, rommFileId = file.rommFileId, romId = file.romId
+            )
+        }
+
+        val localUpdates = if (localPath != null) {
+            ZipExtractor.listAllUpdateFiles(localPath, platformSlug)
+                .filter { file -> dbUpdates.none { it.fileName == file.name } }
+                .map { file ->
+                    UpdateFileUi(fileName = file.name, filePath = file.absolutePath,
+                        sizeBytes = file.length(), type = UpdateFileType.UPDATE,
+                        isDownloaded = true)
+                }
+        } else emptyList()
+
+        val localDlc = if (localPath != null) {
+            ZipExtractor.listAllDlcFiles(localPath, platformSlug)
+                .filter { file -> dbDlc.none { it.fileName == file.name } }
+                .map { file ->
+                    UpdateFileUi(fileName = file.name, filePath = file.absolutePath,
+                        sizeBytes = file.length(), type = UpdateFileType.DLC,
+                        isDownloaded = true)
+                }
+        } else emptyList()
+
+        val sortedUpdates = (dbUpdates + localUpdates)
+            .sortedWith(UpdateFileVersionSort.LATEST_FIRST)
+        return sortedUpdates to (dbDlc + localDlc)
+    }
+
+    // --- Download delegate forwarding ---
+
+    fun showFilesPicker() {
+        toggleMoreOptions()
+        viewModelScope.launch {
+            val built = downloadDelegate.buildManageRows(currentGameId) ?: return@launch
+            val (rows, files) = built
+            pickerModalDelegate.showFilePicker(rows, files, manageMode = true)
+        }
+    }
+
+    fun promptOrDownload() {
+        siblingChoice.requestDownload(viewModelScope, currentGameId) { chosenGameId ->
+            if (chosenGameId == currentGameId) {
+                promptOrDownloadCurrent(debounceFrom = pageLoadTime)
+            } else {
+                _uiState.update { it.copy(menuFocusIndex = 0) }
+                loadGame(chosenGameId)
+                promptOrDownloadCurrent(debounceFrom = 0L)
+            }
+        }
+    }
+
+    private fun promptOrDownloadCurrent(debounceFrom: Long) {
+        val gameId = currentGameId
+        viewModelScope.launch {
+            val built = downloadDelegate.buildFilePickerRows(gameId)
+            if (built == null) {
+                downloadDelegate.downloadGame(viewModelScope, gameId, debounceFrom, pageLoadDebounceMs)
+            } else {
+                val (rows, files) = built
+                pickerModalDelegate.showFilePicker(rows, files)
+            }
+        }
+    }
+
+    private fun showActiveVariantChooser() {
+        toggleMoreOptions()
+        siblingChoice.openActiveVariant(viewModelScope, currentGameId) { shownGameId ->
+            _uiState.update { it.copy(menuFocusIndex = 0) }
+            loadGame(shownGameId)
+        }
+    }
+
+    fun moveSiblingChoiceFocus(delta: Int) = siblingChoice.moveFocus(delta)
+
+    fun setSiblingChoiceFocus(index: Int) = siblingChoice.setFocus(index)
+
+    fun confirmSiblingChoice() = siblingChoice.confirm(viewModelScope)
+
+    fun dismissSiblingChoice() = siblingChoice.dismiss()
+
+    fun confirmFilePicker() {
+        val picker = pickerModalDelegate.state.value
+        if (!picker.showFilePicker) return
+        pickerModalDelegate.dismissFilePicker()
+        if (picker.filePickerManageMode) {
+            val gameId = currentGameId
+            downloadDelegate.applyManagedFiles(
+                viewModelScope,
+                gameId,
+                picker.filePickerRows,
+                picker.filePickerSelected
+            ) { if (currentGameId == gameId) loadGame(gameId) }
+        } else {
+            downloadDelegate.downloadWithSelection(
+                viewModelScope,
+                currentGameId,
+                picker.filePickerSelected
+            )
+        }
+    }
+
+    fun dismissFilePicker() = pickerModalDelegate.dismissFilePicker()
+    fun moveFilePickerFocus(delta: Int) = pickerModalDelegate.moveFilePickerFocus(delta)
+    fun jumpFilePickerGroup(direction: Int) = pickerModalDelegate.jumpFilePickerGroup(direction)
+    fun toggleFocusedFilePickerRow() = pickerModalDelegate.toggleFocusedFilePickerRow()
+    fun toggleFilePickerSelectAll() = pickerModalDelegate.toggleFilePickerSelectAll()
+
+    fun activateFocusedFilePickerItem() {
+        val st = pickerModalDelegate.state.value
+        val rowCount = st.visibleFilePickerRows.size
+        when {
+            st.filePickerFocusIndex < rowCount -> pickerModalDelegate.toggleFocusedFilePickerRow()
+            st.filePickerFocusIndex == rowCount -> pickerModalDelegate.toggleFilePickerSelectAll()
+            st.filePickerFocusIndex == rowCount + 1 -> dismissFilePicker()
+            else -> confirmFilePicker()
+        }
+    }
+    fun toggleFilePickerRow(row: com.nendo.argosy.data.model.FilePickerRow) =
+        pickerModalDelegate.toggleFilePickerRow(row)
+
+    fun linkSteamLauncher() {
+        steamLauncherLinkController.requestLink(currentGameId)
+    }
+
+    fun dismissExtractionPrompt() = downloadDelegate.dismissExtractionPrompt()
+
+    fun moveExtractionPromptFocus(delta: Int) = downloadDelegate.moveExtractionPromptFocus(delta)
+
+    fun confirmExtractionPromptSelection() = downloadDelegate.confirmExtractionPromptSelection(viewModelScope)
+
+    fun dismissMissingDiscPrompt() = downloadDelegate.dismissMissingDiscPrompt()
+
+    fun repairAndPlay() = downloadDelegate.repairAndPlay(viewModelScope, currentGameId)
+
+    fun refreshGameData() {
+        downloadDelegate.refreshGameData(viewModelScope, currentGameId) {
+            loadGame(currentGameId)
+        }
+    }
+
+    fun refreshSteamLauncher() {
+        val displayedGame = _uiState.value.game ?: return
+        val gameId = currentGameId
+        if (!displayedGame.isSteamGame || displayedGame.id != gameId) return
+        val refreshVersion = ++steamLauncherRefreshVersion
+        viewModelScope.launch {
+            val ownerUserId = preferencesRepository.userPreferences.first().rommUserId
+            val game = gameRepository.getById(gameId) ?: return@launch
+            val candidates = steamLauncherCandidates(game)
+            val pathExists = downloadFileStatusRepository.pathExists(game.localPath)
+            if (preferencesRepository.userPreferences.first().rommUserId != ownerUserId) return@launch
+            _uiState.update { state ->
+                val currentGame = state.game ?: return@update state
+                if (refreshVersion != steamLauncherRefreshVersion || currentGameId != gameId || currentGame.id != gameId) {
+                    return@update state
+                }
+                state.copy(game = currentGame.withSteamLauncher(game, candidates, pathExists))
+            }
+        }
+    }
+
+    private suspend fun steamLauncherCandidates(game: GameEntity): List<String> = withContext(Dispatchers.IO) {
+        if (!game.isSteamGame) return@withContext emptyList()
+        val reporting = if (game.hasSteamLauncherPin) emptyList() else game.steamAppId?.let {
+            steamInstallReports.launchersReporting(it)
+        }.orEmpty()
+        game.steamLaunchCandidates(reporting) { pkg ->
+            SteamLaunchers.getByPackage(pkg)?.isInstalled(context) == true
+        }
+    }
+
+    // --- Play/Launch ---
+
+    fun primaryAction(origin: LaunchOrigin = LaunchOrigin.INTERNAL) {
+        val now = System.currentTimeMillis()
+        if (now - lastActionTime < actionDebounceMs) return
+        lastActionTime = now
+
+        val state = _uiState.value
+        when (state.downloadStatus) {
+            GameDownloadStatus.NO_FILE -> notificationManager.showError(
+                NotificationText.Res(R.string.gamedetail_notice_no_file)
+            )
+            GameDownloadStatus.DOWNLOADED -> playGame(origin = origin)
+            GameDownloadStatus.NEEDS_INSTALL -> downloadDelegate.installApk(viewModelScope, currentGameId)
+            GameDownloadStatus.NOT_DOWNLOADED, GameDownloadStatus.FAILED -> {
+                val game = state.game
+                if (game != null && game.isSteamGame) {
+                    linkSteamLauncher()
+                } else {
+                    promptOrDownload()
+                }
+            }
+            GameDownloadStatus.PAUSED, GameDownloadStatus.WAITING_FOR_STORAGE ->
+                downloadDelegate.resumeDownload(viewModelScope, currentGameId)
+            GameDownloadStatus.QUEUED, GameDownloadStatus.DOWNLOADING,
+            GameDownloadStatus.EXTRACTING -> { }
+        }
+    }
+
+    fun playGame(discId: Long? = null, origin: LaunchOrigin = LaunchOrigin.INTERNAL) {
+        if (gameLaunchDelegate.isSyncing) return
+        if (origin != LaunchOrigin.INTERNAL) pendingLaunchOrigin = origin
+
+        viewModelScope.launch {
+            val currentGame = _uiState.value.game ?: return@launch
+
+            if (currentGame.isBuiltInEmulator) {
+                if (playOptionsDelegate.shouldShowModeSelection(currentGameId, true, true)) {
+                    playOptionsDelegate.showFreshGameModeSelection(viewModelScope, currentGameId)
+                    return@launch
+                }
+            }
+
+            val callbacks = makeLaunchCallbacks()
+            gameLaunchDelegate.launchGame(
+                scope = viewModelScope,
+                gameId = currentGameId,
+                discId = discId,
+                allowVariantPrompt = false,
+                origin = pendingLaunchOrigin,
+                start = callbacks.start,
+                onLaunchFailed = { callbacks.onLaunchFailed() }
+            )
+        }
+    }
+
+    fun showPlayOptions() {
+        val game = _uiState.value.game
+        val hasRASupport = game?.isBuiltInEmulator == true
+        playOptionsDelegate.showPlayOptions(viewModelScope, currentGameId, hasRASupport)
+    }
+
+    fun dismissPlayOptions() = playOptionsDelegate.dismissPlayOptions()
+
+    fun movePlayOptionsFocus(delta: Int) = playOptionsDelegate.movePlayOptionsFocus(delta)
+
+    private fun confirmPlayOptionSelection() {
+        val action = playOptionsDelegate.confirmPlayOptionSelection() ?: return
+        handlePlayOption(action)
+    }
+
+    fun handlePlayOption(action: com.nendo.argosy.ui.screens.gamedetail.modals.PlayOptionAction) {
+        playOptionsDelegate.dismissPlayOptions()
+        viewModelScope.launch {
+            when (action) {
+                is com.nendo.argosy.ui.screens.gamedetail.modals.PlayOptionAction.Resume ->
+                    launchWithMode(com.nendo.argosy.libretro.LaunchMode.RESUME, skipPreLaunchSync = false)
+                is com.nendo.argosy.ui.screens.gamedetail.modals.PlayOptionAction.ResumeNoSync ->
+                    launchWithMode(com.nendo.argosy.libretro.LaunchMode.RESUME, skipPreLaunchSync = true)
+                is com.nendo.argosy.ui.screens.gamedetail.modals.PlayOptionAction.ResumeHardcore ->
+                    launchWithMode(com.nendo.argosy.libretro.LaunchMode.RESUME_HARDCORE, skipPreLaunchSync = false)
+                is com.nendo.argosy.ui.screens.gamedetail.modals.PlayOptionAction.NewCasual ->
+                    launchWithMode(com.nendo.argosy.libretro.LaunchMode.NEW_CASUAL, skipPreLaunchSync = false)
+                is com.nendo.argosy.ui.screens.gamedetail.modals.PlayOptionAction.NewHardcore ->
+                    launchWithMode(com.nendo.argosy.libretro.LaunchMode.NEW_HARDCORE, skipPreLaunchSync = false)
+            }
+        }
+    }
+
+    private suspend fun launchWithMode(
+        launchMode: com.nendo.argosy.libretro.LaunchMode,
+        skipPreLaunchSync: Boolean
+    ) {
+        if (launchMode == com.nendo.argosy.libretro.LaunchMode.NEW_CASUAL ||
+            launchMode == com.nendo.argosy.libretro.LaunchMode.NEW_HARDCORE) {
+            activeSaveRepository.clearActive(currentGameId)
+            _uiState.update { state ->
+                state.copy(
+                    saveChannel = state.saveChannel.copy(activeChannel = null),
+                    saveStatusInfo = state.saveStatusInfo?.copy(channelName = null, activeSaveTimestamp = null)
+                )
+            }
+        }
+
+        val isResume = launchMode == com.nendo.argosy.libretro.LaunchMode.RESUME ||
+            launchMode == com.nendo.argosy.libretro.LaunchMode.RESUME_HARDCORE
+        if (isResume) {
+            val callbacks = makeLaunchCallbacks()
+            gameLaunchDelegate.launchGame(
+                scope = viewModelScope,
+                gameId = currentGameId,
+                skipPreLaunchSync = skipPreLaunchSync,
+                overrideLaunchMode = launchMode,
+                allowVariantPrompt = false,
+                origin = pendingLaunchOrigin,
+                start = callbacks.start,
+                onLaunchFailed = { callbacks.onLaunchFailed() }
+            )
+        } else {
+            gameLaunchDelegate.launchSimple(
+                scope = viewModelScope,
+                gameId = currentGameId,
+                allowVariantPrompt = false,
+                launchMode = launchMode,
+                origin = pendingLaunchOrigin,
+                callbacks = makeLaunchCallbacks()
+            )
+        }
+    }
+
+    private fun makeLaunchCallbacks(
+        overrideDisplayId: Int? = null
+    ): com.nendo.argosy.ui.screens.common.LaunchResultCallbacks =
+        com.nendo.argosy.ui.screens.common.LaunchResultCallbacks(
+            start = com.nendo.argosy.ui.screens.common.GameStart(
+                gameId = currentGameId,
+                overrideDisplayId = overrideDisplayId,
+                onFailure = { e ->
+                    notificationManager.showError(
+                        e.message?.let { reason ->
+                            NotificationText.Res(R.string.gamedetail_notice_launch_failed, listOf(reason))
+                        } ?: NotificationText.Res(R.string.notif_gamelaunch_launch_failed)
+                    )
+                }
+            ),
+            onSelectDisc = { discs -> pickerModalDelegate.showDiscPicker(discs) },
+            onSelectVariant = { variants -> pickerModalDelegate.showVariantPicker(variants) },
+            onNoEmulator = { showEmulatorPicker() },
+            onNoCore = { showCorePicker() },
+            onMissingDiscs = { missing -> downloadDelegate.showMissingDiscPrompt(missing) }
+        )
+
+    // --- More Options delegate forwarding ---
+
+    // --- Cocoon sheets: the page opened from a folder straight into Edit Game or Achievements ---
+
+    /** "edit" or "achievements" while the page is only hosting one of Cocoon's sheets. */
+    var cocoonSheet: String? = null
+        private set
+    private var cocoonSheetExit = false
+    private var cocoonSheetJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Opens the sheet once the game has loaded, and watches it: B on the sheet goes straight back
+     * to the folder; when a choice on Edit Game opened another dialog, Edit Game comes back once
+     * that dialog closes, as in Cocoon.
+     */
+    fun startCocoonSheet(kind: String, onExit: () -> Unit) {
+        if (cocoonSheetJob != null) return
+        cocoonSheet = kind
+        cocoonSheetJob = viewModelScope.launch {
+            _uiState.first { it.game != null && !it.isLoading }
+            openCocoonSheet(kind)
+            kotlinx.coroutines.delay(400)
+            var quiet = 0
+            while (true) {
+                kotlinx.coroutines.delay(200)
+                if (hasOpenOverlay()) { quiet = 0; continue }
+                quiet++
+                if (quiet < 2) continue
+                quiet = 0
+                if (kind == "edit" && !cocoonSheetExit && _uiState.value.game != null) {
+                    openCocoonSheet(kind)
+                    kotlinx.coroutines.delay(300)
+                } else {
+                    onExit()
+                    break
+                }
+            }
+        }
+    }
+
+    private fun openCocoonSheet(kind: String) {
+        if (kind == "achievements") showAchievementList()
+        else if (!_uiState.value.showMoreOptions) toggleMoreOptions()
+    }
+
+    /** B on the hosted sheet itself: leave rather than show the page underneath. */
+    private fun requestCocoonSheetExit() {
+        cocoonSheetExit = true
+    }
+
+    private fun hasOpenOverlay(): Boolean {
+        val state = _uiState.value
+        val save = state.saveChannel
+        val picker = pickerModalDelegate.state.value
+        return state.showMoreOptions || state.showAchievementList || state.showReviewList ||
+            state.reviewEditor != null || state.showScreenshotViewer || state.showRatingPicker ||
+            state.showStatusPicker || state.showMissingDiscPrompt || state.showExtractionFailedPrompt ||
+            state.showPermissionModal || state.showAddToCollectionModal || state.showRatingsStatusMenu ||
+            state.showPlayOptions || state.perGameSettings.visible ||
+            save.isVisible || save.showSlotPicker || save.showRenameDialog ||
+            picker.showFilePicker || picker.showCorePicker || picker.showDiscPicker || picker.showArtPicker ||
+            picker.showVariantPicker || picker.showEmulatorPicker || picker.showSteamLauncherPicker ||
+            gameConfirm.pending.value != null || documentReader.value != null ||
+            state.memcardPickerState != null || state.launchVariantPickerState != null
+    }
+
+    fun toggleMoreOptions() {
+        val opening = !_uiState.value.showMoreOptions
+        val targets = if (opening) launchDisplayTargets() else emptyList()
+        _uiState.update { it.copy(launchDisplayNumbers = targets.map { target -> target.number }) }
+        moreOptionsDelegate.toggleMoreOptions()
+        val dsm = com.nendo.argosy.DualScreenManagerHolder.instance
+        if (opening && targets.size > 1) {
+            dsm?.showScreenNumbers(com.nendo.argosy.hardware.DisplayBadgeSize.SMALL)
+        } else {
+            dsm?.hideScreenNumbers()
+        }
+    }
+
+    private fun moreOptionsContext(): MoreOptionsContext {
+        val state = _uiState.value
+        return MoreOptionsContext(
+            isDownloaded = state.downloadStatus == GameDownloadStatus.DOWNLOADED,
+            isRommGame = state.game?.isRommGame == true,
+            isAndroidApp = state.game?.isAndroidApp == true,
+            isSteamGame = state.game?.isSteamGame == true,
+            canRemoveFromLibrary = state.game?.canRemoveFromLibrary == true,
+            canManageSaves = state.game?.canManageSaves == true,
+            canManageStates = state.game?.canManageStates == true,
+            isMultiDisc = state.game?.isMultiDisc == true,
+            hasVariants = state.hasVariants,
+            hasSiblingGroup = state.hasSiblingGroup,
+            hasUpdates = state.updateFiles.isNotEmpty() || state.dlcFiles.isNotEmpty(),
+            hasManageableFiles = state.hasManageableFiles,
+            platformSlug = state.game?.platformSlug,
+            launchDisplayCount = state.launchDisplayNumbers.size
+        )
+    }
+
+    private fun launchDisplayTargets(): List<com.nendo.argosy.util.AttachedScreen> =
+        com.nendo.argosy.DualScreenManagerHolder.instance?.focusableDisplays().orEmpty()
+
+    fun moveDocumentFocus(delta: Int) {
+        val documents = _uiState.value.documents
+        if (documents.isEmpty()) return
+        val next = (_uiState.value.documentFocusIndex + delta).mod(documents.size)
+        _uiState.update { it.copy(documentFocusIndex = next) }
+    }
+
+    fun openFocusedDocument() {
+        val state = _uiState.value
+        state.documents.getOrNull(state.documentFocusIndex)?.let { openDocument(it) }
+    }
+
+    fun openDocument(document: GameDocument) {
+        viewModelScope.launch {
+            documentReaderController.open(document, gameRepository.getById(currentGameId)?.rommId)
+        }
+    }
+
+    fun setDocumentLinesPerPage(linesPerPage: Int) = documentReaderController.setLinesPerPage(linesPerPage)
+
+    fun setDocumentShowsSpreads(showsSpreads: Boolean) = documentReaderController.setShowsSpreads(showsSpreads)
+
+    fun turnDocumentPage(delta: Int) = documentReaderController.turnPage(delta)
+
+    fun dismissDocumentReader() = documentReaderController.dismiss()
+
+    fun toggleDocumentHighlightAt(pageLine: Int) = documentReaderController.toggleHighlightAt(pageLine)
+
+    fun cycleDocumentHighlightColor(firstLine: Int) = documentReaderController.cycleHighlightColor(firstLine)
+
+    private fun isLaunchDisplayRowFocused(): Boolean =
+        moreOptionsDelegate.resolveOptionAction(moreOptionsContext()) == MoreOptionAction.LaunchOnDisplay
+
+    fun cycleLaunchDisplay(delta: Int) {
+        moreOptionsDelegate.cycleLaunchDisplay(delta, _uiState.value.launchDisplayNumbers.size)
+    }
+
+    private fun launchOnSelectedDisplay() {
+        val displayId = launchDisplayTargets()
+            .getOrNull(_uiState.value.launchDisplayIndex)
+            ?.displayId ?: return
+        toggleMoreOptions()
+        val callbacks = makeLaunchCallbacks(overrideDisplayId = displayId)
+        gameLaunchDelegate.launchGame(
+            scope = viewModelScope,
+            gameId = currentGameId,
+            allowVariantPrompt = false,
+            origin = pendingLaunchOrigin,
+            start = callbacks.start,
+            onLaunchFailed = { callbacks.onLaunchFailed() }
+        )
+    }
+
+    fun moveOptionsFocus(delta: Int) {
+        moreOptionsDelegate.moveOptionsFocus(delta, moreOptionsContext())
+    }
+
+    fun handleMoreOptionAction(
+        action: MoreOptionAction,
+        onBack: () -> Unit,
+        onNavigateToPlatformSettings: (Long) -> Unit = {}
+    ) {
+        val isAndroidApp = _uiState.value.game?.isAndroidApp == true
+        when (action) {
+            MoreOptionAction.LaunchOnDisplay -> launchOnSelectedDisplay()
+            MoreOptionAction.ManageSaves -> showSaveCacheDialog()
+            MoreOptionAction.PlatformSettings -> {
+                toggleMoreOptions()
+                _uiState.value.game?.platformId?.let(onNavigateToPlatformSettings)
+            }
+            MoreOptionAction.RatingsStatus -> showRatingsStatusMenu()
+            MoreOptionAction.RateGame -> showRatingPicker(RatingType.OPINION)
+            MoreOptionAction.SetDifficulty -> showRatingPicker(RatingType.DIFFICULTY)
+            MoreOptionAction.SetProgress -> showRatingPicker(RatingType.PROGRESS)
+            MoreOptionAction.SetStatus -> showStatusPicker()
+            MoreOptionAction.ChangeEmulator -> showEmulatorPicker()
+            MoreOptionAction.ChangeSteamLauncher -> showSteamLauncherPicker()
+            MoreOptionAction.ChangeCore -> showCorePicker()
+            MoreOptionAction.SelectDisc -> showDiscPicker()
+            MoreOptionAction.SelectVariant -> showVariantPickerFromMenu()
+            MoreOptionAction.ActiveVariant -> showActiveVariantChooser()
+            MoreOptionAction.Files -> showFilesPicker()
+            MoreOptionAction.RefreshData -> refreshAndroidOrRommData()
+            MoreOptionAction.RefreshTitleId -> refreshTitleId()
+            MoreOptionAction.SpeedrunSplits -> {
+                toggleMoreOptions()
+                speedrunSplitsDelegate.open(viewModelScope, currentGameId, _uiState.value.game?.title ?: "")
+            }
+            MoreOptionAction.AddToCollection -> showAddToCollectionModal()
+            MoreOptionAction.Artwork -> showArtwork()
+            MoreOptionAction.Delete -> {
+                toggleMoreOptions()
+                val gameUi = _uiState.value.game
+                when {
+                    isAndroidApp -> {
+                        val pkg = gameUi?.packageName ?: return
+                        downloadDelegate.uninstallAndroidApp(viewModelScope, pkg)
+                    }
+                    gameUi?.isExternallyManaged == true -> {
+                        steamLauncherLinkController.unlinkLauncher(currentGameId)
+                        viewModelScope.launch { loadGame(currentGameId) }
+                    }
+                    else -> {
+                        val gameId = currentGameId
+                        gameConfirm.requestDelete(gameId) { withSoundtrack ->
+                            downloadDelegate.deleteLocalFile(viewModelScope, gameId, withSoundtrack) { loadGame(gameId) }
+                        }
+                    }
+                }
+            }
+            MoreOptionAction.RemoveFromLibrary -> {
+                toggleMoreOptions()
+                downloadDelegate.removeFromLibrary(viewModelScope, currentGameId)
+            }
+            MoreOptionAction.ToggleHide -> {
+                toggleMoreOptions()
+                if (_uiState.value.game?.isHidden == true) {
+                    toggleHideGame()
+                    onBack()
+                } else {
+                    gameConfirm.requestHide(currentGameId) {
+                        toggleHideGame()
+                        onBack()
+                    }
+                }
+            }
+        }
+    }
+
+    fun confirmOptionSelection(
+        onBack: () -> Unit,
+        onNavigateToPlatformSettings: (Long) -> Unit = {}
+    ) {
+        val state = _uiState.value
+        val action = moreOptionsDelegate.resolveOptionAction(moreOptionsContext())
+        if (action != null) {
+            handleMoreOptionAction(action, onBack, onNavigateToPlatformSettings)
+        } else {
+            toggleMoreOptions()
+        }
+    }
+
+    // --- Ratings/Status delegate forwarding ---
+
+    fun showRatingPicker(type: RatingType) {
+        val game = _uiState.value.game ?: return
+        val currentValue = when (type) {
+            RatingType.OPINION -> game.userRating
+            RatingType.DIFFICULTY -> game.userDifficulty
+            RatingType.PROGRESS -> game.completion
+        }
+        moreOptionsDelegate.reset()
+        ratingsStatus.showRatingPicker(type, currentValue)
+    }
+
+    fun dismissRatingPicker() = ratingsStatus.dismissRatingPicker()
+
+    fun showRatingsStatusMenu() {
+        moreOptionsDelegate.reset()
+        ratingsStatus.showRatingsStatusMenu()
+    }
+
+    fun dismissRatingsStatusMenu() {
+        ratingsStatus.dismissRatingsStatusMenu()
+        moreOptionsDelegate.toggleMoreOptions()
+    }
+
+    fun changeRatingsStatusFocus(delta: Int) = ratingsStatus.changeRatingsStatusFocus(delta)
+
+    fun confirmRatingsStatusSelection() {
+        when (ratingsStatus.getRatingsStatusAction()) {
+            0 -> showRatingPicker(RatingType.OPINION)
+            1 -> showRatingPicker(RatingType.DIFFICULTY)
+            2 -> showStatusPicker()
+            3 -> showRatingPicker(RatingType.PROGRESS)
+        }
+    }
+
+    fun changeRatingValue(delta: Int) {
+        ratingsStatus.changeRatingValue(delta)
+    }
+
+    fun setRatingValue(value: Int) = ratingsStatus.setRatingValue(value)
+
+    fun confirmRating() = ratingsStatus.confirmRating(viewModelScope, currentGameId) { loadGame(currentGameId) }
+
+    fun showStatusPicker() {
+        val game = _uiState.value.game ?: return
+        ratingsStatus.showStatusPicker(game.status)
+    }
+
+    fun dismissStatusPicker() = ratingsStatus.dismissStatusPicker()
+
+    fun changeStatusValue(delta: Int) = ratingsStatus.changeStatusValue(delta)
+
+    fun selectStatus(value: String) {
+        ratingsStatus.selectStatus(value)
+        confirmStatus()
+    }
+
+    fun confirmStatus() = ratingsStatus.confirmStatus(viewModelScope, currentGameId) { loadGame(currentGameId) }
+
+    // --- Screenshot delegate forwarding ---
+
+    fun setFocusedScreenshotIndex(index: Int) = screenshotDelegate.setFocusedScreenshotIndex(index)
+
+    fun moveScreenshotFocus(delta: Int) {
+        screenshotDelegate.moveScreenshotFocus(delta, _uiState.value.game?.screenshots ?: emptyList())
+    }
+
+    fun openScreenshotViewer(index: Int? = null) {
+        screenshotDelegate.openScreenshotViewer(_uiState.value.game?.screenshots ?: emptyList(), index)
+    }
+
+    fun closeScreenshotViewer() = screenshotDelegate.closeScreenshotViewer()
+
+    fun moveViewerIndex(delta: Int) {
+        screenshotDelegate.moveViewerIndex(delta, _uiState.value.game?.screenshots ?: emptyList())
+    }
+
+    fun setCurrentScreenshotAsBackground() {
+        screenshotDelegate.setCurrentScreenshotAsBackground(
+            viewModelScope, currentGameId, _uiState.value.game?.screenshots ?: emptyList()
+        ) { loadGame(currentGameId) }
+    }
+
+    // --- Save management delegate forwarding ---
+
+    fun showSaveCacheDialog() {
+        moreOptionsDelegate.reset()
+        saveManagement.showSaveCacheDialog(viewModelScope, currentGameId, _uiState.value.saveChannel.activeChannel) {
+            notificationManager.showError(
+                NotificationText.Res(R.string.gamedetail_notice_no_emulator_for_saves)
+            )
+        }
+    }
+
+    fun dismissSaveCacheDialog() = saveManagement.saveChannelDelegate.dismiss()
+
+    fun moveSaveCacheFocus(delta: Int) = saveManagement.saveChannelDelegate.moveFocus(delta)
+
+    fun tapSaveState(index: Int) {
+        if (saveManagement.saveChannelDelegate.state.value.isStateFocused(index)) confirmSaveCacheSelection()
+        else saveManagement.saveChannelDelegate.setFocusIndex(index)
+    }
+
+    fun tapSaveSlot(index: Int) {
+        if (saveManagement.saveChannelDelegate.state.value.isSlotFocused(index)) confirmSaveCacheSelection()
+        else saveManagement.saveChannelDelegate.setSlotIndex(index)
+    }
+
+    fun tapSaveHistory(index: Int) {
+        if (saveManagement.saveChannelDelegate.state.value.isHistoryFocused(index)) confirmSaveCacheSelection()
+        else saveManagement.saveChannelDelegate.setHistoryIndex(index)
+    }
+
+    fun handleSaveCacheLongPress(index: Int) =
+        saveManagement.saveChannelDelegate.handleLongPress(viewModelScope, index)
+
+    fun dismissSlotPicker() = saveManagement.saveChannelDelegate.dismissSlotPicker()
+
+    fun tapSlotPickerItem(index: Int) {
+        if (saveManagement.saveChannelDelegate.state.value.isSlotPickerItemFocused(index)) confirmSaveCacheSelection()
+        else saveManagement.saveChannelDelegate.setSlotPickerIndex(index)
+    }
+
+    fun focusSlotsColumn() = saveManagement.saveChannelDelegate.focusSlotsColumn()
+
+    fun focusHistoryColumn() = saveManagement.saveChannelDelegate.focusHistoryColumn()
+
+    fun switchSaveTab(tab: com.nendo.argosy.ui.common.savechannel.SaveTab) = saveManagement.saveChannelDelegate.switchTab(tab)
+
+    fun dismissScreenshotPreview() = saveManagement.saveChannelDelegate.dismissScreenshotPreview()
+
+    fun confirmSaveCacheSelection() {
+        val game = _uiState.value.game ?: return
+        saveManagement.confirmSaveCacheSelection(viewModelScope, currentGameId, game.platformId, game.platformSlug, ::handleSaveStatusChanged)
+    }
+
+    fun dismissRestoreConfirmation() = saveManagement.saveChannelDelegate.dismissRestoreConfirmation()
+
+    fun restoreSave(syncToServer: Boolean) {
+        val game = _uiState.value.game ?: return
+        saveManagement.restoreSave(viewModelScope, currentGameId, game.platformId, game.platformSlug, syncToServer, ::handleSaveStatusChanged)
+    }
+
+    fun dismissRenameDialog() = saveManagement.saveChannelDelegate.dismissRenameDialog()
+
+    fun updateRenameText(text: String) = saveManagement.saveChannelDelegate.updateRenameText(text)
+
+    fun confirmRename() = saveManagement.saveChannelDelegate.confirmRename(viewModelScope)
+
+    fun saveChannelSecondaryAction() = saveManagement.saveChannelDelegate.secondaryAction()
+
+    fun saveChannelTertiaryAction() = saveManagement.saveChannelDelegate.tertiaryAction(viewModelScope)
+
+    fun dismissDeleteConfirmation() = saveManagement.saveChannelDelegate.dismissDeleteConfirmation()
+
+    fun confirmDelete() = saveManagement.saveChannelDelegate.confirmDelete(viewModelScope, ::handleSaveStatusChanged)
+
+    fun dismissMigrateConfirmation() = saveManagement.saveChannelDelegate.dismissMigrateConfirmation()
+
+    fun confirmMigrateChannel() {
+        val game = _uiState.value.game ?: return
+        saveManagement.confirmMigrateChannel(viewModelScope, currentGameId, game.platformId, game.platformSlug, ::handleSaveStatusChanged)
+    }
+
+    fun syncSavesNow() {
+        if (_uiState.value.isSyncingSaves) return
+        val game = _uiState.value.game ?: return
+        saveManagement.syncCurrentChannel(
+            scope = viewModelScope,
+            gameId = currentGameId,
+            platformId = game.platformId,
+            platformSlug = game.platformSlug,
+            channelName = _uiState.value.saveChannel.activeChannel,
+            onLoadingChange = { syncing -> _uiState.update { it.copy(isSyncingSaves = syncing) } },
+            onSyncStatusChanged = ::handleSaveStatusChanged
+        )
+    }
+
+    fun dismissDeleteLegacyConfirmation() = saveManagement.saveChannelDelegate.dismissDeleteLegacyConfirmation()
+
+    fun confirmDeleteLegacyChannel() = saveManagement.saveChannelDelegate.confirmDeleteLegacyChannel(viewModelScope)
+
+    fun dismissStateDeleteConfirmation() = saveManagement.saveChannelDelegate.dismissStateDeleteConfirmation()
+
+    fun confirmDeleteState() = saveManagement.saveChannelDelegate.confirmDeleteState(viewModelScope)
+
+    fun dismissVersionMismatch() = saveManagement.saveChannelDelegate.dismissVersionMismatch()
+
+    fun confirmVersionMismatch() = saveManagement.saveChannelDelegate.confirmVersionMismatch(viewModelScope)
+
+    fun dismissStateReplaceAutoConfirmation() = saveManagement.saveChannelDelegate.dismissStateReplaceAutoConfirmation()
+
+    fun confirmReplaceAutoWithSlot() = saveManagement.saveChannelDelegate.confirmReplaceAutoWithSlot(viewModelScope)
+
+    private fun handleSaveStatusChanged(event: SaveStatusEvent) {
+        _uiState.update { state ->
+            state.copy(
+                saveChannel = state.saveChannel.copy(activeChannel = event.channelName),
+                saveStatusInfo = SaveStatusInfo(
+                    status = state.saveStatusInfo?.status ?: com.nendo.argosy.ui.screens.gamedetail.components.SaveSyncStatus.NO_SAVE,
+                    channelName = event.channelName,
+                    activeSaveTimestamp = event.timestamp,
+                    lastSyncTime = if (event.timestamp != null) null else state.saveStatusInfo?.lastSyncTime
+                )
+            )
+        }
+        viewModelScope.launch {
+            val state = _uiState.value
+            val game = state.game ?: return@launch
+            val emulatorId = emulatorResolver.getEmulatorIdForGame(currentGameId, game.platformId, game.platformSlug)
+                ?: return@launch
+            val fresh = saveManagement.loadSaveStatusInfo(
+                currentGameId, emulatorId, event.channelName,
+                event.timestamp ?: state.saveStatusInfo?.activeSaveTimestamp,
+                includeServer = com.nendo.argosy.util.NetworkUtils.isOnline(context)
+            )
+            if (fresh != null) {
+                _uiState.update { it.copy(saveStatusInfo = fresh) }
+            }
+        }
+    }
+
+    // --- Per-game settings ---
+
+    fun showPerGameSettings() {
+        viewModelScope.launch { perGameSettingsDelegate.show(currentGameId) }
+    }
+
+    fun dismissPerGameSettings() = perGameSettingsDelegate.dismiss()
+
+    fun movePerGameSettingsFocus(delta: Int) = perGameSettingsDelegate.moveFocus(delta)
+
+    fun openPerGameSavePathBrowser() = perGameSettingsDelegate.openPathBrowser()
+
+    fun dismissPerGameSavePathBrowser() = perGameSettingsDelegate.dismissPathBrowser()
+
+    fun setPerGameSavePath(path: String) {
+        perGameSettingsDelegate.dismissPathBrowser()
+        viewModelScope.launch { perGameSettingsDelegate.setSavePath(currentGameId, path) }
+    }
+
+    fun clearPerGameSavePath() {
+        viewModelScope.launch { perGameSettingsDelegate.clearSavePath(currentGameId) }
+    }
+
+    fun cyclePerGameDisplayTarget(direction: Int) {
+        viewModelScope.launch { perGameSettingsDelegate.cycleDisplayTarget(currentGameId, direction) }
+    }
+
+    fun cyclePerGameExtension(direction: Int) {
+        viewModelScope.launch { perGameSettingsDelegate.cycleExtension(currentGameId, direction) }
+    }
+
+    fun cyclePerGameGpuDriver(direction: Int) {
+        viewModelScope.launch { perGameSettingsDelegate.cycleGpuDriver(currentGameId, direction) }
+    }
+
+    fun cyclePerGameBackend(direction: Int) {
+        viewModelScope.launch { perGameSettingsDelegate.cycleBackend(currentGameId, direction) }
+    }
+
+    fun openPerGameGpuDriverPicker() = perGameSettingsDelegate.openGpuDriverPicker()
+
+    fun dismissPerGameGpuDriverPicker() = perGameSettingsDelegate.dismissGpuDriverPicker()
+
+    fun selectPerGameGpuDriverEntry(index: Int) {
+        val entry = perGameSettingsDelegate.state.value.gpuDriverPicker.getOrNull(index) ?: return
+        viewModelScope.launch { perGameSettingsDelegate.applyGpuDriverEntry(currentGameId, entry) }
+    }
+
+    fun openPerGameMemcardPicker() = perGameSettingsDelegate.openMemcardPicker()
+
+    fun dismissPerGameMemcardPicker() = perGameSettingsDelegate.dismissMemcardPicker()
+
+    fun movePerGameMemcardFocus(delta: Int) = perGameSettingsDelegate.moveMemcardPickerFocus(delta)
+
+    fun selectPerGameMemcard(path: String) {
+        viewModelScope.launch { perGameSettingsDelegate.selectMemcard(currentGameId, path) }
+    }
+
+    fun confirmPerGameMemcardSelection() {
+        val st = perGameSettingsDelegate.state.value
+        val path = st.memcardPickerCards.getOrNull(st.memcardPickerFocusIndex)?.path ?: return
+        selectPerGameMemcard(path)
+    }
+
+    fun confirmPerGameSetting(onNavigateToPlatformSettings: (Long) -> Unit) {
+        val st = _uiState.value.perGameSettings
+        when (st.focusedRow) {
+            PerGameSettingsRow.EMULATOR -> showEmulatorPicker()
+            PerGameSettingsRow.CORE -> showCorePicker()
+            PerGameSettingsRow.SAVE_PATH -> {
+                if (st.pathButtonIndex == 1 && st.isSavePathOverride) clearPerGameSavePath()
+                else openPerGameSavePathBrowser()
+            }
+            PerGameSettingsRow.SAVE_BASE_PATH -> {
+                dismissPerGameSettings()
+                _uiState.value.game?.platformId?.let(onNavigateToPlatformSettings)
+            }
+            PerGameSettingsRow.MEMCARD -> openPerGameMemcardPicker()
+            PerGameSettingsRow.DISPLAY_TARGET -> cyclePerGameDisplayTarget(1)
+            PerGameSettingsRow.EXTENSION -> cyclePerGameExtension(1)
+            PerGameSettingsRow.BACKEND -> cyclePerGameBackend(1)
+            PerGameSettingsRow.GPU_DRIVER -> openPerGameGpuDriverPicker()
+            PerGameSettingsRow.PLATFORM_SETTINGS -> {
+                dismissPerGameSettings()
+                _uiState.value.game?.platformId?.let(onNavigateToPlatformSettings)
+            }
+            null -> {}
+        }
+    }
+
+    private fun adjustPerGameSetting(direction: Int) {
+        val st = _uiState.value.perGameSettings
+        when (st.focusedRow) {
+            PerGameSettingsRow.SAVE_PATH -> perGameSettingsDelegate.movePathButton(-direction)
+            PerGameSettingsRow.DISPLAY_TARGET -> cyclePerGameDisplayTarget(direction)
+            PerGameSettingsRow.EXTENSION -> cyclePerGameExtension(direction)
+            PerGameSettingsRow.BACKEND -> cyclePerGameBackend(direction)
+            PerGameSettingsRow.GPU_DRIVER -> cyclePerGameGpuDriver(direction)
+            else -> {}
+        }
+    }
+
+    fun createPerGameSettingsInputHandler(
+        onNavigateToPlatformSettings: (Long) -> Unit
+    ): InputHandler = object : InputHandler {
+        override fun onUp(): InputResult {
+            val picker = pickerModalDelegate.state.value
+            when {
+                perGameSettingsDelegate.state.value.showMemcardPicker -> movePerGameMemcardFocus(-1)
+                picker.showEmulatorPicker -> moveEmulatorPickerFocus(-1)
+                picker.showCorePicker -> moveCorePickerFocus(-1)
+                else -> movePerGameSettingsFocus(-1)
+            }
+            return InputResult.HANDLED
+        }
+
+        override fun onDown(): InputResult {
+            val picker = pickerModalDelegate.state.value
+            when {
+                perGameSettingsDelegate.state.value.showMemcardPicker -> movePerGameMemcardFocus(1)
+                picker.showEmulatorPicker -> moveEmulatorPickerFocus(1)
+                picker.showCorePicker -> moveCorePickerFocus(1)
+                else -> movePerGameSettingsFocus(1)
+            }
+            return InputResult.HANDLED
+        }
+
+        override fun onLeft(): InputResult {
+            if (perGameSettingsDelegate.state.value.showMemcardPicker) return InputResult.HANDLED
+            if (!pickerModalDelegate.state.value.hasAnyPickerOpen) adjustPerGameSetting(-1)
+            return InputResult.HANDLED
+        }
+
+        override fun onRight(): InputResult {
+            if (perGameSettingsDelegate.state.value.showMemcardPicker) return InputResult.HANDLED
+            if (!pickerModalDelegate.state.value.hasAnyPickerOpen) adjustPerGameSetting(1)
+            return InputResult.HANDLED
+        }
+
+        override fun onConfirm(): InputResult {
+            val picker = pickerModalDelegate.state.value
+            when {
+                perGameSettingsDelegate.state.value.showMemcardPicker -> confirmPerGameMemcardSelection()
+                picker.showEmulatorPicker -> confirmEmulatorSelection()
+                picker.showCorePicker -> confirmCoreSelection()
+                else -> confirmPerGameSetting(onNavigateToPlatformSettings)
+            }
+            return InputResult.HANDLED
+        }
+
+        override fun onBack(): InputResult {
+            val picker = pickerModalDelegate.state.value
+            when {
+                perGameSettingsDelegate.state.value.showMemcardPicker -> dismissPerGameMemcardPicker()
+                picker.showEmulatorPicker -> dismissEmulatorPicker()
+                picker.showCorePicker -> dismissCorePicker()
+                else -> dismissPerGameSettings()
+            }
+            return InputResult.HANDLED
+        }
+
+        override fun onMenu(): InputResult = InputResult.HANDLED
+        override fun onSecondaryAction(): InputResult = InputResult.HANDLED
+        override fun onContextMenu(): InputResult = InputResult.HANDLED
+        override fun onPrevSection(): InputResult = InputResult.HANDLED
+        override fun onNextSection(): InputResult = InputResult.HANDLED
+
+        override fun onSelect(): InputResult {
+            dismissAllModals()
+            return InputResult.HANDLED
+        }
+    }
+
+    // --- Picker delegate forwarding ---
+
+    private fun overriddenArtSlots(): Set<ArtSlot> = _uiState.value.game?.overriddenArtSlots.orEmpty()
+
+    fun showArtwork() {
+        if (_uiState.value.game == null) return
+        moreOptionsDelegate.reset()
+        showArtPicker(ArtSlot.COVER)
+    }
+
+    fun switchArtSlot(delta: Int) = selectArtSlot(pickerModalDelegate.state.value.artPickerSlot.stepped(delta))
+
+    fun selectArtSlot(slot: ArtSlot) {
+        val picker = pickerModalDelegate.state.value
+        if (!picker.showArtPicker || picker.artPickerSlot == slot) return
+        showArtPicker(slot, switching = true)
+    }
+
+    private fun revertArtwork(slot: ArtSlot) {
+        val gameId = currentGameId
+        closeArtwork()
+        artworkDelegate.revertOverride(viewModelScope, gameId, slot) { loadGame(gameId) }
+    }
+
+    private fun showArtPicker(slot: ArtSlot, switching: Boolean = false) {
+        val state = _uiState.value
+        val game = state.game ?: return
+        val canSearch = slot.pickerConfig.canSearch(state.canSearchCovers)
+        if (switching) {
+            pickerModalDelegate.switchArtSlot(slot, game.title, canSearch)
+        } else {
+            pickerModalDelegate.showArtPicker(slot, game.title, canSearch)
+        }
+        serverArtCandidates = emptyList()
+        pickerModalDelegate.setArtPickerSearching()
+        viewModelScope.launch {
+            val serverArt = loadServerArt(slot)
+            val current = pickerModalDelegate.state.value
+            if (!current.showArtPicker || current.artPickerSlot != slot) return@launch
+            serverArtCandidates = serverArt
+            if (canSearch) {
+                searchArtwork(game.title)
+            } else {
+                showArtCandidates(slot, offlineArtCandidates(slot))
+            }
+        }
+    }
+
+    private fun showArtCandidates(slot: ArtSlot, candidates: List<ArtCandidate>, error: String? = null) =
+        pickerModalDelegate.setArtCandidates(withRevertTile(slot, overriddenArtSlots(), candidates), error)
+
+    private suspend fun loadServerArt(slot: ArtSlot): List<ArtCandidate> {
+        val rommId = gameRepository.getById(currentGameId)?.rommId ?: return emptyList()
+        return when (val result = romMRepository.getServerArt(rommId, slot)) {
+            is RomMResult.Success -> result.data.map { art ->
+                ArtCandidate(source = art.url, originRes = art.provider.labelRes)
+            }
+            is RomMResult.Error -> emptyList()
+        }
+    }
+
+    private fun offlineArtCandidates(slot: ArtSlot): List<ArtCandidate> =
+        serverArtCandidates.ifEmpty { screenshotCandidates(slot) }
+
+    private fun screenshotCandidates(slot: ArtSlot): List<ArtCandidate> {
+        if (!slot.pickerConfig.offersScreenshots) return emptyList()
+        return _uiState.value.game?.screenshots.orEmpty().map { shot ->
+            ArtCandidate(source = shot.cachedPath ?: shot.remoteUrl)
+        }
+    }
+
+    fun setArtPickerQuery(query: String) = pickerModalDelegate.setArtPickerQuery(query)
+
+    fun openArtFileBrowser() = pickerModalDelegate.openArtFileBrowser()
+
+    /**
+     * Runs the artwork search for the open picker's slot against whatever the user has typed,
+     * which is the stored title only until they change it.
+     */
+    fun searchArtwork(query: String = pickerModalDelegate.state.value.artPickerQuery) {
+        val picker = pickerModalDelegate.state.value
+        if (!picker.showArtPicker || !picker.artPickerCanSearch) return
+        val slot = picker.artPickerSlot
+        val artType = RomMCoverArtType.forSlot(slot) ?: return
+        val term = query.trim()
+        if (term.isEmpty()) {
+            showArtCandidates(slot, offlineArtCandidates(slot))
+            return
+        }
+        pickerModalDelegate.setArtPickerSearching()
+        viewModelScope.launch {
+            val onServer = offlineArtCandidates(slot)
+            val result = romMRepository.searchCovers(term, artType)
+            val current = pickerModalDelegate.state.value
+            if (!current.showArtPicker || current.artPickerSlot != slot) return@launch
+            when (result) {
+                is RomMResult.Success -> showArtCandidates(
+                    slot,
+                    serverArtCandidates + result.data.mapNotNull { resource ->
+                        resource.url?.let { url ->
+                            ArtCandidate(
+                                source = url,
+                                thumbUrl = resource.thumb,
+                                width = resource.width,
+                                height = resource.height,
+                                originRes = R.string.gamedetail_art_picker_origin_steamgriddb
+                            )
+                        }
+                    } + screenshotCandidates(slot).takeIf { serverArtCandidates.isEmpty() }.orEmpty()
+                )
+                is RomMResult.Error -> showArtCandidates(
+                    slot,
+                    onServer,
+                    error = context.getString(R.string.gamedetail_art_picker_error, result.message)
+                )
+            }
+        }
+    }
+
+    fun selectArtCandidate(candidate: ArtCandidate) {
+        val slot = pickerModalDelegate.state.value.artPickerSlot
+        if (candidate.isRevert) revertArtwork(slot) else applyArtwork(slot, candidate.source)
+    }
+
+    fun selectArtFile(path: String) {
+        applyArtwork(pickerModalDelegate.state.value.artPickerSlot, path)
+    }
+
+    fun closeArtFileBrowser() = pickerModalDelegate.closeArtFileBrowser()
+
+    private fun applyArtwork(slot: ArtSlot, source: String) {
+        val gameId = currentGameId
+        closeArtwork()
+        artworkDelegate.applyOverride(viewModelScope, gameId, slot, source) { loadGame(gameId) }
+    }
+
+    fun dismissArtPicker() {
+        closeArtwork()
+        moreOptionsDelegate.toggleMoreOptions()
+    }
+
+    private fun closeArtwork() = pickerModalDelegate.dismissArtPicker()
+
+    fun moveArtPickerFocus(delta: Int) = pickerModalDelegate.moveArtPickerFocus(delta)
+
+    private fun confirmArtPickerSelection() {
+        val picker = pickerModalDelegate.state.value
+        val candidate = picker.artCandidates.getOrNull(picker.artPickerFocusIndex)
+        if (candidate == null) openArtFileBrowser() else selectArtCandidate(candidate)
+    }
+
+    fun showEmulatorPicker() {
+        val game = _uiState.value.game ?: return
+        moreOptionsDelegate.reset()
+        viewModelScope.launch {
+            val builtinEnabled = preferencesRepository.userPreferences.first().builtinLibretroEnabled
+            pickerModalDelegate.showEmulatorPicker(game.id, game.platformId, game.platformSlug, builtinEnabled)
+        }
+    }
+
+    fun dismissEmulatorPicker() = pickerModalDelegate.dismissEmulatorPicker()
+    fun moveEmulatorPickerFocus(delta: Int) = pickerModalDelegate.moveEmulatorPickerFocus(delta)
+    fun confirmEmulatorSelection() = pickerModalDelegate.confirmEmulatorSelection()
+
+    fun showDiscPicker() { toggleMoreOptions(); playGame() }
+    fun showVariantPickerFromMenu() {
+        toggleMoreOptions()
+        viewModelScope.launch {
+            val game = gameRepository.getById(currentGameId) ?: return@launch
+            val options = variantResolver.getVariantOptions(game) ?: return@launch
+            pickerModalDelegate.showVariantPicker(options, game.activeVariantFileId)
+        }
+    }
+
+    private fun confirmOrDownloadFocusedVariant() {
+        val pickerState = pickerModalDelegate.state.value
+        val variant = pickerState.variantPickerOptions.getOrNull(pickerState.variantPickerFocusIndex) ?: return
+        when {
+            variant.isDownloaded -> pickerModalDelegate.confirmVariantSelection()
+            variant.fileId != null -> downloadVariant(variant.fileId)
+        }
+    }
+
+    fun downloadVariant(fileId: Long) {
+        viewModelScope.launch {
+            val game = gameRepository.getById(currentGameId) ?: return@launch
+            val file = gameFileDao.getById(fileId) ?: return@launch
+            val rommFileId = file.rommFileId
+            if (rommFileId == null) {
+                notificationManager.showError(
+                    NotificationText.Res(R.string.gamedetail_notice_variant_local_only)
+                )
+                return@launch
+            }
+            pickerModalDelegate.dismissVariantPicker()
+            downloadManager.enqueueGameFileDownload(
+                gameId = game.id,
+                gameFileId = file.id,
+                rommFileId = rommFileId,
+                fileName = file.fileName,
+                category = file.category,
+                gameTitle = game.title,
+                platformSlug = game.platformSlug,
+                coverPath = gameRepository.getArt(game.id).coverPath,
+                expectedSizeBytes = file.fileSize,
+                gameFolderName = game.rommFileName
+            )
+            notificationManager.showSuccess(
+                NotificationText.Res(R.string.gamedetail_notice_downloading_variant, listOf(file.fileName))
+            )
+        }
+    }
+    fun dismissDiscPicker() = pickerModalDelegate.dismissDiscPicker()
+
+    fun selectMemcard(cardPath: String) = gameLaunchDelegate.selectMemcard(viewModelScope, cardPath)
+    fun dismissMemcardPicker() = gameLaunchDelegate.dismissMemcardPicker()
+    val menuWrapMode get() = preferencesRepository.menuWrapMode
+
+    fun setMemcardPickerFocusIndex(index: Int) {
+        _uiState.update { it.copy(memcardPickerFocusIndex = index) }
+    }
+
+    fun selectLaunchVariant(variantFileId: Long?) = gameLaunchDelegate.selectVariant(viewModelScope, variantFileId)
+    fun dismissLaunchVariantPicker() = gameLaunchDelegate.dismissVariantPicker()
+    fun setLaunchVariantPickerFocusIndex(index: Int) {
+        _uiState.update { it.copy(launchVariantPickerFocusIndex = index) }
+    }
+    fun navigateDiscPicker(direction: Int) = pickerModalDelegate.moveDiscPickerFocus(direction)
+    fun selectFocusedDisc() = pickerModalDelegate.confirmDiscSelection()
+
+    fun showSteamLauncherPicker() {
+        val game = _uiState.value.game ?: return
+        if (!game.isSteamGame) return
+        moreOptionsDelegate.reset()
+        pickerModalDelegate.showSteamLauncherPicker()
+    }
+
+    fun dismissSteamLauncherPicker() = pickerModalDelegate.dismissSteamLauncherPicker()
+    fun moveSteamLauncherPickerFocus(delta: Int) = pickerModalDelegate.moveSteamLauncherPickerFocus(delta)
+    fun confirmSteamLauncherSelection() = pickerModalDelegate.confirmSteamLauncherSelection()
+
+    fun showCorePicker() {
+        val game = _uiState.value.game ?: return
+        if (!game.hasMultipleCores) return
+        moreOptionsDelegate.reset()
+        pickerModalDelegate.showCorePicker(game.platformSlug, _uiState.value.selectedCoreId, game.isBuiltInEmulator)
+    }
+
+    fun dismissCorePicker() = pickerModalDelegate.dismissCorePicker()
+    fun moveCorePickerFocus(delta: Int) = pickerModalDelegate.moveCorePickerFocus(delta)
+    fun confirmCoreSelection() = pickerModalDelegate.confirmCoreSelection()
+
+    // --- Game actions ---
+
+    fun toggleFavorite() {
+        viewModelScope.launch {
+            gameActions.toggleFavorite(currentGameId)
+            loadGame(currentGameId)
+        }
+    }
+
+    fun toggleHideGame() {
+        viewModelScope.launch {
+            val isHidden = _uiState.value.game?.isHidden ?: false
+            if (isHidden) gameActions.unhideGame(currentGameId) else gameActions.hideGame(currentGameId)
+            loadGame(currentGameId)
+        }
+    }
+
+    fun togglePrivacy() {
+        val game = _uiState.value.game ?: return
+        val igdbId = game.igdbId?.toInt()
+        val steamAppId = game.steamAppId?.toInt()
+        if (igdbId == null && steamAppId == null) return
+        socialRepository.toggleGameVisibility(igdbId, steamAppId, _uiState.value.isPrivate)
+    }
+
+    private fun refreshAndroidOrRommData() {
+        val game = _uiState.value.game ?: return
+        if (game.isAndroidApp) {
+            val packageName = game.packageName ?: return
+            moreOptionsDelegate.reset()
+            downloadDelegate.refreshAndroidAppData(viewModelScope, currentGameId, packageName) { loadGame(currentGameId) }
+        } else {
+            moreOptionsDelegate.reset()
+            refreshGameData()
+        }
+    }
+
+    private fun refreshTitleId() {
+        val gameId = _uiState.value.game?.id ?: return
+        viewModelScope.launch {
+            val result = titleIdDownloadObserver.recheckTitleId(gameId)
+            if (result is TitleIdRecheck.Found) loadGame(gameId)
+            notificationManager.reportTitleIdRecheck(context, result)
+        }
+    }
+
+    fun showLaunchError(message: NotificationText) = notificationManager.showError(message)
+
+    // --- Navigation ---
+
+    fun navigateToPreviousGame() {
+        gameNavigationContext.getPreviousGameId(currentGameId)?.let { prevId ->
+            _uiState.update { it.copy(menuFocusIndex = 0) }
+            loadGame(prevId)
+        }
+    }
+
+    fun navigateToNextGame() {
+        gameNavigationContext.getNextGameId(currentGameId)?.let { nextId ->
+            _uiState.update { it.copy(menuFocusIndex = 0) }
+            loadGame(nextId)
+        }
+    }
+
+    // --- Menu ---
+
+    private fun menuLayoutState(): MenuLayoutState {
+        return _uiState.value.menuLayoutState
+    }
+
+    fun moveMenuFocus(delta: Int) {
+        val maxIndex = menuLayout.maxFocusIndex(menuLayoutState())
+        _uiState.update { state ->
+            val newIndex = (state.menuFocusIndex + delta).coerceIn(0, maxIndex)
+            state.copy(menuFocusIndex = newIndex)
+        }
+    }
+
+    fun setMenuFocusIndex(index: Int) {
+        val maxIndex = menuLayout.maxFocusIndex(menuLayoutState())
+        _uiState.update { state ->
+            state.copy(menuFocusIndex = index.coerceIn(0, maxIndex))
+        }
+    }
+
+    fun executeMenuAction() {
+        val state = menuLayoutState()
+        when (menuLayout.itemAtFocusIndex(_uiState.value.menuFocusIndex, state)) {
+            MenuItem.Play -> primaryAction()
+            MenuItem.Saves -> syncSavesNow()
+            MenuItem.Favorite -> toggleFavorite()
+            MenuItem.Privacy -> togglePrivacy()
+            MenuItem.PerGameSettings -> showPerGameSettings()
+            MenuItem.Options -> toggleMoreOptions()
+            MenuItem.Details -> {}
+            MenuItem.Description -> {}
+            MenuItem.Screenshots -> openScreenshotViewer()
+            MenuItem.Documents -> openFocusedDocument()
+            MenuItem.Reviews -> showReviewList()
+            MenuItem.Achievements -> showAchievementList()
+            MenuItem.RelatedGames -> {}
+            null -> {}
+        }
+    }
+
+    private fun loadRelatedGames(game: com.nendo.argosy.data.local.entity.GameEntity) {
+        _uiState.update { it.copy(relatedGames = emptyList(), relatedFocusIndex = 0) }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val related = getRelatedGamesUseCase(game)
+            val platformNames = related.map { it.platformId }.distinct()
+                .mapNotNull { pid -> platformRepository.getById(pid)?.let { pid to it.name } }
+                .toMap()
+            val art = gameRepository.getArt(related.map { it.id })
+            val ui = related.map { item ->
+                val mapped = item.toHomeGameUi(downloadFileStatusRepository, art[item.id], platformNames[item.platformId])
+                gradientExtractionDelegate.getGradient(mapped.id)
+                    ?.let { mapped.copy(gradientColors = it) } ?: mapped
+            }
+            if (currentGameId == game.id) {
+                _uiState.update { it.copy(relatedGames = ui, relatedFocusIndex = 0) }
+            }
+            val requests = related.map {
+                com.nendo.argosy.ui.screens.common.GameGradientRequest(it.id, art[it.id]?.coverPath)
+            }
+            gradientExtractionDelegate.extractForVisibleGames(
+                viewModelScope, requests, focusedIndex = 0, buffer = requests.size
+            )
+        }
+    }
+
+    fun moveRelatedFocus(delta: Int) {
+        _uiState.update { state ->
+            if (state.relatedGames.isEmpty()) state
+            else state.copy(relatedFocusIndex = (state.relatedFocusIndex + delta).coerceIn(0, state.relatedGames.size - 1))
+        }
+    }
+
+    fun setRelatedFocusIndex(index: Int) {
+        _uiState.update { state ->
+            if (state.relatedGames.isEmpty()) state
+            else state.copy(relatedFocusIndex = index.coerceIn(0, state.relatedGames.size - 1))
+        }
+    }
+
+    fun focusedRelatedGameId(): Long? =
+        _uiState.value.let { it.relatedGames.getOrNull(it.relatedFocusIndex)?.id }
+
+    // --- Achievements ---
+
+    fun showReviewList() {
+        val igdbId = _uiState.value.game?.igdbId?.toInt() ?: return
+        socialRepository.requestGameReviews(igdbId)
+        _uiState.update { it.copy(showReviewList = true, reviewListFocusIndex = 0) }
+    }
+
+    fun hideReviewList() {
+        _uiState.update { it.copy(showReviewList = false, reviewListFocusIndex = 0) }
+    }
+
+    /**
+     * Reaching the end of the list asks for the next public page. The friends block and the
+     * caller's own review sit above it and never grow, so only the tail can load more.
+     */
+    fun moveReviewListFocus(delta: Int) {
+        val state = _uiState.value
+        val count = reviewListEntryCount(state)
+        if (count == 0) return
+        _uiState.update { current ->
+            current.copy(reviewListFocusIndex = (current.reviewListFocusIndex + delta).coerceIn(0, count - 1))
+        }
+        val page = state.reviewPage ?: return
+        if (delta > 0 && _uiState.value.reviewListFocusIndex >= count - 1) {
+            socialRepository.loadMoreGameReviews(page.igdbId)
+        }
+    }
+
+    private fun reviewListEntryCount(state: GameDetailUiState): Int {
+        val writeRow = if (state.reviewListHasWriteRow) 1 else 0
+        val page = state.reviewPage ?: return writeRow
+        return writeRow + (if (page.myReview != null) 1 else 0) + page.friends.size + page.public.size
+    }
+
+    fun tapReviewListEntry(index: Int) {
+        val count = reviewListEntryCount(_uiState.value)
+        if (count == 0) return
+        _uiState.update { it.copy(reviewListFocusIndex = index.coerceIn(0, count - 1)) }
+        confirmReviewListSelection()
+    }
+
+    /**
+     * Only the first row can be acted on: it is either the reader's own review or the row that
+     * stands in for it. Every other card belongs to someone else.
+     */
+    fun confirmReviewListSelection() {
+        val state = _uiState.value
+        if (state.reviewListFocusIndex != 0) return
+        if (state.reviewListHasWriteRow || state.reviewPage?.myReview != null) openReviewEditor()
+    }
+
+    fun openReviewEditor() {
+        val state = _uiState.value
+        val game = state.game ?: return
+        val igdbId = game.igdbId?.toInt() ?: return
+        if (!state.hasSocialAccount || state.reviewEditor != null) return
+        val existing = state.reviewPage?.myReview ?: state.reviewSummary?.myReview
+        _uiState.update {
+            it.copy(
+                reviewEditor = ReviewEditorState.forGame(
+                    igdbId = igdbId,
+                    gameTitle = game.title,
+                    platformName = game.platformName,
+                    coverPath = game.coverPath,
+                    existing = existing
+                )
+            )
+        }
+    }
+
+    fun closeReviewEditor() {
+        _uiState.update { it.copy(reviewEditor = null) }
+    }
+
+    private inline fun updateReviewEditor(transform: (ReviewEditorState) -> ReviewEditorState) {
+        _uiState.update { state ->
+            val editor = state.reviewEditor ?: return@update state
+            state.copy(reviewEditor = transform(editor))
+        }
+    }
+
+    fun moveReviewEditorSection(delta: Int) = updateReviewEditor { it.movedSection(delta) }
+
+    fun focusReviewEditorSection(section: ReviewEditorSection) = updateReviewEditor { it.focusedOn(section) }
+
+    fun adjustReviewEditor(delta: Int) = updateReviewEditor { it.adjusted(delta) }
+
+    fun setReviewEditorVerdict(recommended: Boolean) = updateReviewEditor { it.withVerdict(recommended) }
+
+    fun setReviewEditorVisibility(visibility: String) = updateReviewEditor { it.withVisibility(visibility) }
+
+    fun setReviewEditorBody(text: String) = updateReviewEditor { it.withBody(text) }
+
+    fun requestReviewEditorKeyboard() = updateReviewEditor { it.requestingKeyboard() }
+
+    fun submitReview() {
+        val editor = _uiState.value.reviewEditor ?: return
+        if (editor.hasConfirm || !editor.canSubmit) return
+        updateReviewEditor { it.submitting() }
+        socialRepository.upsertReview(editor.igdbId, editor.recommended, editor.bodyToSend, editor.visibility)
+    }
+
+    fun promptReviewDelete() = updateReviewEditor { it.promptingDelete() }
+
+    fun confirmReviewDelete() {
+        val editor = _uiState.value.reviewEditor ?: return
+        if (!editor.isEditing || editor.isSubmitting) return
+        updateReviewEditor { it.submitting() }
+        socialRepository.deleteReview(editor.igdbId)
+    }
+
+    fun dismissReviewEditorConfirm() = updateReviewEditor { it.withoutConfirm() }
+
+    fun backFromReviewEditor() {
+        val editor = _uiState.value.reviewEditor ?: return
+        when {
+            editor.hasConfirm -> dismissReviewEditorConfirm()
+            editor.isSubmitting -> {}
+            editor.isDirty -> updateReviewEditor { it.promptingDiscard() }
+            else -> closeReviewEditor()
+        }
+    }
+
+    fun confirmReviewEditorAction() {
+        val editor = _uiState.value.reviewEditor ?: return
+        when {
+            editor.showDiscardConfirm ->
+                if (editor.confirmFocusIndex == 1) closeReviewEditor() else dismissReviewEditorConfirm()
+            editor.showDeleteConfirm ->
+                if (editor.confirmFocusIndex == 1) confirmReviewDelete() else dismissReviewEditorConfirm()
+            else -> when (editor.confirmAction()) {
+                ReviewEditorAction.TOGGLE -> adjustReviewEditor(1)
+                ReviewEditorAction.OPEN_KEYBOARD -> requestReviewEditorKeyboard()
+                ReviewEditorAction.SUBMIT -> submitReview()
+                ReviewEditorAction.DELETE -> promptReviewDelete()
+            }
+        }
+    }
+
+    fun showAchievementList() {
+        _uiState.update { it.copy(showAchievementList = true, achievementListFocusIndex = 0) }
+    }
+
+    fun hideAchievementList() {
+        _uiState.update { it.copy(showAchievementList = false, achievementListFocusIndex = 0) }
+    }
+
+    fun moveAchievementListFocus(delta: Int) {
+        val achievements = _uiState.value.game?.achievements ?: return
+        if (achievements.isEmpty()) return
+        _uiState.update { state ->
+            val newIndex = (state.achievementListFocusIndex + delta).coerceIn(0, achievements.size - 1)
+            state.copy(achievementListFocusIndex = newIndex)
+        }
+    }
+
+    // --- Collection modal ---
+
+    fun showAddToCollectionModal() {
+        val gameId = currentGameId
+        if (gameId == 0L) return
+        moreOptionsDelegate.reset()
+        collectionModalDelegate.show(viewModelScope, gameId)
+    }
+
+    fun dismissAddToCollectionModal() = collectionModalDelegate.dismiss()
+    fun moveCollectionFocusUp() = collectionModalDelegate.moveFocusUp()
+    fun moveCollectionFocusDown() = collectionModalDelegate.moveFocusDown()
+    fun confirmCollectionSelection() = collectionModalDelegate.confirmSelection(viewModelScope)
+    fun toggleGameInCollection(collectionId: Long) = collectionModalDelegate.toggleCollection(viewModelScope, collectionId)
+    fun showCreateCollectionFromModal() = collectionModalDelegate.showCreateDialog()
+    fun hideCreateCollectionDialog() = collectionModalDelegate.hideCreateDialog()
+    fun createCollectionFromModal(name: String) = collectionModalDelegate.createAndAdd(viewModelScope, name)
+
+    // --- Permission modal ---
+
+    fun dismissPermissionModal() {
+        _uiState.update { it.copy(showPermissionModal = false) }
+    }
+
+    fun openAllFilesAccessSettings() {
+        _uiState.update { it.copy(showPermissionModal = false) }
+        context.openStorageAccessSettings()
+    }
+
+    fun disableSaveSync() {
+        viewModelScope.launch {
+            preferencesRepository.setSaveSyncEnabled(false)
+            _uiState.update { it.copy(showPermissionModal = false) }
+            playGame()
+        }
+    }
+
+    // --- Modal management ---
+
+    private fun dismissAllModals() {
+        resetAllModals()
+        soundManager.play(SoundType.CLOSE_MODAL)
+    }
+
+    private fun publishCompanionDetail(detail: com.nendo.argosy.ui.dualscreen.CompanionDetail?) {
+        if (!isDescribing) return
+        val dsm = com.nendo.argosy.DualScreenManagerHolder.instance ?: return
+        if (detail == null) {
+            dsm.releaseSlot(companionOwner)
+        } else {
+            dsm.presentSlot(
+                companionOwner,
+                com.nendo.argosy.ui.dualscreen.PresentationSlot.Detail(detail)
+            )
+        }
+    }
+
+    fun republishCompanionDetail() {
+        isDescribing = true
+        heldForTimeline = false
+        val state = _uiState.value
+        publishCompanionDetail(state.game?.toCompanionDetail(state.friendsActivity))
+    }
+
+    /**
+     * Stops describing the game on the presentation screen. While the save timeline covers this
+     * screen the slot stays published until the timeline returns here or this ViewModel is cleared.
+     */
+    fun clearCompanionDetail() {
+        isDescribing = false
+        if (heldForTimeline) return
+        releaseCompanionSlot()
+    }
+
+    private fun releaseCompanionSlot() {
+        com.nendo.argosy.DualScreenManagerHolder.instance?.releaseSlot(companionOwner)
+    }
+
+    private fun resetAllModals() {
+        pickerModalDelegate.reset()
+        moreOptionsDelegate.reset()
+        perGameSettingsDelegate.reset()
+        ratingsStatus.reset()
+        playOptionsDelegate.reset()
+        screenshotDelegate.reset()
+        siblingChoice.reset()
+        _uiState.update {
+            it.copy(
+                showPermissionModal = false,
+                showAddToCollectionModal = false,
+                showCreateCollectionDialog = false,
+                showAchievementList = false,
+                saveChannel = it.saveChannel.copy(
+                    isVisible = false,
+                    showRestoreConfirmation = false,
+                    showRenameDialog = false,
+                    showDeleteConfirmation = false
+                )
+            )
+        }
+    }
+
+    // --- Input Handler ---
+
+    fun createInputHandler(
+        onBack: () -> Unit,
+        onNavigateToPlatformSettings: (Long) -> Unit = {},
+        onSnapUp: () -> Boolean = { false },
+        onSnapDown: () -> Boolean = { false },
+        onScrollContent: (direction: Int) -> Boolean = { false },
+        onSectionLeft: () -> Unit = {},
+        onSectionRight: () -> Unit = {},
+        onPrevGame: () -> Unit = {},
+        onNextGame: () -> Unit = {},
+        isInScreenshotsSection: () -> Boolean = { false },
+        onNavigateToGame: (Long) -> Unit = {}
+    ): InputHandler = object : InputHandler {
+        private fun vertical(direction: Int, onBase: () -> Boolean): InputResult {
+            routeSnapshotInput { if (direction < 0) it.onUp() else it.onDown() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            val pickerState = pickerModalDelegate.state.value
+            return when {
+                state.reviewEditor != null -> { moveReviewEditorSection(direction); InputResult.HANDLED }
+                saveState.showRenameDialog -> InputResult.UNHANDLED
+                saveState.showRestoreConfirmation -> InputResult.UNHANDLED
+                saveState.showDeleteConfirmation -> InputResult.UNHANDLED
+                saveState.isVisible -> { moveSaveCacheFocus(direction); InputResult.HANDLED }
+                state.showScreenshotViewer -> InputResult.UNHANDLED
+                state.showRatingPicker -> InputResult.UNHANDLED
+                state.showPermissionModal -> InputResult.UNHANDLED
+                state.showStatusPicker -> { changeStatusValue(direction); InputResult.HANDLED }
+                state.showMissingDiscPrompt -> InputResult.UNHANDLED
+                state.showExtractionFailedPrompt -> InputResult.HANDLED
+                pickerState.showFilePicker -> { moveFilePickerFocus(direction); InputResult.HANDLED }
+                pickerState.showCorePicker -> { moveCorePickerFocus(direction); InputResult.HANDLED }
+                pickerState.showDiscPicker -> { navigateDiscPicker(direction); InputResult.HANDLED }
+                pickerState.showArtPicker -> { moveArtPickerFocus(direction * pickerState.artPickerSlot.pickerConfig.columns); InputResult.HANDLED }
+                pickerState.showVariantPicker -> { pickerModalDelegate.moveVariantPickerFocus(direction); InputResult.HANDLED }
+                pickerState.showEmulatorPicker -> { moveEmulatorPickerFocus(direction); InputResult.HANDLED }
+                pickerState.showSteamLauncherPicker -> { moveSteamLauncherPickerFocus(direction); InputResult.HANDLED }
+                state.showAddToCollectionModal -> {
+                    if (direction < 0) moveCollectionFocusUp() else moveCollectionFocusDown()
+                    InputResult.HANDLED
+                }
+                state.showRatingsStatusMenu -> { changeRatingsStatusFocus(direction); InputResult.HANDLED }
+                state.showPlayOptions -> { movePlayOptionsFocus(direction); InputResult.HANDLED }
+                state.showMoreOptions -> { moveOptionsFocus(direction); InputResult.HANDLED }
+                state.showAchievementList -> { moveAchievementListFocus(direction); InputResult.HANDLED }
+                state.showReviewList -> { moveReviewListFocus(direction); InputResult.HANDLED }
+                else -> if (onBase()) InputResult.HANDLED else InputResult.UNHANDLED
+            }
+        }
+
+        override fun onUp(): InputResult = vertical(-1, onSnapUp)
+
+        override fun onDown(): InputResult = vertical(1, onSnapDown)
+
+        override fun onRightStickUp(): InputResult = vertical(-1) { onScrollContent(-1) }
+
+        override fun onRightStickDown(): InputResult = vertical(1) { onScrollContent(1) }
+
+        override fun onLeft(): InputResult {
+            routeSnapshotInput { it.onLeft() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            val pickerState = pickerModalDelegate.state.value
+            when {
+                state.reviewEditor != null -> { adjustReviewEditor(-1); return InputResult.HANDLED }
+                saveState.showRestoreConfirmation || saveState.showDeleteConfirmation || saveState.showRenameDialog || saveState.showMigrateConfirmation || saveState.showDeleteLegacyConfirmation -> return InputResult.HANDLED
+                saveState.isVisible -> {
+                    when (saveState.selectedTab) {
+                        com.nendo.argosy.ui.common.savechannel.SaveTab.SAVES -> focusSlotsColumn()
+                        com.nendo.argosy.ui.common.savechannel.SaveTab.STATES -> {}
+                    }
+                    return InputResult.HANDLED
+                }
+                pickerState.showArtPicker -> { moveArtPickerFocus(-1); return InputResult.HANDLED }
+                state.showScreenshotViewer -> { moveViewerIndex(-1); return InputResult.HANDLED }
+                state.showRatingPicker -> { changeRatingValue(-1); return InputResult.HANDLED }
+                state.showPermissionModal -> return InputResult.HANDLED
+                state.showStatusPicker -> return InputResult.HANDLED
+                state.showAchievementList -> return InputResult.HANDLED
+                state.showExtractionFailedPrompt -> { moveExtractionPromptFocus(-1); return InputResult.HANDLED }
+                pickerState.showFilePicker -> {
+                    if (!pickerModalDelegate.moveFilePickerButtonFocus(-1)) {
+                        pickerModalDelegate.setFocusedFilePickerGroupCollapsed(collapse = true)
+                    }
+                    return InputResult.HANDLED
+                }
+                state.showMoreOptions -> {
+                    if (isLaunchDisplayRowFocused()) cycleLaunchDisplay(-1)
+                    return InputResult.HANDLED
+                }
+                state.showAddToCollectionModal || state.showRatingsStatusMenu || state.showPlayOptions || pickerState.hasAnyPickerOpen || state.showMissingDiscPrompt -> return InputResult.HANDLED
+                else -> { onSectionLeft(); return InputResult.HANDLED }
+            }
+        }
+
+        override fun onRight(): InputResult {
+            routeSnapshotInput { it.onRight() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            val pickerState = pickerModalDelegate.state.value
+            when {
+                state.reviewEditor != null -> { adjustReviewEditor(1); return InputResult.HANDLED }
+                saveState.showRestoreConfirmation || saveState.showDeleteConfirmation || saveState.showRenameDialog || saveState.showMigrateConfirmation || saveState.showDeleteLegacyConfirmation -> return InputResult.HANDLED
+                saveState.isVisible -> {
+                    when (saveState.selectedTab) {
+                        com.nendo.argosy.ui.common.savechannel.SaveTab.SAVES -> focusHistoryColumn()
+                        com.nendo.argosy.ui.common.savechannel.SaveTab.STATES -> {}
+                    }
+                    return InputResult.HANDLED
+                }
+                pickerState.showArtPicker -> { moveArtPickerFocus(1); return InputResult.HANDLED }
+                state.showScreenshotViewer -> { moveViewerIndex(1); return InputResult.HANDLED }
+                state.showRatingPicker -> { changeRatingValue(1); return InputResult.HANDLED }
+                state.showPermissionModal -> return InputResult.HANDLED
+                state.showStatusPicker -> return InputResult.HANDLED
+                state.showAchievementList -> return InputResult.HANDLED
+                state.showExtractionFailedPrompt -> { moveExtractionPromptFocus(1); return InputResult.HANDLED }
+                pickerState.showFilePicker -> {
+                    if (!pickerModalDelegate.moveFilePickerButtonFocus(1)) {
+                        pickerModalDelegate.setFocusedFilePickerGroupCollapsed(collapse = false)
+                    }
+                    return InputResult.HANDLED
+                }
+                state.showMoreOptions -> {
+                    if (isLaunchDisplayRowFocused()) cycleLaunchDisplay(1)
+                    return InputResult.HANDLED
+                }
+                state.showAddToCollectionModal || state.showRatingsStatusMenu || state.showPlayOptions || pickerState.hasAnyPickerOpen || state.showMissingDiscPrompt -> return InputResult.HANDLED
+                else -> { onSectionRight(); return InputResult.HANDLED }
+            }
+        }
+
+        override fun onPrevSection(): InputResult {
+            routeSnapshotInput { it.onPrevSection() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            val pickerState = pickerModalDelegate.state.value
+            if (state.reviewEditor != null) return InputResult.HANDLED
+            if (pickerState.showArtPicker && !pickerState.showArtFileBrowser) { switchArtSlot(-1); return InputResult.HANDLED }
+            if (pickerState.showFilePicker) { jumpFilePickerGroup(-1); return InputResult.HANDLED }
+            if (saveState.isVisible) {
+                if (saveState.supportsStates) {
+                    val newTab = if (saveState.selectedTab == com.nendo.argosy.ui.common.savechannel.SaveTab.STATES)
+                        com.nendo.argosy.ui.common.savechannel.SaveTab.SAVES
+                    else com.nendo.argosy.ui.common.savechannel.SaveTab.STATES
+                    switchSaveTab(newTab)
+                }
+                return InputResult.HANDLED
+            }
+            if (state.showPermissionModal || state.showAchievementList) return InputResult.HANDLED
+            if (saveState.showRestoreConfirmation || state.showScreenshotViewer || state.showRatingPicker || state.showStatusPicker || state.showAddToCollectionModal || state.showRatingsStatusMenu || state.showPlayOptions || state.showMoreOptions || pickerState.hasAnyPickerOpen || state.showMissingDiscPrompt || state.showExtractionFailedPrompt) return InputResult.HANDLED
+            onPrevGame(); return InputResult.HANDLED
+        }
+
+        override fun onNextSection(): InputResult {
+            routeSnapshotInput { it.onNextSection() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            val pickerState = pickerModalDelegate.state.value
+            if (state.reviewEditor != null) return InputResult.HANDLED
+            if (pickerState.showArtPicker && !pickerState.showArtFileBrowser) { switchArtSlot(1); return InputResult.HANDLED }
+            if (pickerState.showFilePicker) { jumpFilePickerGroup(1); return InputResult.HANDLED }
+            if (saveState.isVisible) {
+                if (saveState.supportsStates) {
+                    val newTab = if (saveState.selectedTab == com.nendo.argosy.ui.common.savechannel.SaveTab.SAVES)
+                        com.nendo.argosy.ui.common.savechannel.SaveTab.STATES
+                    else com.nendo.argosy.ui.common.savechannel.SaveTab.SAVES
+                    switchSaveTab(newTab)
+                } else {
+                    saveManagement.saveChannelDelegate.syncServerSaves(viewModelScope)
+                }
+                return InputResult.HANDLED
+            }
+            if (state.showPermissionModal || state.showAchievementList) return InputResult.HANDLED
+            if (saveState.showRestoreConfirmation || state.showScreenshotViewer || state.showRatingPicker || state.showStatusPicker || state.showAddToCollectionModal || state.showRatingsStatusMenu || state.showPlayOptions || state.showMoreOptions || pickerState.hasAnyPickerOpen || state.showMissingDiscPrompt || state.showExtractionFailedPrompt) return InputResult.HANDLED
+            onNextGame(); return InputResult.HANDLED
+        }
+
+        override fun onConfirm(): InputResult {
+            routeSnapshotInput { it.onConfirm() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            val pickerState = pickerModalDelegate.state.value
+            when {
+                state.reviewEditor != null -> confirmReviewEditorAction()
+                saveState.showRenameDialog -> confirmRename()
+                saveState.showDeleteConfirmation -> confirmDelete()
+                saveState.showRestoreConfirmation -> restoreSave(syncToServer = false)
+                saveState.showMigrateConfirmation -> confirmMigrateChannel()
+                saveState.showDeleteLegacyConfirmation -> confirmDeleteLegacyChannel()
+                saveState.showVersionMismatchDialog -> confirmVersionMismatch()
+                saveState.showStateDeleteConfirmation -> confirmDeleteState()
+                saveState.showStateReplaceAutoConfirmation -> confirmReplaceAutoWithSlot()
+                saveState.showScreenshotPreview -> dismissScreenshotPreview()
+                saveState.isVisible -> confirmSaveCacheSelection()
+                state.showScreenshotViewer -> closeScreenshotViewer()
+                state.showAchievementList -> {}
+                state.showReviewList -> confirmReviewListSelection()
+                state.showPermissionModal -> return InputResult.HANDLED
+                state.showRatingPicker -> confirmRating()
+                state.showStatusPicker -> confirmStatus()
+                state.showMissingDiscPrompt -> repairAndPlay()
+                state.showExtractionFailedPrompt -> confirmExtractionPromptSelection()
+                pickerState.showFilePicker -> activateFocusedFilePickerItem()
+                pickerState.showCorePicker -> confirmCoreSelection()
+                pickerState.showDiscPicker -> selectFocusedDisc()
+                pickerState.showArtPicker -> confirmArtPickerSelection()
+                pickerState.showVariantPicker -> confirmOrDownloadFocusedVariant()
+                pickerState.showEmulatorPicker -> confirmEmulatorSelection()
+                pickerState.showSteamLauncherPicker -> confirmSteamLauncherSelection()
+                state.showAddToCollectionModal -> confirmCollectionSelection()
+                state.showRatingsStatusMenu -> confirmRatingsStatusSelection()
+                state.showPlayOptions -> confirmPlayOptionSelection()
+                state.showMoreOptions -> confirmOptionSelection(onBack, onNavigateToPlatformSettings)
+                menuLayout.itemAtFocusIndex(state.menuFocusIndex, menuLayoutState()) == MenuItem.RelatedGames ->
+                    focusedRelatedGameId()?.let(onNavigateToGame)
+                else -> executeMenuAction()
+            }
+            return InputResult.HANDLED
+        }
+
+        override fun onBack(): InputResult {
+            routeSnapshotInput { it.onBack() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            val pickerState = pickerModalDelegate.state.value
+            when {
+                state.reviewEditor != null -> backFromReviewEditor()
+                saveState.showSlotPicker -> dismissSlotPicker()
+                saveState.showRenameDialog -> dismissRenameDialog()
+                saveState.showDeleteConfirmation -> dismissDeleteConfirmation()
+                saveState.showRestoreConfirmation -> dismissRestoreConfirmation()
+                saveState.showMigrateConfirmation -> dismissMigrateConfirmation()
+                saveState.showDeleteLegacyConfirmation -> dismissDeleteLegacyConfirmation()
+                saveState.showVersionMismatchDialog -> dismissVersionMismatch()
+                saveState.showStateDeleteConfirmation -> dismissStateDeleteConfirmation()
+                saveState.showStateReplaceAutoConfirmation -> dismissStateReplaceAutoConfirmation()
+                saveState.showScreenshotPreview -> dismissScreenshotPreview()
+                saveState.isVisible -> dismissSaveCacheDialog()
+                state.showScreenshotViewer -> closeScreenshotViewer()
+                state.showAchievementList -> {
+                    if (cocoonSheet == "achievements") requestCocoonSheetExit()
+                    hideAchievementList()
+                }
+                state.showReviewList -> hideReviewList()
+                state.showRatingPicker -> dismissRatingPicker()
+                state.showStatusPicker -> dismissStatusPicker()
+                state.showMissingDiscPrompt -> dismissMissingDiscPrompt()
+                state.showExtractionFailedPrompt -> dismissExtractionPrompt()
+                pickerState.showFilePicker -> dismissFilePicker()
+                pickerState.showCorePicker -> dismissCorePicker()
+                pickerState.showDiscPicker -> dismissDiscPicker()
+                pickerState.showArtPicker -> dismissArtPicker()
+                pickerState.showVariantPicker -> pickerModalDelegate.dismissVariantPicker()
+                pickerState.showEmulatorPicker -> dismissEmulatorPicker()
+                pickerState.showSteamLauncherPicker -> dismissSteamLauncherPicker()
+                state.showPermissionModal -> dismissPermissionModal()
+                state.showAddToCollectionModal -> dismissAddToCollectionModal()
+                state.showRatingsStatusMenu -> dismissRatingsStatusMenu()
+                state.showPlayOptions -> dismissPlayOptions()
+                state.showMoreOptions -> {
+                    if (cocoonSheet == "edit") requestCocoonSheetExit()
+                    toggleMoreOptions()
+                }
+                else -> onBack()
+            }
+            return InputResult.HANDLED
+        }
+
+        override fun onMenu(): InputResult {
+            routeSnapshotInput { it.onMenu() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            val pickerState = pickerModalDelegate.state.value
+            if (state.reviewEditor != null) { submitReview(); return InputResult.HANDLED }
+            if (saveState.showSlotPicker) { dismissSlotPicker(); return InputResult.UNHANDLED }
+            if (saveState.showRenameDialog) { dismissRenameDialog(); return InputResult.UNHANDLED }
+            if (saveState.showDeleteConfirmation) { dismissDeleteConfirmation(); return InputResult.UNHANDLED }
+            if (saveState.showRestoreConfirmation) { dismissRestoreConfirmation(); return InputResult.UNHANDLED }
+            if (saveState.showScreenshotPreview) { dismissScreenshotPreview(); return InputResult.UNHANDLED }
+            if (saveState.showVersionMismatchDialog) { dismissVersionMismatch(); return InputResult.UNHANDLED }
+            if (saveState.showStateDeleteConfirmation) { dismissStateDeleteConfirmation(); return InputResult.UNHANDLED }
+            if (saveState.showStateReplaceAutoConfirmation) { dismissStateReplaceAutoConfirmation(); return InputResult.UNHANDLED }
+            if (saveState.isVisible) { dismissSaveCacheDialog(); return InputResult.UNHANDLED }
+            if (state.showRatingPicker) { dismissRatingPicker(); return InputResult.UNHANDLED }
+            if (state.showStatusPicker) { dismissStatusPicker(); return InputResult.UNHANDLED }
+            if (state.showMissingDiscPrompt) { dismissMissingDiscPrompt(); return InputResult.UNHANDLED }
+            if (pickerState.showCorePicker) { dismissCorePicker(); return InputResult.UNHANDLED }
+            if (state.showPlayOptions) { dismissPlayOptions(); return InputResult.UNHANDLED }
+            if (state.showMoreOptions) { toggleMoreOptions(); return InputResult.UNHANDLED }
+            if (pickerState.showArtPicker) { pickerModalDelegate.dismissArtPicker(); return InputResult.UNHANDLED }
+            if (pickerState.showEmulatorPicker) { dismissEmulatorPicker(); return InputResult.UNHANDLED }
+            if (pickerState.showSteamLauncherPicker) { dismissSteamLauncherPicker(); return InputResult.UNHANDLED }
+            if (state.showAddToCollectionModal) { dismissAddToCollectionModal(); return InputResult.UNHANDLED }
+            return InputResult.UNHANDLED
+        }
+
+        override fun onSecondaryAction(): InputResult {
+            routeSnapshotInput { it.onSecondaryAction() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            if (state.reviewEditor != null) { promptReviewDelete(); return InputResult.HANDLED }
+            if (pickerModalDelegate.state.value.showArtPicker) {
+                openArtFileBrowser(); return InputResult.HANDLED
+            }
+            if (saveState.isVisible && !saveState.showRestoreConfirmation && !saveState.showRenameDialog && !saveState.showDeleteConfirmation && !saveState.showMigrateConfirmation && !saveState.showDeleteLegacyConfirmation) {
+                saveChannelSecondaryAction(); return InputResult.HANDLED
+            }
+            toggleFavorite(); return InputResult.HANDLED
+        }
+
+        override fun onContextMenu(): InputResult {
+            routeSnapshotInput { it.onContextMenu() }?.let { return it }
+            val state = _uiState.value
+            val saveState = state.saveChannel
+            if (state.reviewEditor != null) return InputResult.HANDLED
+            if (pickerModalDelegate.state.value.showArtPicker) {
+                searchArtwork(); return InputResult.HANDLED
+            }
+            if (pickerModalDelegate.state.value.showFilePicker) { confirmFilePicker(); return InputResult.HANDLED }
+            if (saveState.isVisible && !saveState.showRestoreConfirmation && !saveState.showRenameDialog && !saveState.showDeleteConfirmation && !saveState.showMigrateConfirmation && !saveState.showDeleteLegacyConfirmation) {
+                saveChannelTertiaryAction(); return InputResult.HANDLED
+            }
+            if (state.showScreenshotViewer) { setCurrentScreenshotAsBackground(); return InputResult.HANDLED }
+            if (state.downloadStatus == GameDownloadStatus.DOWNLOADED && state.game?.isBuiltInEmulator == true) { showPlayOptions(); return InputResult.HANDLED }
+            if (state.hasSocialAccount && state.game?.igdbId != null) { togglePrivacy(); return InputResult.HANDLED }
+            return InputResult.UNHANDLED
+        }
+
+        override fun onSelect(): InputResult {
+            routeSnapshotInput { it.onSelect() }?.let { return it }
+            if (_uiState.value.reviewEditor != null) { submitReview(); return InputResult.HANDLED }
+            if (hasOpenModal()) { dismissAllModals(); return InputResult.HANDLED }
+            if (com.nendo.argosy.ui.dualscreen.selectSwapsRoles()) return InputResult.UNHANDLED
+            toggleMoreOptions(); return InputResult.HANDLED
+        }
+
+        override fun onLongSelect(): InputResult =
+            if (hasOpenModal()) InputResult.HANDLED else InputResult.UNHANDLED
+
+        override fun onLongConfirm(): InputResult {
+            routeSnapshotInput { it.onLongConfirm() }?.let { return it }
+            if (hasOpenModal()) return InputResult.handled(SoundType.BOUNDARY)
+            toggleMoreOptions()
+            return InputResult.HANDLED
+        }
+
+        private fun hasOpenModal(): Boolean {
+            val state = _uiState.value
+            val pickerState = pickerModalDelegate.state.value
+            return state.showMoreOptions || state.showPlayOptions ||
+                pickerState.hasAnyPickerOpen || state.showRatingPicker || state.showStatusPicker ||
+                state.showMissingDiscPrompt || state.showScreenshotViewer ||
+                state.saveChannel.isVisible || state.reviewEditor != null
+        }
+    }
+}

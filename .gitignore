@@ -1,0 +1,72 @@
+# Environment
+.env
+*.env.local
+
+# Signing
+keystore.properties
+*.jks
+*.keystore
+
+# Test credentials
+romm-test.properties
+
+# Android/Gradle
+*.iml
+.gradle/
+.kotlin/
+local.properties
+.idea/
+*.hprof
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Kotlin
+*.class
+*.log
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+!libs/maven/**/*.jar
+*.war
+
+# Kotlin Language Server (fwcd) local classpath cache (db + sqlite sidecars)
+kls_database.db*
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+/test-results/
+/coverage/
+
+# Claude Code
+.claude/
+__pycache__/
+.plan/
+.ref/
+.refs/
+.research/
+
+# Development tools
+tools/
+
+# Wiki (separate repo)
+wiki/
+
+# RomM version testbed local env
+testbed/romm/.env
+
+# Arcoon: local safety copies and downloads, not part of the project
+_backup*/
+_downloads/

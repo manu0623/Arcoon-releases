@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bindings/go/go.mod
+
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: "3.x"
+
+      - name: Install the Python binding's build and test tools
+        run: python -m pip install cffi pytest setuptools
+
+      - name: Configure (static)
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release "-DSIGIL_BINDING_PYTHON=${{ steps.python.outputs.python-path }}"
+
+      - name: Build (static)
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Configure (shared)
+        run: cmake -B build-shared -S . -DCMAKE_BUILD_TYPE=Release -DSIGIL_BUILD_SHARED=ON -DSIGIL_BUILD_TESTS=OFF
+
+      - name: Build (shared)
+        run: cmake --build build-shared --config Release
+
+      - name: CLI smoke check
+        if: runner.os != 'Windows'
+        run: ./build-shared/sigil --help
+
+      - name: CLI smoke check (Windows)
+        if: runner.os == 'Windows'
+        run: build-shared\Release\sigil.exe --help
+
+  windows-mingw:
+    # cgo links with gcc, so the Go binding on Windows runs against a MinGW build.
+    name: windows-latest (MinGW, Go binding)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bindings/go/go.mod
+
+      - name: Configure
+        run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        env:
+          CGO_ENABLED: "1"
+        run: ctest --test-dir build --output-on-failure
+
+  kotlin-jvm:
+    # The Kotlin binding's JVM tests, against the JNI library built for the runner's JDK.
+    name: Kotlin binding (JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build the host JNI library
+        run: |
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DSIGIL_BUILD_TESTS=OFF -DSIGIL_BUILD_JNI_HOST=ON
+          cmake --build build --target sigil_jni_host
+
+      - name: JVM tests
+        run: gradle -p tests/kotlin :sigil:testDebugUnitTest
+
+  contract:
+    name: cross-language contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install pytest
+        run: pip install pytest
+      - name: Contract tests
+        run: python -m pytest bindings/python/test_contract.py -v

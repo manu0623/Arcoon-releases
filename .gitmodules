@@ -1,0 +1,9 @@
+[submodule "libretrodroid/src/main/cpp/rcheevos"]
+	path = libretrodroid/src/main/cpp/rcheevos
+	url = https://github.com/RetroAchievements/rcheevos.git
+[submodule "sigil"]
+	path = sigil
+	url = https://github.com/rommapp/argosy-sigil.git
+[submodule "libretrodroid/src/main/cpp/libadrenotools"]
+	path = libretrodroid/src/main/cpp/libadrenotools
+	url = https://github.com/bylaws/libadrenotools.git

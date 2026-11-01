@@ -1,0 +1,371 @@
+package com.nendo.argosy.ui.common.savechannel
+
+import com.nendo.argosy.data.repository.ActiveSaveRepository
+import com.nendo.argosy.data.repository.SaveSyncRepository
+import com.nendo.argosy.ui.common.savechannel.snapshot.SnapshotViewDelegate
+import com.nendo.argosy.ui.input.SoundFeedbackManager
+import com.nendo.argosy.core.input.SoundType
+import com.nendo.argosy.ui.screens.gamedetail.components.SaveStatusEvent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+class SaveChannelDelegate @Inject constructor(
+    private val holder: SaveChannelStateHolder,
+    val savesDelegate: SaveChannelSavesDelegate,
+    val statesDelegate: SaveChannelStatesDelegate,
+    val snapshotDelegate: SnapshotViewDelegate,
+    private val saveSyncRepository: SaveSyncRepository,
+    private val activeSaveRepository: ActiveSaveRepository,
+    private val soundManager: SoundFeedbackManager
+) {
+    val state: StateFlow<SaveChannelState> = holder.state.asStateFlow()
+
+    val saveStatusEvents: SharedFlow<SaveStatusEvent> = holder.saveStatusEvents.asSharedFlow()
+
+    private val _state get() = holder.state
+
+    /**
+     * Opens the save manager, on whichever tab this game actually has something on.
+     *
+     * A null [savePath] means the emulator has no save location Argosy can resolve, so the saves
+     * tab can only ever be empty. The modal is reachable for such a game because its states are
+     * manageable, and landing on the empty half would look like the feature is broken.
+     */
+    fun show(
+        scope: CoroutineScope,
+        gameId: Long,
+        activeChannel: String?,
+        savePath: String? = null,
+        emulatorId: String? = null,
+        emulatorPackage: String? = null,
+        currentCoreId: String? = null,
+        currentCoreVersion: String? = null
+    ) {
+        holder.currentGameId = gameId
+        val deviceId = saveSyncRepository.getDeviceId()
+        val isDeviceAware = deviceId != null
+
+        _state.update {
+            it.copy(
+                isVisible = true,
+                isLoading = true,
+                selectedSlotIndex = 0,
+                selectedHistoryIndex = 0,
+                saveFocusColumn = SaveFocusColumn.SLOTS,
+                focusIndex = 0,
+                activeChannel = activeChannel,
+                savePath = savePath,
+                emulatorId = emulatorId,
+                emulatorPackage = emulatorPackage,
+                currentCoreId = currentCoreId,
+                currentCoreVersion = currentCoreVersion,
+                isDeviceAwareMode = isDeviceAware,
+                snapshot = null
+            )
+        }
+        soundManager.play(SoundType.OPEN_MODAL)
+
+        scope.launch {
+            val snapshotMode = snapshotDelegate.isAvailable(gameId)
+            if (snapshotMode) {
+                snapshotDelegate.start(scope, showsTimeline = true)
+                _state.update { it.copy(isLoading = false, selectedTab = SaveTab.SAVES) }
+            }
+            val activeRow = activeSaveRepository.getActiveRow(gameId)
+            val activeSaveTimestamp = activeRow?.cachedAt?.toEpochMilli()
+            val activeSaveCacheId = activeRow?.id
+            val activeSaveServerId = activeRow?.rommSaveId
+            val registeredChannels = activeSaveRepository.registeredChannels(gameId)
+            val localEntries = savesDelegate.loadLocalEntries()
+            val localSlots = savesDelegate.buildSaveSlots(
+                localEntries,
+                activeChannel,
+                isDeviceAware,
+                registeredChannels
+            )
+
+            val states = statesDelegate.loadInitialStates(
+                emulatorId = emulatorId,
+                channelName = activeChannel,
+                currentCoreId = currentCoreId,
+                currentCoreVersion = currentCoreVersion
+            )
+            val stateConfigExists = statesDelegate.supportsStatesFor(emulatorId)
+
+            _state.update {
+                it.copy(
+                    saveSlots = localSlots,
+                    statesEntries = states,
+                    supportsStates = stateConfigExists,
+                    selectedTab = if (snapshotMode) {
+                        it.selectedTab
+                    } else if (savePath == null && stateConfigExists && it.snapshot == null) {
+                        SaveTab.STATES
+                    } else {
+                        SaveTab.SAVES
+                    },
+                    selectedSlotIndex = 0,
+                    selectedHistoryIndex = 0,
+                    saveFocusColumn = SaveFocusColumn.SLOTS,
+                    focusIndex = 0,
+                    activeSaveTimestamp = activeSaveTimestamp,
+                    activeSaveCacheId = activeSaveCacheId,
+                    activeSaveServerId = activeSaveServerId,
+                    isLoading = false,
+                    isLoadingServer = !snapshotMode
+                )
+            }
+            savesDelegate.updateHistoryForFocusedSlot()
+            if (snapshotMode) return@launch
+
+            val fullEntries = savesDelegate.loadInitialEntries()
+            val fullSlots = savesDelegate.buildSaveSlots(
+                fullEntries,
+                activeChannel,
+                isDeviceAware,
+                registeredChannels
+            )
+            val focusedKey = _state.value.saveSlots.getOrNull(_state.value.selectedSlotIndex)?.slotKey
+            val restoredIndex = fullSlots.indexOfFirst { it.slotKey == focusedKey }
+                .takeIf { it >= 0 }
+                ?: _state.value.selectedSlotIndex.coerceIn(0, (fullSlots.size - 1).coerceAtLeast(0))
+
+            _state.update {
+                it.copy(
+                    saveSlots = fullSlots,
+                    selectedSlotIndex = restoredIndex,
+                    isLoadingServer = false
+                )
+            }
+            savesDelegate.updateHistoryForFocusedSlot()
+        }
+    }
+
+    fun dismiss() {
+        holder.rawEntries = emptyList()
+        snapshotDelegate.clear()
+        _state.update {
+            SaveChannelState(activeChannel = it.activeChannel, savePath = it.savePath)
+        }
+        soundManager.play(SoundType.CLOSE_MODAL)
+    }
+
+    fun switchTab(tab: SaveTab) {
+        val state = _state.value
+        if (state.showSlotPicker) return
+        if (tab == SaveTab.STATES && !state.showsStatesTab) return
+        if (tab == state.selectedTab) return
+
+        _state.update {
+            it.copy(
+                selectedTab = tab,
+                saveFocusColumn = SaveFocusColumn.SLOTS,
+                focusIndex = 0
+            )
+        }
+    }
+
+    fun focusSlotsColumn() {
+        if (_state.value.showSlotPicker) return
+        savesDelegate.focusSlotsColumn()
+    }
+
+    fun focusHistoryColumn() {
+        if (_state.value.showSlotPicker) return
+        savesDelegate.focusHistoryColumn()
+    }
+
+    fun setSlotIndex(index: Int) = savesDelegate.setSlotIndex(index)
+
+    fun setHistoryIndex(index: Int) = savesDelegate.setHistoryIndex(index)
+
+    fun setFocusIndex(index: Int) = statesDelegate.setFocusIndex(index)
+
+    fun moveFocus(delta: Int) {
+        val state = _state.value
+        if (state.showSlotPicker) {
+            savesDelegate.moveSlotPickerFocus(delta)
+            return
+        }
+        when (state.selectedTab) {
+            SaveTab.SAVES -> {
+                when (state.saveFocusColumn) {
+                    SaveFocusColumn.SLOTS -> savesDelegate.moveSlotSelection(delta)
+                    SaveFocusColumn.HISTORY -> savesDelegate.moveHistorySelection(delta)
+                }
+            }
+            SaveTab.STATES -> statesDelegate.moveStateFocus(delta)
+        }
+    }
+
+    fun handleLongPress(scope: CoroutineScope, index: Int) {
+        val state = _state.value
+        if (state.showSlotPicker) return
+        when (state.selectedTab) {
+            SaveTab.SAVES -> {
+                when (state.saveFocusColumn) {
+                    SaveFocusColumn.SLOTS -> {
+                        savesDelegate.setSlotIndex(index)
+                        savesDelegate.showRenameSlotDialog()
+                    }
+                    SaveFocusColumn.HISTORY -> {
+                        savesDelegate.setHistoryIndex(index)
+                        savesDelegate.showSlotPicker(scope)
+                    }
+                }
+            }
+            SaveTab.STATES -> {}
+        }
+    }
+
+    fun confirmSelection(
+        scope: CoroutineScope,
+        emulatorId: String,
+        onSaveStatusChanged: (SaveStatusEvent) -> Unit,
+        onRestored: () -> Unit = {}
+    ) {
+        val state = _state.value
+        if (state.showSlotPicker) {
+            savesDelegate.confirmSlotPicker(
+                scope, emulatorId, onSaveStatusChanged, refreshingStates(scope, onRestored)
+            )
+            return
+        }
+        when (state.selectedTab) {
+            SaveTab.SAVES -> savesDelegate.confirmSlotOrHistory(
+                scope, emulatorId, onSaveStatusChanged, refreshingStates(scope, onRestored)
+            )
+            SaveTab.STATES -> statesDelegate.confirmFocusedState(scope)
+        }
+    }
+
+    /**
+     * The states tab shows the active channel, so a save action that changes which channel is
+     * active leaves it displaying the channel before it, and that channel's server states are the
+     * only ones ever asked for. Refreshing as the action finishes is what fetches the states of the
+     * channel now in force, rather than leaving them until the modal is next opened.
+     */
+    private fun refreshingStates(scope: CoroutineScope, onRestored: () -> Unit): () -> Unit = {
+        scope.launch { statesDelegate.refreshStates() }
+        onRestored()
+    }
+
+    fun dismissRestoreConfirmation() = savesDelegate.dismissRestoreConfirmation()
+
+    fun restoreSave(
+        scope: CoroutineScope,
+        emulatorId: String,
+        syncToServer: Boolean,
+        onSaveStatusChanged: (SaveStatusEvent) -> Unit,
+        onRestored: () -> Unit = {}
+    ) = savesDelegate.restoreSave(
+        scope, emulatorId, syncToServer, onSaveStatusChanged, refreshingStates(scope, onRestored)
+    )
+
+    fun dismissRenameDialog() = savesDelegate.dismissRenameDialog()
+
+    fun updateRenameText(text: String) = savesDelegate.updateRenameText(text)
+
+    fun confirmRename(scope: CoroutineScope) = savesDelegate.confirmRename(scope)
+
+    fun dismissDeleteConfirmation() = savesDelegate.dismissDeleteConfirmation()
+
+    fun confirmDelete(
+        scope: CoroutineScope,
+        onSaveStatusChanged: (SaveStatusEvent) -> Unit
+    ) = savesDelegate.confirmDelete(scope, onSaveStatusChanged)
+
+    fun dismissMigrateConfirmation() = savesDelegate.dismissMigrateConfirmation()
+
+    fun confirmMigrateChannel(
+        scope: CoroutineScope,
+        emulatorId: String,
+        onSaveStatusChanged: (SaveStatusEvent) -> Unit,
+        onRestored: () -> Unit = {}
+    ) = savesDelegate.confirmMigrateChannel(scope, emulatorId, onSaveStatusChanged, onRestored)
+
+    fun dismissDeleteLegacyConfirmation() = savesDelegate.dismissDeleteLegacyConfirmation()
+
+    fun confirmDeleteLegacyChannel(scope: CoroutineScope) =
+        savesDelegate.confirmDeleteLegacyChannel(scope)
+
+    fun syncServerSaves(scope: CoroutineScope) = savesDelegate.syncServerSaves(scope)
+
+    fun dismissVersionMismatch() = statesDelegate.dismissVersionMismatch()
+
+    fun confirmVersionMismatch(scope: CoroutineScope) =
+        statesDelegate.confirmVersionMismatch(scope)
+
+    fun dismissStateDeleteConfirmation() = statesDelegate.dismissStateDeleteConfirmation()
+
+    fun confirmDeleteState(scope: CoroutineScope) = statesDelegate.confirmDeleteState(scope)
+
+    fun dismissScreenshotPreview() = statesDelegate.dismissScreenshotPreview()
+
+    fun dismissStateReplaceAutoConfirmation() =
+        statesDelegate.dismissStateReplaceAutoConfirmation()
+
+    fun confirmReplaceAutoWithSlot(scope: CoroutineScope) =
+        statesDelegate.confirmReplaceAutoWithSlot(scope)
+
+    fun secondaryAction() {
+        val state = _state.value
+        if (state.showSlotPicker) return
+        if (state.showRestoreConfirmation || state.showRenameDialog ||
+            state.showDeleteConfirmation || state.showMigrateConfirmation ||
+            state.showDeleteLegacyConfirmation ||
+            state.showStateDeleteConfirmation ||
+            state.showStateReplaceAutoConfirmation) return
+
+        when (state.selectedTab) {
+            SaveTab.SAVES -> {
+                when (state.saveFocusColumn) {
+                    SaveFocusColumn.SLOTS -> {
+                        val slot = state.focusedSlot
+                        if (slot?.isMigrationCandidate == true) {
+                            savesDelegate.showDeleteLegacyConfirmation()
+                        } else {
+                            savesDelegate.showDeleteConfirmation()
+                        }
+                    }
+                    SaveFocusColumn.HISTORY -> savesDelegate.showDeleteVersionConfirmation()
+                }
+            }
+            SaveTab.STATES -> statesDelegate.showStateDeleteConfirmation()
+        }
+    }
+
+    fun dismissSlotPicker() = savesDelegate.dismissSlotPicker()
+
+    fun setSlotPickerIndex(index: Int) = savesDelegate.setSlotPickerIndex(index)
+
+    fun tertiaryAction(scope: CoroutineScope) {
+        val state = _state.value
+        if (state.showSlotPicker) return
+        if (state.showRestoreConfirmation || state.showRenameDialog ||
+            state.showDeleteConfirmation || state.showMigrateConfirmation ||
+            state.showDeleteLegacyConfirmation ||
+            state.showStateReplaceAutoConfirmation) return
+
+        when (state.selectedTab) {
+            SaveTab.SAVES -> {
+                when (state.saveFocusColumn) {
+                    SaveFocusColumn.SLOTS -> savesDelegate.showRenameSlotDialog()
+                    SaveFocusColumn.HISTORY -> savesDelegate.showSlotPicker(scope)
+                }
+            }
+            SaveTab.STATES -> {
+                val entry = state.focusedStateEntry
+                if (entry?.screenshotPath != null) {
+                    statesDelegate.showScreenshotPreview()
+                }
+            }
+        }
+    }
+}

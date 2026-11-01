@@ -1,0 +1,103 @@
+package com.nendo.argosy.ui.navigation
+
+sealed class Screen(val route: String) {
+    data object FirstRun : Screen("first_run")
+    data object Home : Screen("home")
+    data object Library : Screen("library?platformId={platformId}&source={source}&filters={filters}") {
+        fun createRoute(
+            platformId: Long? = null,
+            source: String? = null,
+            filters: String? = null
+        ): String {
+            val params = mutableListOf<String>()
+            if (platformId != null) params.add("platformId=$platformId")
+            if (source != null) params.add("source=$source")
+            if (filters != null) {
+                params.add("filters=${java.net.URLEncoder.encode(filters, "UTF-8")}")
+            }
+            return if (params.isEmpty()) "library" else "library?${params.joinToString("&")}"
+        }
+    }
+    data object Collections : Screen("collections")
+    data object CollectionDetail : Screen("collection/{collectionId}") {
+        fun createRoute(collectionId: Long) = "collection/$collectionId"
+    }
+    data object VirtualBrowser : Screen("virtual/{type}") {
+        fun createRoute(type: String) = "virtual/$type"
+    }
+    data object VirtualCategory : Screen("virtual/{type}/{category}") {
+        fun createRoute(type: String, category: String) = "virtual/$type/${java.net.URLEncoder.encode(category, "UTF-8")}"
+    }
+    data object Downloads : Screen("downloads")
+    data object SaveSync : Screen("save_sync")
+    data object SyncMonitor : Screen("sync_monitor")
+    data object Apps : Screen("apps")
+    data object Settings : Screen("settings?section={section}&action={action}&platformId={platformId}") {
+        fun createRoute(section: String? = null, action: String? = null, platformId: Long? = null): String {
+            val params = mutableListOf<String>()
+            if (section != null) params.add("section=$section")
+            if (action != null) params.add("action=$action")
+            if (platformId != null) params.add("platformId=$platformId")
+            return if (params.isEmpty()) "settings" else "settings?${params.joinToString("&")}"
+        }
+    }
+    data object GameDetail : Screen("game/{gameId}?sheet={sheet}") {
+        /** [sheet] opens the page straight into one of Cocoon's sheets ("edit", "achievements"). */
+        fun createRoute(gameId: Long, sheet: String? = null) =
+            if (sheet == null) "game/$gameId" else "game/$gameId?sheet=$sheet"
+    }
+    data object SaveTimeline : Screen("save_timeline/{gameId}") {
+        fun createRoute(gameId: Long) = "save_timeline/$gameId"
+    }
+    /**
+     * The media grid. [route] stays the bare path so the drawer keeps navigating and identifying by
+     * it; [ROUTE_WITH_ARGS] is what the graph declares, and its library argument is optional so a
+     * plain "media_library" still resolves to the same destination.
+     */
+    data object MediaLibrary : Screen("media_library") {
+        const val ROUTE_WITH_ARGS = "media_library?libraryId={libraryId}"
+        const val ARG_LIBRARY_ID = "libraryId"
+        fun createRoute(libraryId: String) = "media_library?libraryId=$libraryId"
+    }
+    data object MediaDetail : Screen("media_item/{itemId}") {
+        fun createRoute(itemId: String) = "media_item/$itemId"
+    }
+    data object Search : Screen("search")
+    data object ManagePins : Screen("manage_pins")
+    data object Social : Screen("social")
+    data object SocialEventDetail : Screen("social/event/{eventId}") {
+        fun createRoute(eventId: String) = "social/event/$eventId"
+    }
+    data object UserProfile : Screen("social/profile/{userId}") {
+        fun createRoute(userId: String) = "social/profile/$userId"
+    }
+    data object Doodle : Screen("doodle")
+    data object AvatarDoodle : Screen("doodle/avatar")
+    data object PostEditor : Screen("post_editor")
+    data object QuayPass : Screen("quaypass")
+
+    companion object {
+        const val ROUTE_HOME = "home"
+        const val ROUTE_LIBRARY = "library"
+        const val ROUTE_COLLECTIONS = "collections"
+        const val ROUTE_COLLECTION_DETAIL = "collection"
+        const val ROUTE_VIRTUAL_BROWSER = "virtual"
+        const val ROUTE_GAME_DETAIL = "game"
+        const val ROUTE_SETTINGS = "settings"
+        const val ROUTE_DOWNLOADS = "downloads"
+        const val ROUTE_SAVE_SYNC = "save_sync"
+        const val ROUTE_SAVE_TIMELINE = "save_timeline"
+        const val ROUTE_SYNC_MONITOR = "sync_monitor"
+        const val ROUTE_APPS = "apps"
+        const val ROUTE_MEDIA_LIBRARY = "media_library"
+        const val ROUTE_MEDIA_DETAIL = "media_item"
+        const val ROUTE_SEARCH = "search"
+        const val ROUTE_MANAGE_PINS = "manage_pins"
+        const val ROUTE_SOCIAL = "social"
+        const val ROUTE_SOCIAL_EVENT_DETAIL = "social/event"
+        const val ROUTE_USER_PROFILE = "social/profile"
+        const val ROUTE_DOODLE = "doodle"
+        const val ROUTE_POST_EDITOR = "post_editor"
+        const val ROUTE_QUAYPASS = "quaypass"
+    }
+}

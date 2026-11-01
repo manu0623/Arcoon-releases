@@ -1,0 +1,1227 @@
+package com.nendo.argosy.data.sync
+
+import com.nendo.argosy.data.storage.AndroidDataAccessor
+import com.nendo.argosy.data.storage.FileAccessLayer
+import com.nendo.argosy.data.storage.FileInfo
+import com.nendo.argosy.util.Logger
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.security.MessageDigest
+import org.apache.commons.compress.archivers.zip.Zip64Mode
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
+import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
+import org.apache.commons.compress.archivers.zip.ZipFile
+import com.nendo.argosy.util.FileNames
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * Thrown when the source zip is structurally damaged (deflate stream
+ * broken, central-directory mismatch, etc.). Distinct from generic I/O
+ * failures so callers can mark the affected save_sync row and skip the
+ * download until the server's copy changes.
+ */
+class CorruptZipException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+/**
+ * A folder and the top-level name it takes inside an archive. The name is the archive's contract
+ * with every copy already on a server, so a handler chooses it rather than reading it off the
+ * folder.
+ */
+data class ArchiveRoot(val name: String, val folder: File) {
+    val isOwnName: Boolean get() = name == folder.name
+}
+
+@Singleton
+class SaveArchiver @Inject constructor(
+    private val androidDataAccessor: AndroidDataAccessor,
+    private val fal: FileAccessLayer
+) {
+
+    private val TAG = "SaveArchiver"
+    private val BUFFER_SIZE = 8192
+
+    private fun isRestrictedPath(path: String): Boolean = fal.isRestrictedPath(path)
+
+    private fun openOutputStreamForPath(path: String): OutputStream? = fal.getOutputStream(path)
+
+    private fun openInputStreamForPath(path: String): InputStream? = fal.getInputStream(path)
+
+    private fun createDirectoryForPath(path: String): Boolean = fal.mkdirs(path)
+
+    fun getFileForPath(path: String): File = fal.getTransformedFile(path)
+
+    fun existsAtPath(path: String): Boolean = fal.exists(path)
+
+    fun listFilesAtPath(path: String): Array<File>? {
+        val files = fal.listFiles(path) ?: return null
+        return files.map { fal.getTransformedFile(it.path) }.toTypedArray()
+    }
+
+    fun lastModifiedAtPath(path: String): Long = fal.lastModified(path)
+
+    /**
+     * Zip a folder at the given path, handling restricted Android/data paths.
+     */
+    fun zipFolderAtPath(sourcePath: String, targetZip: File): Boolean {
+        val sourceFolder = getFileForPath(sourcePath)
+        return zipFolder(sourceFolder, targetZip)
+    }
+
+    fun zipFolder(sourceFolder: File, targetZip: File): Boolean {
+        val path = sourceFolder.absolutePath
+        if (!fal.exists(path) || !fal.isDirectory(path)) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | Source folder invalid | path=$path, exists=${fal.exists(path)}, isDir=${fal.isDirectory(path)}")
+            return false
+        }
+
+        val (fileCount, totalSize) = countFilesUnion(path)
+        Logger.debug(TAG, "[SaveSync] ARCHIVE | Zipping folder | source=${sourceFolder.name}, files=$fileCount, size=${totalSize}bytes")
+
+        return try {
+            targetZip.parentFile?.mkdirs()
+            var filesWritten = 0
+            ZipArchiveOutputStream(BufferedOutputStream(FileOutputStream(targetZip))).use { zos ->
+                zos.setUseZip64(Zip64Mode.AsNeeded)
+                filesWritten = zipFolderRecursive(sourceFolder.absolutePath, sourceFolder.name, zos)
+            }
+            if (filesWritten == 0) {
+                Logger.warn(
+                    TAG,
+                    "[SaveSync] ARCHIVE | Nothing to archive | source=$path, listed=$fileCount files. " +
+                        "Refusing to produce an empty archive."
+                )
+                targetZip.delete()
+                return false
+            }
+            val ratio = if (totalSize > 0) (targetZip.length() * 100 / totalSize) else 100
+            Logger.debug(TAG, "[SaveSync] ARCHIVE | Zip complete | output=${targetZip.name}, files=$filesWritten, compressedSize=${targetZip.length()}bytes, ratio=$ratio%")
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | Zip failed | source=${sourceFolder.absolutePath}", e)
+            targetZip.delete()
+            false
+        }
+    }
+
+    /**
+     * Zips multiple folders into one archive, preserving each folder's name as a top-level
+     * entry. Used by platforms whose "save unit" spans several sibling directories (e.g. PSP
+     * profile folders sharing a 9-char disc id prefix).
+     */
+    fun zipFolders(sourceFolders: List<File>, targetZip: File): Boolean =
+        zipNamedFolders(sourceFolders.map { ArchiveRoot(it.name, it) }, targetZip)
+
+    /**
+     * Zips several folders into one archive, each under the root name its [ArchiveRoot] assigns
+     * rather than its own. A save unit spread over directories whose names identify nothing
+     * (3DS `data` beside an extdata id) needs the archive to carry names a restore can place.
+     */
+    fun zipNamedFolders(roots: List<ArchiveRoot>, targetZip: File): Boolean {
+        val validRoots = roots.filter { fal.exists(it.folder.absolutePath) && fal.isDirectory(it.folder.absolutePath) }
+        if (validRoots.isEmpty()) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | No valid folders to zip")
+            return false
+        }
+
+        val totalSize = validRoots.sumOf { countFilesUnion(it.folder.absolutePath).second }
+        Logger.debug(TAG, "[SaveSync] ARCHIVE | Zipping ${validRoots.size} folder(s) | roots=${validRoots.map { it.name }}, totalSize=${totalSize}bytes")
+
+        return try {
+            targetZip.parentFile?.mkdirs()
+            var filesWritten = 0
+            ZipArchiveOutputStream(BufferedOutputStream(FileOutputStream(targetZip))).use { zos ->
+                zos.setUseZip64(Zip64Mode.AsNeeded)
+                for (root in validRoots) {
+                    zos.putArchiveEntry(ZipArchiveEntry("${root.name}/"))
+                    zos.closeArchiveEntry()
+                    filesWritten += zipFolderRecursive(root.folder.absolutePath, root.name, zos)
+                }
+            }
+            if (filesWritten == 0) {
+                Logger.warn(
+                    TAG,
+                    "[SaveSync] ARCHIVE | Nothing to archive | roots=${validRoots.map { it.name }}. " +
+                        "Refusing to produce an empty archive."
+                )
+                targetZip.delete()
+                return false
+            }
+            val ratio = if (totalSize > 0) (targetZip.length() * 100 / totalSize) else 100
+            Logger.debug(TAG, "[SaveSync] ARCHIVE | Multi-folder zip complete | folders=${validRoots.size}, files=$filesWritten, output=${targetZip.name}, compressedSize=${targetZip.length()}bytes, ratio=$ratio%")
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | Multi-folder zip failed", e)
+            targetZip.delete()
+            false
+        }
+    }
+
+    fun zipFiles(files: List<File>, targetZip: File): Boolean {
+        if (files.isEmpty()) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | No files to zip")
+            return false
+        }
+
+        val existingFiles = files.filter { it.exists() && it.isFile }
+        if (existingFiles.isEmpty()) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | No valid files to zip")
+            return false
+        }
+
+        val totalSize = existingFiles.sumOf { it.length() }
+        Logger.debug(TAG, "[SaveSync] ARCHIVE | Zipping ${existingFiles.size} file(s) | totalSize=${totalSize}bytes")
+
+        return try {
+            targetZip.parentFile?.mkdirs()
+            ZipArchiveOutputStream(BufferedOutputStream(FileOutputStream(targetZip))).use { zos ->
+                zos.setUseZip64(Zip64Mode.AsNeeded)
+                for (file in existingFiles) {
+                    zos.putArchiveEntry(ZipArchiveEntry(file.name))
+                    BufferedInputStream(FileInputStream(file), BUFFER_SIZE).use { bis ->
+                        val buffer = ByteArray(BUFFER_SIZE)
+                        var count: Int
+                        while (bis.read(buffer, 0, BUFFER_SIZE).also { count = it } != -1) {
+                            zos.write(buffer, 0, count)
+                        }
+                    }
+                    zos.closeArchiveEntry()
+                }
+            }
+            val ratio = if (totalSize > 0) (targetZip.length() * 100 / totalSize) else 100
+            Logger.debug(TAG, "[SaveSync] ARCHIVE | Zip complete | files=${existingFiles.size}, output=${targetZip.name}, compressedSize=${targetZip.length()}bytes, ratio=$ratio%")
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | Zip files failed", e)
+            targetZip.delete()
+            false
+        }
+    }
+
+    /**
+     * Returns how many file entries were written, so a caller can refuse an archive that
+     * ended up holding nothing.
+     */
+    private fun zipFolderRecursive(folderPath: String, parentPath: String, zos: ZipArchiveOutputStream): Int {
+        val entries = fal.listFilesUnion(folderPath)
+        var filesWritten = 0
+
+        for (entry in entries) {
+            val entryPath = "$parentPath/${entry.name}"
+
+            if (entry.isDirectory) {
+                zos.putArchiveEntry(ZipArchiveEntry("$entryPath/"))
+                zos.closeArchiveEntry()
+                filesWritten += zipFolderRecursive(entry.path, entryPath, zos)
+            } else {
+                val input = fal.getInputStream(entry.path)
+                if (input == null) {
+                    Logger.warn(TAG, "[SaveSync] ARCHIVE | Skipping unreadable file | path=${entry.path}")
+                    continue
+                }
+                zos.putArchiveEntry(ZipArchiveEntry(entryPath))
+                BufferedInputStream(input, BUFFER_SIZE).use { bis ->
+                    val buffer = ByteArray(BUFFER_SIZE)
+                    var count: Int
+                    while (bis.read(buffer, 0, BUFFER_SIZE).also { count = it } != -1) {
+                        zos.write(buffer, 0, count)
+                    }
+                }
+                zos.closeArchiveEntry()
+                filesWritten++
+            }
+        }
+        return filesWritten
+    }
+
+    private fun countFilesUnion(folderPath: String): Pair<Int, Long> {
+        var count = 0
+        var size = 0L
+        for (entry in fal.listFilesUnion(folderPath)) {
+            if (entry.isDirectory) {
+                val sub = countFilesUnion(entry.path)
+                count += sub.first
+                size += sub.second
+            } else {
+                count++
+                size += entry.size
+            }
+        }
+        return count to size
+    }
+
+    fun unzipToFolder(sourceZip: File, targetFolder: File): Boolean {
+        if (!sourceZip.exists() || !sourceZip.isFile) {
+            Logger.warn(TAG, "Source zip does not exist or is not a file: ${sourceZip.absolutePath}")
+            return false
+        }
+
+        return try {
+            targetFolder.mkdirs()
+            ZipArchiveInputStream(BufferedInputStream(FileInputStream(sourceZip))).use { zis ->
+                var entry: ZipArchiveEntry?
+                val buffer = ByteArray(BUFFER_SIZE)
+
+                while (zis.nextEntry.also { entry = it } != null) {
+                    val entryFile = File(targetFolder, entry!!.name)
+
+                    if (!FileNames.isWithin(entryFile, targetFolder)) {
+                        Logger.error(TAG, "Zip path traversal detected: ${entry!!.name}")
+                        return false
+                    }
+
+                    if (entry!!.isDirectory) {
+                        entryFile.mkdirs()
+                    } else {
+                        entryFile.parentFile?.mkdirs()
+                        BufferedOutputStream(FileOutputStream(entryFile), BUFFER_SIZE).use { bos ->
+                            var count: Int
+                            while (zis.read(buffer, 0, BUFFER_SIZE).also { count = it } != -1) {
+                                bos.write(buffer, 0, count)
+                            }
+                        }
+                    }
+                }
+            }
+            Logger.debug(TAG, "Successfully unzipped ${sourceZip.absolutePath} to ${targetFolder.absolutePath}")
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "Failed to unzip file: ${sourceZip.absolutePath}", e)
+            false
+        }
+    }
+
+    fun peekRootFolderName(zipFile: File): String? {
+        if (!zipFile.exists() || !zipFile.isFile) {
+            Logger.debug(TAG, "[SaveSync] ARCHIVE | peekRootFolderName: file invalid | path=${zipFile.absolutePath}")
+            return null
+        }
+
+        return try {
+            ZipArchiveInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
+                val firstEntry = zis.nextEntry ?: return null
+                val entryName = firstEntry.name
+                val rootFolder = entryName.substringBefore('/').takeIf {
+                    it.isNotEmpty() && entryName.contains('/')
+                }
+                Logger.debug(TAG, "[SaveSync] ARCHIVE | peekRootFolderName | zip=${zipFile.name}, firstEntry=$entryName, rootFolder=$rootFolder")
+                rootFolder
+            }
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | peekRootFolderName failed | zip=${zipFile.name}", e)
+            null
+        }
+    }
+
+    /**
+     * Every top-level directory in the archive. Unlike [peekRootFolderName] this reads the
+     * whole index, so a save spanning several sibling folders reports all of them.
+     */
+    fun peekRootEntryNames(zipFile: File): Set<String> {
+        if (!zipFile.exists() || !zipFile.isFile) return emptySet()
+        return try {
+            ZipArchiveInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
+                val roots = mutableSetOf<String>()
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    val name = entry.name
+                    if (name.contains('/')) {
+                        name.substringBefore('/').takeIf { it.isNotEmpty() }?.let { roots.add(it) }
+                    }
+                    entry = zis.nextEntry
+                }
+                roots
+            }
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | peekRootEntryNames failed | zip=${zipFile.name}", e)
+            emptySet()
+        }
+    }
+
+    /**
+     * Every directory segment in the archive, at any depth. A platform whose save unit is a
+     * container holding per-game folders needs to look below the root entry to tell whether
+     * an archive holds a given game.
+     */
+    fun peekFolderNames(zipFile: File): Set<String> {
+        if (!zipFile.exists() || !zipFile.isFile) return emptySet()
+        return try {
+            ZipArchiveInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
+                val folders = mutableSetOf<String>()
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    val name = entry.name.trimEnd('/')
+                    val segments = name.split('/').filter { it.isNotEmpty() }
+                    val depth = if (entry.isDirectory) segments.size else segments.size - 1
+                    for (i in 0 until depth) folders.add(segments[i])
+                    entry = zis.nextEntry
+                }
+                folders
+            }
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | peekFolderNames failed | zip=${zipFile.name}", e)
+            emptySet()
+        }
+    }
+
+    /**
+     * Unwraps a single-rooted archive but keeps only the root children [keepFolder] accepts.
+     *
+     * A container archive holds entries that belong to other games, so extracting all of it into
+     * the container would overwrite saves this restore has no claim on.
+     */
+    fun unzipSelectedRootChildren(
+        sourceZip: File,
+        targetFolder: File,
+        keepFolder: (String) -> Boolean
+    ): Boolean {
+        if (!sourceZip.exists() || !sourceZip.isFile) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | Source zip invalid | path=${sourceZip.absolutePath}")
+            return false
+        }
+        val staging = File(sourceZip.parentFile, "filtered_${System.currentTimeMillis()}")
+        return try {
+            if (!unzipDirect(sourceZip, staging)) {
+                staging.deleteRecursively()
+                return false
+            }
+            val children = staging.listFiles().orEmpty()
+            var dropped = 0
+            children.forEach { child ->
+                if (child.isDirectory && !keepFolder(child.name)) {
+                    child.deleteRecursively()
+                    dropped++
+                }
+            }
+            val kept = staging.listFiles().orEmpty().filter { it.isDirectory }
+            if (kept.isEmpty()) {
+                Logger.error(
+                    TAG,
+                    "[SaveSync] ARCHIVE | No folder in the archive belongs to this save; refusing to extract | zip=${sourceZip.name}"
+                )
+                staging.deleteRecursively()
+                return false
+            }
+            Logger.debug(
+                TAG,
+                "[SaveSync] ARCHIVE | Filtered container archive | kept=${kept.map { it.name }}, dropped=$dropped"
+            )
+            val moved = if (isRestrictedPath(targetFolder.absolutePath)) {
+                androidDataAccessor.moveDirectory(staging.absolutePath, targetFolder.absolutePath)
+            } else {
+                targetFolder.mkdirs()
+                kept.all { folder ->
+                    runCatching { folder.copyRecursively(File(targetFolder, folder.name), overwrite = true) }
+                        .getOrDefault(false)
+                }
+            }
+            if (!moved) {
+                Logger.error(TAG, "[SaveSync] ARCHIVE | Failed to place filtered folders | target=${targetFolder.absolutePath}")
+            }
+            moved
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | unzipSelectedRootChildren failed | ${e.message}")
+            false
+        } finally {
+            staging.deleteRecursively()
+        }
+    }
+
+    fun unzipSingleFolder(sourceZip: File, targetFolder: File): Boolean {
+        if (!sourceZip.exists() || !sourceZip.isFile) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | Source zip invalid | path=${sourceZip.absolutePath}")
+            return false
+        }
+
+        val targetPath = targetFolder.absolutePath
+        val isRestricted = isRestrictedPath(targetPath)
+
+        if (isRestricted) {
+            return unzipViaTemp(sourceZip, targetFolder)
+        }
+
+        return unzipDirect(sourceZip, targetFolder)
+    }
+
+    /**
+     * Places every top-level entry into the folder [destinations] maps its name to, with that
+     * name stripped. An entry whose root has no destination fails the whole extraction, so a
+     * caller that mapped only the roots it knows never scatters the rest somewhere unplanned.
+     * Restricted destinations are staged and moved the way [unzipSingleFolder] does.
+     */
+    fun unzipRootsTo(sourceZip: File, destinations: Map<String, File>): Boolean {
+        if (!sourceZip.exists() || !sourceZip.isFile) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | Source zip invalid | path=${sourceZip.absolutePath}")
+            return false
+        }
+        val unplaceable = peekRootEntryNames(sourceZip) - destinations.keys
+        if (unplaceable.isNotEmpty()) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | Archive holds roots with no destination; refusing to extract | roots=$unplaceable, known=${destinations.keys}")
+            return false
+        }
+        val staging = File(sourceZip.parentFile, "roots_${System.currentTimeMillis()}")
+        val writeDirs = destinations.mapValues { (root, destination) ->
+            if (isRestrictedPath(destination.absolutePath)) File(staging, root) else destination
+        }
+        return try {
+            if (!extractRoots(sourceZip, writeDirs)) return false
+            destinations.all { (root, destination) ->
+                val staged = writeDirs.getValue(root)
+                staged == destination ||
+                    !staged.exists() ||
+                    androidDataAccessor.moveDirectory(staged.absolutePath, destination.absolutePath).also { moved ->
+                        if (!moved) {
+                            Logger.error(TAG, "[SaveSync] ARCHIVE | Failed to move a staged root into place | root=$root, target=${destination.absolutePath}")
+                        }
+                    }
+            }
+        } catch (e: CorruptZipException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | unzipRootsTo failed | ${e.message}")
+            false
+        } finally {
+            staging.deleteRecursively()
+        }
+    }
+
+    private fun extractRoots(sourceZip: File, writeDirs: Map<String, File>): Boolean {
+        return try {
+            var fileCount = 0
+            ZipFile.builder().setFile(sourceZip).get().use { zf ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                for (entry in zf.entries.toList()) {
+                    val entryName = entry.name
+                    val root = entryName.substringBefore('/')
+                    val relativePath = entryName.substringAfter('/', "")
+                    val target = writeDirs[root]
+                    if (target == null) {
+                        Logger.error(TAG, "[SaveSync] ARCHIVE | Entry root has no destination | entry=$entryName, roots=${writeDirs.keys}")
+                        return false
+                    }
+                    if (relativePath.isEmpty()) {
+                        target.mkdirs()
+                        continue
+                    }
+                    val entryFile = File(target, relativePath)
+                    if (!FileNames.isWithin(entryFile, target)) {
+                        Logger.error(TAG, "[SaveSync] ARCHIVE | Zip path traversal detected | entry=$entryName, target=${target.absolutePath}")
+                        return false
+                    }
+                    if (entry.isDirectory) {
+                        entryFile.mkdirs()
+                    } else {
+                        entryFile.parentFile?.mkdirs()
+                        zf.getInputStream(entry).use { input ->
+                            BufferedOutputStream(FileOutputStream(entryFile), BUFFER_SIZE).use { bos ->
+                                var count: Int
+                                while (input.read(buffer, 0, BUFFER_SIZE).also { count = it } != -1) {
+                                    bos.write(buffer, 0, count)
+                                }
+                            }
+                        }
+                        fileCount++
+                    }
+                }
+            }
+            Logger.debug(TAG, "[SaveSync] ARCHIVE | Extracted by root | files=$fileCount, roots=${writeDirs.keys}")
+            true
+        } catch (e: java.util.zip.ZipException) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | Corrupt zip - server copy is damaged | zip=${sourceZip.name}, ${e.message}", e)
+            throw CorruptZipException("Source zip is damaged: ${e.message}", e)
+        }
+    }
+
+    private fun unzipViaTemp(sourceZip: File, targetFolder: File): Boolean {
+        val tempDir = File(sourceZip.parentFile, "extract_${System.currentTimeMillis()}")
+        Logger.debug(TAG, "[SaveSync] ARCHIVE | Extracting to temp | temp=${tempDir.name}, target=${targetFolder.absolutePath}")
+
+        try {
+            if (!unzipDirect(sourceZip, tempDir)) {
+                Logger.error(TAG, "[SaveSync] ARCHIVE | Failed to extract to temp")
+                tempDir.deleteRecursively()
+                return false
+            }
+
+            val moved = androidDataAccessor.moveDirectory(tempDir.absolutePath, targetFolder.absolutePath)
+            if (!moved) {
+                Logger.error(TAG, "[SaveSync] ARCHIVE | Failed to move to target via AltAccess | target=${targetFolder.absolutePath}")
+                tempDir.deleteRecursively()
+                return false
+            }
+
+            Logger.debug(TAG, "[SaveSync] ARCHIVE | Unzip via temp complete | target=${targetFolder.name}")
+            return true
+        } catch (e: CorruptZipException) {
+            tempDir.deleteRecursively()
+            throw e
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | unzipViaTemp failed | ${e.message}")
+            tempDir.deleteRecursively()
+            return false
+        }
+    }
+
+    private fun unzipDirect(sourceZip: File, targetFolder: File): Boolean {
+        var rootFolderForLogging: String? = null
+        var firstEntryForLogging: String? = null
+        return try {
+            targetFolder.mkdirs()
+            var fileCount = 0
+            var totalSize = 0L
+            ZipFile.builder().setFile(sourceZip).get().use { zf ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                val entries = zf.entries.toList()
+                val firstSegments = entries
+                    .mapNotNull { it.name.substringBefore('/').takeIf { seg -> it.name.contains('/') && seg.isNotEmpty() } }
+                    .toSet()
+                val rootFolder = firstSegments.singleOrNull()
+                if (rootFolder != null) rootFolderForLogging = rootFolder
+
+                for (entry in entries) {
+                    val entryName = entry.name
+                    if (firstEntryForLogging == null) firstEntryForLogging = entryName
+
+                    val relativePath = if (rootFolder != null && entryName.startsWith("$rootFolder/")) {
+                        entryName.removePrefix("$rootFolder/")
+                    } else {
+                        entryName
+                    }
+
+                    if (relativePath.isEmpty()) continue
+
+                    val entryFile = File(targetFolder, relativePath)
+                    if (!FileNames.isWithin(entryFile, targetFolder)) {
+                        Logger.error(TAG, "[SaveSync] ARCHIVE | Zip path traversal detected | entry=$entryName, target=${targetFolder.absolutePath}")
+                        return false
+                    }
+
+                    if (entry.isDirectory) {
+                        entryFile.mkdirs()
+                    } else {
+                        entryFile.parentFile?.mkdirs()
+                        zf.getInputStream(entry).use { input ->
+                            FileOutputStream(entryFile).use { fos ->
+                                BufferedOutputStream(fos, BUFFER_SIZE).use { bos ->
+                                    var count: Int
+                                    while (input.read(buffer, 0, BUFFER_SIZE).also { count = it } != -1) {
+                                        bos.write(buffer, 0, count)
+                                        totalSize += count
+                                    }
+                                }
+                            }
+                        }
+                        fileCount++
+                    }
+                }
+            }
+            Logger.debug(TAG, "[SaveSync] ARCHIVE | Extracted | files=$fileCount, size=${totalSize}bytes, target=${targetFolder.absolutePath}, root=$rootFolderForLogging")
+            true
+        } catch (e: java.util.zip.ZipException) {
+            Logger.error(
+                TAG,
+                "[SaveSync] ARCHIVE | Corrupt zip - server copy is damaged | zip=${sourceZip.name}, target=${targetFolder.absolutePath}, ${e.message}",
+                e
+            )
+            throw CorruptZipException("Source zip is damaged: ${e.message}", e)
+        } catch (e: Exception) {
+            Logger.error(
+                TAG,
+                "[SaveSync] ARCHIVE | Extract failed | ${e.javaClass.simpleName}: ${e.message} | zip=${sourceZip.name}, target=${targetFolder.absolutePath}, root=$rootFolderForLogging, firstEntry=$firstEntryForLogging",
+                e
+            )
+            false
+        }
+    }
+
+    fun isJksvFormat(zipFile: File): Boolean {
+        if (!zipFile.exists() || !zipFile.isFile) return false
+
+        return try {
+            ZipFile.builder().setFile(zipFile).get().use { zf ->
+                zf.getEntry(JKSV_META_FILE) != null
+            }
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | isJksvFormat check failed | zip=${zipFile.name}", e)
+            false
+        }
+    }
+
+    fun parseTitleIdFromJksvMeta(zipFile: File): String? {
+        if (!zipFile.exists() || !zipFile.isFile) return null
+
+        return try {
+            ZipFile.builder().setFile(zipFile).get().use { zf ->
+                val entry = zf.getEntry(JKSV_META_FILE) ?: return@use null
+                val metaBytes = zf.getInputStream(entry).use { it.readBytes() }
+                parseTitleIdFromMeta(metaBytes)
+            }
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | parseTitleIdFromJksvMeta failed | zip=${zipFile.name}", e)
+            null
+        }
+    }
+
+    private fun parseTitleIdFromMeta(metaBytes: ByteArray): String? {
+        if (metaBytes.size < JKSV_MAGIC.length) return null
+
+        val magic = String(metaBytes, 0, JKSV_MAGIC.length, Charsets.US_ASCII)
+        if (magic != JKSV_MAGIC) {
+            Logger.debug(TAG, "[SaveSync] ARCHIVE | Invalid JKSV magic: $magic")
+            return null
+        }
+
+        for (offset in JKSV_TITLE_ID_OFFSETS) {
+            if (metaBytes.size < offset + 8) continue
+
+            val titleIdBytes = metaBytes.copyOfRange(offset, offset + 8)
+            val titleId = ByteBuffer.wrap(titleIdBytes)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .getLong()
+
+            val formatted = String.format("%016X", titleId)
+
+            if (formatted.startsWith("01")) {
+                Logger.debug(TAG, "[SaveSync] ARCHIVE | Parsed JKSV titleId: $formatted (offset=$offset)")
+                return formatted
+            }
+        }
+
+        Logger.debug(TAG, "[SaveSync] ARCHIVE | No valid title ID found in JKSV metadata")
+        return null
+    }
+
+    fun unzipSingleFolderExcluding(
+        sourceZip: File,
+        targetFolder: File,
+        excludeFiles: Set<String>
+    ): Boolean {
+        if (!sourceZip.exists() || !sourceZip.isFile) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | Source zip invalid | path=${sourceZip.absolutePath}")
+            return false
+        }
+
+        val isRestricted = isRestrictedPath(targetFolder.absolutePath)
+        if (isRestricted) {
+            return unzipViaTempExcluding(sourceZip, targetFolder, excludeFiles)
+        }
+        return unzipDirectExcluding(sourceZip, targetFolder, excludeFiles)
+    }
+
+    private fun unzipViaTempExcluding(sourceZip: File, targetFolder: File, excludeFiles: Set<String>): Boolean {
+        val tempDir = File(sourceZip.parentFile, "extract_${System.currentTimeMillis()}")
+        try {
+            if (!unzipDirectExcluding(sourceZip, tempDir, excludeFiles)) {
+                tempDir.deleteRecursively()
+                return false
+            }
+            val moved = androidDataAccessor.moveDirectory(tempDir.absolutePath, targetFolder.absolutePath)
+            if (!moved) {
+                Logger.error(TAG, "[SaveSync] ARCHIVE | Failed to move to target | target=${targetFolder.absolutePath}")
+                tempDir.deleteRecursively()
+                return false
+            }
+            return true
+        } catch (e: Exception) {
+            tempDir.deleteRecursively()
+            return false
+        }
+    }
+
+    private fun unzipDirectExcluding(sourceZip: File, targetFolder: File, excludeFiles: Set<String>): Boolean {
+        return try {
+            targetFolder.mkdirs()
+            var fileCount = 0
+            var totalSize = 0L
+            ZipArchiveInputStream(BufferedInputStream(FileInputStream(sourceZip))).use { zis ->
+                var entry: ZipArchiveEntry?
+                val buffer = ByteArray(BUFFER_SIZE)
+                var rootFolder: String? = null
+
+                while (zis.nextEntry.also { entry = it } != null) {
+                    val entryName = entry!!.name
+
+                    if (rootFolder == null) {
+                        rootFolder = entryName.substringBefore('/').takeIf { entryName.contains('/') }
+                    }
+
+                    val relativePath = if (rootFolder != null && entryName.startsWith("$rootFolder/")) {
+                        entryName.removePrefix("$rootFolder/")
+                    } else {
+                        entryName
+                    }
+
+                    if (relativePath.isEmpty()) continue
+
+                    val fileName = relativePath.substringAfterLast('/')
+                    if (excludeFiles.contains(fileName)) continue
+
+                    val entryFile = File(targetFolder, relativePath)
+                    if (!FileNames.isWithin(entryFile, targetFolder)) return false
+
+                    if (entry!!.isDirectory) {
+                        entryFile.mkdirs()
+                    } else {
+                        entryFile.parentFile?.mkdirs()
+                        FileOutputStream(entryFile).use { fos ->
+                            BufferedOutputStream(fos, BUFFER_SIZE).use { bos ->
+                                var count: Int
+                                while (zis.read(buffer, 0, BUFFER_SIZE).also { count = it } != -1) {
+                                    bos.write(buffer, 0, count)
+                                    totalSize += count
+                                }
+                            }
+                        }
+                        fileCount++
+                    }
+                }
+            }
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | Extract failed | ${e.javaClass.simpleName}: ${e.message}", e)
+            false
+        }
+    }
+
+    fun unzipPreservingStructure(
+        sourceZip: File,
+        targetFolder: File,
+        excludeFiles: Set<String>
+    ): Boolean {
+        if (!sourceZip.exists() || !sourceZip.isFile) {
+            Logger.warn(TAG, "[SaveSync] ARCHIVE | Source zip invalid | path=${sourceZip.absolutePath}")
+            return false
+        }
+
+        val isRestricted = isRestrictedPath(targetFolder.absolutePath)
+        if (isRestricted) {
+            return unzipViaTempPreserving(sourceZip, targetFolder, excludeFiles)
+        }
+        return unzipDirectPreserving(sourceZip, targetFolder, excludeFiles)
+    }
+
+    private fun unzipViaTempPreserving(sourceZip: File, targetFolder: File, excludeFiles: Set<String>): Boolean {
+        val tempDir = File(sourceZip.parentFile, "extract_${System.currentTimeMillis()}")
+        try {
+            if (!unzipDirectPreserving(sourceZip, tempDir, excludeFiles)) {
+                tempDir.deleteRecursively()
+                return false
+            }
+            val moved = androidDataAccessor.moveDirectory(tempDir.absolutePath, targetFolder.absolutePath)
+            if (!moved) {
+                Logger.error(TAG, "[SaveSync] ARCHIVE | Failed to move to target | target=${targetFolder.absolutePath}")
+                tempDir.deleteRecursively()
+                return false
+            }
+            return true
+        } catch (e: Exception) {
+            tempDir.deleteRecursively()
+            return false
+        }
+    }
+
+    private fun unzipDirectPreserving(sourceZip: File, targetFolder: File, excludeFiles: Set<String>): Boolean {
+        return try {
+            targetFolder.mkdirs()
+            var fileCount = 0
+            var totalSize = 0L
+            ZipArchiveInputStream(BufferedInputStream(FileInputStream(sourceZip))).use { zis ->
+                var entry: ZipArchiveEntry?
+                val buffer = ByteArray(BUFFER_SIZE)
+
+                while (zis.nextEntry.also { entry = it } != null) {
+                    val entryName = entry!!.name
+
+                    val fileName = entryName.substringAfterLast('/')
+                    if (excludeFiles.contains(fileName)) continue
+
+                    val entryFile = File(targetFolder, entryName)
+                    if (!FileNames.isWithin(entryFile, targetFolder)) return false
+
+                    if (entry!!.isDirectory) {
+                        entryFile.mkdirs()
+                    } else {
+                        entryFile.parentFile?.mkdirs()
+                        FileOutputStream(entryFile).use { fos ->
+                            BufferedOutputStream(fos, BUFFER_SIZE).use { bos ->
+                                var count: Int
+                                while (zis.read(buffer, 0, BUFFER_SIZE).also { count = it } != -1) {
+                                    bos.write(buffer, 0, count)
+                                    totalSize += count
+                                }
+                            }
+                        }
+                        fileCount++
+                    }
+                }
+            }
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | Extract failed | ${e.javaClass.simpleName}: ${e.message}", e)
+            false
+        }
+    }
+
+    fun writeBytesToPath(path: String, data: ByteArray): Boolean = fal.writeBytes(path, data)
+
+    fun isZipArchive(file: File): Boolean = file.isFile && isZipFile(file)
+
+    fun readEntryBytes(zipFile: File, entryName: String): ByteArray? = try {
+        ZipFile.builder().setFile(zipFile).get().use { zf ->
+            zf.getEntry(entryName)?.let { entry -> zf.getInputStream(entry).use { it.readBytes() } }
+        }
+    } catch (e: Exception) {
+        Logger.warn(TAG, "[SaveSync] ARCHIVE | Cannot read entry | zip=${zipFile.name}, entry=$entryName, ${e.message}")
+        null
+    }
+
+    fun listFileEntries(zipFile: File): List<String> = try {
+        ZipArchiveInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
+            val names = mutableListOf<String>()
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory) names.add(entry.name)
+                entry = zis.nextEntry
+            }
+            names
+        }
+    } catch (e: Exception) {
+        Logger.warn(TAG, "[SaveSync] ARCHIVE | Cannot list entries | zip=${zipFile.name}, ${e.message}")
+        emptyList()
+    }
+
+    /**
+     * Writes each named entry of a flat bundle to the absolute path it maps to. Refuses the
+     * whole archive when it holds a file entry with no destination, so a bundle from an
+     * unknown layout never half-lands.
+     */
+    fun unzipEntriesTo(sourceZip: File, destinations: Map<String, String>): Boolean {
+        val entries = listFileEntries(sourceZip)
+        val unplaceable = entries.toSet() - destinations.keys
+        if (unplaceable.isNotEmpty()) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | Bundle holds entries with no destination; refusing to extract | entries=$unplaceable")
+            return false
+        }
+        return try {
+            ZipFile.builder().setFile(sourceZip).get().use { zf ->
+                for (entry in zf.entries.toList()) {
+                    if (entry.isDirectory) continue
+                    val target = destinations[entry.name] ?: continue
+                    target.substringBeforeLast('/', "").takeIf { it.isNotEmpty() }?.let { fal.mkdirs(it) }
+                    val bytes = zf.getInputStream(entry).use { it.readBytes() }
+                    if (!fal.writeBytes(target, bytes)) {
+                        Logger.error(TAG, "[SaveSync] ARCHIVE | Failed to write bundle entry | entry=${entry.name}, target=$target")
+                        return false
+                    }
+                }
+            }
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] ARCHIVE | unzipEntriesTo failed | ${e.message}")
+            false
+        }
+    }
+
+    fun copyFileToPath(source: File, targetPath: String): Boolean = fal.copyFile(source.absolutePath, targetPath)
+
+    fun calculateFileHashAtPath(path: String): String {
+        val md = MessageDigest.getInstance("MD5")
+        val input = openInputStreamForPath(path)
+            ?: throw IllegalStateException("Cannot open input stream for path: $path")
+        input.buffered().use { buffered ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            var bytesRead: Int
+            while (buffered.read(buffer).also { bytesRead = it } != -1) {
+                md.update(buffer, 0, bytesRead)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun calculateFileHash(file: File): String {
+        val md = MessageDigest.getInstance("MD5")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            var bytesRead: Int
+            while (input.read(buffer).also { bytesRead = it } != -1) {
+                md.update(buffer, 0, bytesRead)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun calculateBytesHash(bytes: ByteArray): String {
+        val md = MessageDigest.getInstance("MD5")
+        md.update(bytes)
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun calculateZipHash(file: File): String {
+        ZipArchiveInputStream(BufferedInputStream(FileInputStream(file))).use { zis ->
+            return calculateZipHashFromStream(zis)
+        }
+    }
+
+    private fun calculateZipHashFromStream(zis: ZipArchiveInputStream): String {
+        val entries = mutableListOf<Pair<String, String>>()
+        var entry = zis.nextEntry
+        while (entry != null) {
+            if (!entry.isDirectory) {
+                val md = MessageDigest.getInstance("MD5")
+                val buffer = ByteArray(BUFFER_SIZE)
+                var bytesRead: Int
+                while (zis.read(buffer).also { bytesRead = it } != -1) {
+                    md.update(buffer, 0, bytesRead)
+                }
+                val fileHash = md.digest()
+                    .joinToString("") { "%02x".format(it) }
+                entries.add(entry.name to fileHash)
+            }
+            entry = zis.nextEntry
+        }
+        entries.sortBy { it.first }
+        val combined = entries
+            .joinToString("\n") { "${it.first}:${it.second}" }
+        val finalMd = MessageDigest.getInstance("MD5")
+        finalMd.update(combined.toByteArray(Charsets.UTF_8))
+        return finalMd.digest()
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    /** Equivalent to [zipFolder] + [calculateZipHash] without writing a temp zip. */
+    fun calculateFolderAsZipHash(folder: File): String {
+        val entries = mutableListOf<Pair<String, String>>()
+        collectUnionFileHashes(folder.absolutePath, folder.name, entries)
+        return finalizeHash(entries)
+    }
+
+    /**
+     * Equivalent to [zipFiles] + [calculateZipHash] without writing a temp zip.
+     */
+    fun calculateFilesAsZipHash(paths: List<String>): String {
+        val entries = paths.map { File(it).name to calculateFileHashAtPath(it) }.toMutableList()
+        return finalizeHash(entries)
+    }
+
+    fun calculateFoldersAsZipHash(folders: List<File>): String =
+        calculateNamedFoldersAsZipHash(folders.map { ArchiveRoot(it.name, it) })
+
+    /**
+     * Equivalent to [zipNamedFolders] + [calculateZipHash] without writing a temp zip.
+     */
+    fun calculateNamedFoldersAsZipHash(roots: List<ArchiveRoot>): String {
+        val entries = mutableListOf<Pair<String, String>>()
+        for (root in roots) {
+            collectUnionFileHashes(root.folder.absolutePath, root.name, entries)
+        }
+        return finalizeHash(entries)
+    }
+
+    private fun collectUnionFileHashes(
+        folderPath: String,
+        entryPrefix: String,
+        out: MutableList<Pair<String, String>>
+    ) {
+        for (entry in fal.listFilesUnion(folderPath)) {
+            val entryName = "$entryPrefix/${entry.name}"
+            if (entry.isDirectory) {
+                collectUnionFileHashes(entry.path, entryName, out)
+            } else {
+                try {
+                    out.add(entryName to calculateFileHashAtPath(entry.path))
+                } catch (e: IllegalStateException) {
+                    Logger.warn(TAG, "[SaveSync] ARCHIVE | Skipping unhashable file | path=${entry.path}, ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun finalizeHash(entries: MutableList<Pair<String, String>>): String {
+        entries.sortBy { it.first }
+        val combined = entries.joinToString("\n") { "${it.first}:${it.second}" }
+        val finalMd = MessageDigest.getInstance("MD5")
+        finalMd.update(combined.toByteArray(Charsets.UTF_8))
+        return finalMd.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun calculateContentHash(file: File): String {
+        return if (isZipFile(file)) calculateZipHash(file)
+        else calculateFileHash(file)
+    }
+
+    fun calculateContentHashAtPath(path: String): String {
+        return if (isZipFileAtPath(path)) {
+            val input = openInputStreamForPath(path)
+                ?: throw IllegalStateException("Cannot open input stream for path: $path")
+            ZipArchiveInputStream(BufferedInputStream(input)).use { zis ->
+                calculateZipHashFromStream(zis)
+            }
+        } else {
+            calculateFileHashAtPath(path)
+        }
+    }
+
+    private fun isZipFile(file: File): Boolean {
+        if (file.length() < 4) return false
+        file.inputStream().use { stream ->
+            return checkZipMagic(stream)
+        }
+    }
+
+    private fun isZipFileAtPath(path: String): Boolean {
+        val input = openInputStreamForPath(path) ?: return false
+        input.use { stream ->
+            return checkZipMagic(stream)
+        }
+    }
+
+    private fun checkZipMagic(stream: InputStream): Boolean {
+        val magic = ByteArray(4)
+        if (stream.read(magic) < 4) return false
+        return magic[0] == 0x50.toByte() &&
+            magic[1] == 0x4B.toByte() &&
+            (magic[2] == 0x03.toByte() ||
+                magic[2] == 0x05.toByte() ||
+                magic[2] == 0x07.toByte()) &&
+            (magic[3] == 0x04.toByte() ||
+                magic[3] == 0x06.toByte() ||
+                magic[3] == 0x08.toByte())
+    }
+
+    data class HardcoreTrailer(val version: Int)
+
+    fun appendHardcoreTrailer(file: File): Boolean {
+        if (!file.exists() || !file.isFile) {
+            Logger.warn(TAG, "[SaveSync] TRAILER | Cannot append trailer - file invalid: ${file.absolutePath}")
+            return false
+        }
+
+        return try {
+            val json = """{"h":true,"v":1}"""
+            val jsonBytes = json.toByteArray(Charsets.UTF_8)
+            val lenBytes = ByteBuffer.allocate(4)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(jsonBytes.size)
+                .array()
+
+            file.appendBytes(jsonBytes)
+            file.appendBytes(lenBytes)
+            file.appendBytes(TRAILER_MAGIC)
+
+            Logger.debug(TAG, "[SaveSync] TRAILER | Appended hardcore trailer to ${file.name} (${jsonBytes.size + 12} bytes)")
+            true
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] TRAILER | Failed to append trailer to ${file.absolutePath}", e)
+            false
+        }
+    }
+
+    fun readHardcoreTrailer(file: File): HardcoreTrailer? {
+        if (!file.exists() || !file.isFile) return null
+        if (file.length() < TRAILER_MIN_SIZE) return null
+
+        return try {
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                val fileLen = raf.length()
+                if (fileLen < TRAILER_MIN_SIZE) return null
+
+                raf.seek(fileLen - TRAILER_MAGIC.size)
+                val magic = ByteArray(TRAILER_MAGIC.size)
+                raf.readFully(magic)
+                if (!magic.contentEquals(TRAILER_MAGIC)) return null
+
+                raf.seek(fileLen - TRAILER_MAGIC.size - 4)
+                val lenBytes = ByteArray(4)
+                raf.readFully(lenBytes)
+                val jsonLen = ByteBuffer.wrap(lenBytes).order(ByteOrder.LITTLE_ENDIAN).getInt()
+
+                if (jsonLen < 0 || jsonLen > 1024) return null
+                if (fileLen < TRAILER_MIN_SIZE + jsonLen) return null
+
+                raf.seek(fileLen - TRAILER_MAGIC.size - 4 - jsonLen)
+                val jsonBytes = ByteArray(jsonLen)
+                raf.readFully(jsonBytes)
+
+                val json = String(jsonBytes, Charsets.UTF_8)
+                if (!json.contains("\"h\":true")) return null
+
+                val version = Regex("\"v\":(\\d+)").find(json)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                Logger.debug(TAG, "[SaveSync] TRAILER | Read hardcore trailer from ${file.name}: version=$version")
+                HardcoreTrailer(version = version)
+            }
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] TRAILER | Failed to read trailer from ${file.absolutePath}", e)
+            null
+        }
+    }
+
+    fun hasHardcoreTrailer(file: File): Boolean = readHardcoreTrailer(file) != null
+
+    fun getTrailerSize(file: File): Long {
+        if (!file.exists() || !file.isFile) return 0
+        if (file.length() < TRAILER_MIN_SIZE) return 0
+
+        return try {
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                val fileLen = raf.length()
+
+                raf.seek(fileLen - TRAILER_MAGIC.size)
+                val magic = ByteArray(TRAILER_MAGIC.size)
+                raf.readFully(magic)
+                if (!magic.contentEquals(TRAILER_MAGIC)) return 0
+
+                raf.seek(fileLen - TRAILER_MAGIC.size - 4)
+                val lenBytes = ByteArray(4)
+                raf.readFully(lenBytes)
+                val jsonLen = ByteBuffer.wrap(lenBytes).order(ByteOrder.LITTLE_ENDIAN).getInt()
+
+                if (jsonLen < 0 || jsonLen > 1024) return 0
+                if (fileLen < TRAILER_MIN_SIZE + jsonLen) return 0
+
+                (TRAILER_MAGIC.size + 4 + jsonLen).toLong()
+            }
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    fun readBytesWithoutTrailer(file: File): ByteArray? {
+        if (!file.exists() || !file.isFile) return null
+
+        return try {
+            val trailerSize = getTrailerSize(file)
+            val contentSize = file.length() - trailerSize
+
+            if (contentSize <= 0) return null
+
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                val bytes = ByteArray(contentSize.toInt())
+                raf.readFully(bytes)
+                bytes
+            }
+        } catch (e: Exception) {
+            Logger.error(TAG, "[SaveSync] TRAILER | Failed to read bytes without trailer: ${file.absolutePath}", e)
+            null
+        }
+    }
+
+    companion object {
+        private const val JKSV_META_FILE = ".nx_save_meta.bin"
+        private const val JKSV_MAGIC = "JKSV"
+        private val JKSV_TITLE_ID_OFFSETS = listOf(5, 4, 6)
+
+        private val TRAILER_MAGIC = byteArrayOf(
+            'A'.code.toByte(), 'R'.code.toByte(), 'G'.code.toByte(), 'O'.code.toByte(),
+            'S'.code.toByte(), 'Y'.code.toByte(), 0x01, 0x00
+        )
+        private const val TRAILER_MIN_SIZE = 12L
+    }
+}

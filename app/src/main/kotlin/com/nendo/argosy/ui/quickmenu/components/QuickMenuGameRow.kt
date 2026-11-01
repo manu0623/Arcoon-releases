@@ -1,0 +1,135 @@
+package com.nendo.argosy.ui.quickmenu.components
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import com.nendo.argosy.ui.util.clickableNoFocus
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.nendo.argosy.R
+import com.nendo.argosy.ui.common.rememberFileImageModel
+import com.nendo.argosy.ui.components.GameTitle
+import com.nendo.argosy.ui.quickmenu.GameRowUi
+import com.nendo.argosy.ui.quickmenu.MetadataType
+import com.nendo.argosy.ui.theme.Dimens
+import com.nendo.argosy.ui.theme.LocalArgosyTheme
+
+@Composable
+fun QuickMenuGameRow(
+    game: GameRowUi,
+    isFocused: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(Dimens.radiusControl)
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (isFocused) {
+                    Modifier.border(Dimens.borderMedium, MaterialTheme.colorScheme.primary, shape)
+                } else Modifier
+            )
+            .background(
+                if (isFocused) LocalArgosyTheme.current.focusAccent.copy(alpha = 0.15f)
+                    .compositeOver(MaterialTheme.colorScheme.surface)
+                else MaterialTheme.colorScheme.surface,
+                shape
+            )
+            .clip(shape)
+            .clickableNoFocus(onClick = onClick)
+            .padding(Dimens.radiusLg),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AsyncImage(
+            model = rememberFileImageModel(game.coverPath),
+            contentDescription = game.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(Dimens.iconXl + Dimens.spacingSm)
+                .clip(RoundedCornerShape(Dimens.radiusMd))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+        )
+
+        Spacer(modifier = Modifier.width(Dimens.spacingMd))
+
+        Column(modifier = Modifier.weight(1f)) {
+            GameTitle(
+                title = game.title,
+                titleStyle = MaterialTheme.typography.titleMedium,
+                titleColor = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = game.platformName
+                        ?: stringResource(R.string.ui_quick_menu_row_platform_unknown),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                if (game.isDownloaded) {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = stringResource(
+                            R.string.ui_quick_menu_row_downloaded
+                        ),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(Dimens.iconXs)
+                    )
+                }
+            }
+        }
+
+        if (game.metadata.isNotEmpty()) {
+            Spacer(modifier = Modifier.width(Dimens.spacingMd))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Dimens.spacingXs)
+            ) {
+                if (game.metadataType == MetadataType.RATING) {
+                    Icon(
+                        Icons.Default.Public,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(Dimens.spacingMd)
+                    )
+                }
+                Text(
+                    text = game.metadata,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}

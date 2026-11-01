@@ -1,0 +1,208 @@
+package com.nendo.argosy.data.local.dao
+
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+import com.nendo.argosy.data.local.entity.PendingSyncQueueEntity
+import com.nendo.argosy.data.local.entity.SyncStatus
+import com.nendo.argosy.data.local.entity.SyncType
+import com.nendo.argosy.data.local.entity.UnsentSyncTypeRow
+import kotlinx.coroutines.flow.Flow
+import java.time.Instant
+
+@Dao
+interface PendingSyncQueueDao {
+
+    @Query("""
+        SELECT * FROM pending_sync_queue
+        WHERE status = 'PENDING' AND priority = :priority
+        ORDER BY createdAt ASC
+    """)
+    suspend fun getPendingByPriorityTier(priority: Int): List<PendingSyncQueueEntity>
+
+    @Query("SELECT * FROM pending_sync_queue WHERE gameId = :gameId")
+    suspend fun getByGameId(gameId: Long): List<PendingSyncQueueEntity>
+
+    @Query("SELECT * FROM pending_sync_queue WHERE gameId = :gameId AND ownerUserId IS :ownerUserId")
+    suspend fun getByGameIdForOwner(gameId: Long, ownerUserId: Long?): List<PendingSyncQueueEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(entity: PendingSyncQueueEntity): Long
+
+    @Update
+    suspend fun update(entity: PendingSyncQueueEntity)
+
+    @Query("DELETE FROM pending_sync_queue WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM pending_sync_queue WHERE gameId = :gameId AND syncType = :syncType AND ownerUserId IS :ownerUserId")
+    suspend fun deleteByGameAndType(gameId: Long, syncType: SyncType, ownerUserId: Long?)
+
+    @Query("DELETE FROM pending_sync_queue WHERE gameId = :gameId AND syncType = :syncType AND ownerUserId IS :ownerUserId AND status IN ('PENDING', 'IN_PROGRESS')")
+    suspend fun deleteActiveByGameAndType(gameId: Long, syncType: SyncType, ownerUserId: Long?)
+
+    @Query("""
+        UPDATE pending_sync_queue
+        SET status = 'IN_PROGRESS', updatedAt = :now
+        WHERE id = :id
+    """)
+    suspend fun markInProgress(id: Long, now: Instant = Instant.now())
+
+    @Query("""
+        UPDATE pending_sync_queue
+        SET status = 'COMPLETED', updatedAt = :now
+        WHERE id = :id
+    """)
+    suspend fun markCompleted(id: Long, now: Instant = Instant.now())
+
+    @Query("""
+        UPDATE pending_sync_queue
+        SET status = CASE WHEN retryCount + 1 >= maxRetries THEN 'FAILED' ELSE 'PENDING' END,
+            lastError = :error,
+            retryCount = retryCount + 1,
+            updatedAt = :now
+        WHERE id = :id
+    """)
+    suspend fun markFailed(id: Long, error: String?, now: Instant = Instant.now())
+
+    @Query("""
+        UPDATE pending_sync_queue
+        SET status = 'PENDING', updatedAt = :now
+        WHERE id = :id AND retryCount < maxRetries
+    """)
+    suspend fun retryIfEligible(id: Long, now: Instant = Instant.now())
+
+    @Query("""
+        UPDATE pending_sync_queue
+        SET status = 'PENDING', updatedAt = :now
+        WHERE status = 'FAILED' AND retryCount < maxRetries
+    """)
+    suspend fun promoteEligibleFailedToPending(now: Instant = Instant.now()): Int
+
+    @Query("DELETE FROM pending_sync_queue WHERE status = 'COMPLETED'")
+    suspend fun deleteCompleted()
+
+    @Query("""
+        DELETE FROM pending_sync_queue
+        WHERE status = 'FAILED' AND retryCount >= maxRetries AND syncType != 'ACHIEVEMENT'
+    """)
+    suspend fun deleteExhaustedRetries()
+
+    @Query("""
+        SELECT * FROM pending_sync_queue
+        WHERE syncType = :syncType AND status = 'FAILED' AND retryCount >= maxRetries
+    """)
+    suspend fun getExhaustedBySyncType(syncType: SyncType): List<PendingSyncQueueEntity>
+
+    @Query("SELECT * FROM pending_sync_queue WHERE syncType = :syncType")
+    suspend fun getBySyncType(syncType: SyncType): List<PendingSyncQueueEntity>
+
+    @Query("""
+        SELECT DISTINCT gameId, syncType FROM pending_sync_queue
+        WHERE (:gameId IS NULL OR gameId = :gameId)
+          AND (ownerUserId IS :ownerUserId OR ownerUserId IS NULL)
+          AND status IN ('PENDING', 'IN_PROGRESS')
+    """)
+    suspend fun getUnsentSyncTypesForOwnerOrUnowned(ownerUserId: Long?, gameId: Long?): List<UnsentSyncTypeRow>
+
+    @Query("""
+        SELECT * FROM pending_sync_queue
+        WHERE syncType = :syncType AND status = 'PENDING' AND retryCount < maxRetries
+        ORDER BY createdAt ASC
+    """)
+    suspend fun getRetryableBySyncType(syncType: SyncType): List<PendingSyncQueueEntity>
+
+    @Query("""
+        SELECT * FROM pending_sync_queue
+        WHERE syncType = :syncType AND status IN ('PENDING', 'FAILED')
+        ORDER BY createdAt ASC
+    """)
+    suspend fun getUnsubmittedBySyncType(syncType: SyncType): List<PendingSyncQueueEntity>
+
+    @Query("SELECT COUNT(*) FROM pending_sync_queue WHERE syncType = :syncType AND status IN ('PENDING', 'FAILED')")
+    suspend fun countUnsubmittedBySyncType(syncType: SyncType): Int
+
+    @Query("SELECT COUNT(*) FROM pending_sync_queue WHERE syncType = :syncType AND status IN ('PENDING', 'FAILED')")
+    fun observeUnsubmittedCountBySyncType(syncType: SyncType): Flow<Int>
+
+    @Query("""
+        UPDATE pending_sync_queue
+        SET status = 'PENDING',
+            lastError = :error,
+            retryCount = retryCount + 1,
+            updatedAt = :now
+        WHERE id = :id
+    """)
+    suspend fun recordRetryableFailure(id: Long, error: String?, now: Instant = Instant.now())
+
+    @Query("DELETE FROM pending_sync_queue WHERE gameId = :gameId")
+    suspend fun deleteByGameId(gameId: Long)
+
+    @Query("UPDATE pending_sync_queue SET rommId = :newRommId WHERE gameId = :gameId AND rommId = :oldRommId")
+    suspend fun realignRommId(gameId: Long, oldRommId: Long, newRommId: Long): Int
+
+    @Query("DELETE FROM pending_sync_queue WHERE gameId IN (SELECT id FROM games WHERE source IN (:sourceNames))")
+    suspend fun deleteByGameSources(sourceNames: List<String>)
+
+    @Query("DELETE FROM pending_sync_queue WHERE syncType = :syncType")
+    suspend fun deleteBySyncType(syncType: SyncType)
+
+    @Query("DELETE FROM pending_sync_queue")
+    suspend fun deleteAll()
+
+    @Query("SELECT DISTINCT sessionId FROM pending_sync_queue WHERE sessionId IS NOT NULL")
+    suspend fun distinctSessions(): List<Long>
+
+    @Query("SELECT COUNT(*) FROM pending_sync_queue WHERE sessionId = :sessionId AND status IN ('PENDING', 'IN_PROGRESS')")
+    suspend fun countActiveBySession(sessionId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM pending_sync_queue WHERE sessionId = :sessionId AND status = 'COMPLETED'")
+    suspend fun countCompletedBySession(sessionId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM pending_sync_queue WHERE sessionId = :sessionId AND status = 'FAILED'")
+    suspend fun countFailedBySession(sessionId: Long): Int
+
+    @Query("DELETE FROM pending_sync_queue WHERE ownerUserId = :ownerUserId")
+    suspend fun deleteByOwner(ownerUserId: Long)
+
+    @Query("SELECT COUNT(*) FROM pending_sync_queue WHERE ownerUserId = :ownerUserId AND status IN ('PENDING', 'IN_PROGRESS', 'FAILED')")
+    suspend fun countUnflushedForOwner(ownerUserId: Long): Int
+
+    @Query("DELETE FROM pending_sync_queue WHERE sessionId = :sessionId")
+    suspend fun deleteBySession(sessionId: Long)
+
+    /**
+     * Cache rows a queue row still points at. Pruning must not evict these: the queue row is the
+     * only remaining reference to the bytes the deferred upload promised to send.
+     */
+    @Query("""
+        SELECT DISTINCT cacheId FROM pending_sync_queue
+        WHERE gameId = :gameId AND cacheId IS NOT NULL
+          AND status IN ('PENDING', 'IN_PROGRESS', 'FAILED')
+    """)
+    suspend fun getPinnedCacheIdsForGame(gameId: Long): List<Long>
+
+    @Query("SELECT COUNT(*) FROM pending_sync_queue WHERE ownerUserId IS NULL")
+    suspend fun countUnowned(): Int
+
+    /**
+     * Attributes pre-accounts rows to one account. Called while that account is still the live one,
+     * so unsent work queued before a switch drains under the identity that created it rather than
+     * under whoever signs in next.
+     */
+    @Query("UPDATE pending_sync_queue SET ownerUserId = :ownerUserId WHERE ownerUserId IS NULL")
+    suspend fun adoptUnowned(ownerUserId: Long)
+
+    /**
+     * Returns an owner's abandoned rows to the queue. Nothing else moves a row out of IN_PROGRESS,
+     * so a drain interrupted by an account switch would otherwise leave it unreachable.
+     */
+    @Query("""
+        UPDATE pending_sync_queue
+        SET status = 'PENDING', updatedAt = :now
+        WHERE status = 'IN_PROGRESS' AND ownerUserId = :ownerUserId
+    """)
+    suspend fun resetInProgressForOwner(ownerUserId: Long, now: Instant = Instant.now()): Int
+}

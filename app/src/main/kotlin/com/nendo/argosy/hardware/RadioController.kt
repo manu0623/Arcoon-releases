@@ -1,0 +1,165 @@
+package com.nendo.argosy.hardware
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothClass
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.view.InputDevice
+import androidx.core.content.ContextCompat
+import com.nendo.argosy.util.RootShell
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.math.roundToInt
+
+data class RadioStatus(
+    val wifiEnabled: Boolean = false,
+    val wifiConnected: Boolean = false,
+    val bluetoothEnabled: Boolean = false
+)
+
+enum class BluetoothDeviceKind { CONTROLLER, AUDIO, OTHER }
+
+data class PairedBluetoothDevice(
+    val address: String,
+    val name: String,
+    val connected: Boolean,
+    val kind: BluetoothDeviceKind,
+    val batteryPercent: Int?
+)
+
+/**
+ * Wi-Fi and Bluetooth state for every device, and switching them through the root route where one
+ * exists. Android refuses both switches to ordinary apps, so [canToggle] is false without it.
+ * Switching and every [wifi] call block on a shell call.
+ */
+@Singleton
+class RadioController @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
+    private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+    private val connectivityManager =
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+
+    val wifi: WifiNetworks = WifiNetworks { script -> RootShell.run(context, script) }
+
+    val canToggle: Boolean
+        get() = RootShell.isAvailable
+
+    fun status(): RadioStatus = RadioStatus(
+        wifiEnabled = wifiManager?.isWifiEnabled == true,
+        wifiConnected = isWifiConnected(),
+        bluetoothEnabled = isBluetoothEnabled()
+    )
+
+    fun setWifiEnabled(enabled: Boolean): Boolean {
+        val cmdState = if (enabled) "enabled" else "disabled"
+        val svcState = if (enabled) "enable" else "disable"
+        return runRoot("cmd wifi set-wifi-enabled $cmdState || svc wifi $svcState")
+    }
+
+    fun setBluetoothEnabled(enabled: Boolean): Boolean {
+        val state = if (enabled) "enable" else "disable"
+        return runRoot("cmd bluetooth_manager $state || svc bluetooth $state")
+    }
+
+    fun hasBluetoothPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+
+    @SuppressLint("MissingPermission")
+    fun pairedDevices(): List<PairedBluetoothDevice> {
+        if (!hasBluetoothPermission()) return emptyList()
+        return try {
+            val bonded = bluetoothManager?.adapter?.bondedDevices.orEmpty()
+            val inputs = externalInputDevices()
+            bonded.map { device ->
+                val name = device.name?.takeIf { it.isNotBlank() } ?: device.address
+                val input = inputs.firstOrNull { it.name == name }
+                PairedBluetoothDevice(
+                    address = device.address,
+                    name = name,
+                    connected = isDeviceConnected(device) ?: (input != null),
+                    kind = kindOf(device, input),
+                    batteryPercent = input?.let(::batteryPercent)
+                )
+            }.sortedWith(compareByDescending<PairedBluetoothDevice> { it.connected }.thenBy { it.name.lowercase() })
+        } catch (_: SecurityException) {
+            emptyList()
+        }
+    }
+
+    private fun runRoot(script: String): Boolean = RootShell.run(context, script)?.succeeded == true
+
+    private fun isWifiConnected(): Boolean = try {
+        val manager = connectivityManager ?: return false
+        manager.getNetworkCapabilities(manager.activeNetwork)
+            ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    } catch (_: SecurityException) {
+        false
+    }
+
+    private fun isBluetoothEnabled(): Boolean = try {
+        bluetoothManager?.adapter?.isEnabled == true
+    } catch (_: SecurityException) {
+        false
+    }
+
+    private fun externalInputDevices(): List<InputDevice> = InputDevice.getDeviceIds().toList()
+        .mapNotNull { InputDevice.getDevice(it) }
+        .filter { Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || it.isExternal }
+
+    @SuppressLint("DiscouragedPrivateApi")
+    private fun isDeviceConnected(device: BluetoothDevice): Boolean? = try {
+        BluetoothDevice::class.java.getMethod("isConnected").invoke(device) as? Boolean
+    } catch (_: Exception) {
+        null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun kindOf(device: BluetoothDevice, input: InputDevice?): BluetoothDeviceKind {
+        if (input != null && input.isGamepad()) return BluetoothDeviceKind.CONTROLLER
+        val deviceClass = try {
+            device.bluetoothClass
+        } catch (_: SecurityException) {
+            null
+        } ?: return BluetoothDeviceKind.OTHER
+        return when (deviceClass.majorDeviceClass) {
+            BluetoothClass.Device.Major.AUDIO_VIDEO -> BluetoothDeviceKind.AUDIO
+            BluetoothClass.Device.Major.PERIPHERAL ->
+                if ((deviceClass.deviceClass and PERIPHERAL_MINOR_MASK) in GAME_PERIPHERAL_MINORS) {
+                    BluetoothDeviceKind.CONTROLLER
+                } else {
+                    BluetoothDeviceKind.OTHER
+                }
+            else -> BluetoothDeviceKind.OTHER
+        }
+    }
+
+    private fun InputDevice.isGamepad(): Boolean =
+        supportsSource(InputDevice.SOURCE_GAMEPAD) || supportsSource(InputDevice.SOURCE_JOYSTICK)
+
+    private fun batteryPercent(input: InputDevice): Int? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+        val battery = input.batteryState
+        if (!battery.isPresent) return null
+        val capacity = battery.capacity
+        if (capacity.isNaN() || capacity < 0f) return null
+        return (capacity * PERCENT).roundToInt().coerceIn(0, PERCENT.toInt())
+    }
+
+    private companion object {
+        const val PERIPHERAL_MINOR_MASK = 0x3C
+        val GAME_PERIPHERAL_MINORS = setOf(0x04, 0x08)
+        const val PERCENT = 100f
+    }
+}

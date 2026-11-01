@@ -1,0 +1,371 @@
+package com.nendo.argosy.ui.common.savechannel
+
+import android.content.Context
+import com.nendo.argosy.R
+import com.nendo.argosy.data.repository.SaveCacheManager
+import com.nendo.argosy.data.repository.SaveSyncApiClient
+import com.nendo.argosy.domain.model.UnifiedSaveEntry
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import java.time.Instant
+
+class SaveChannelSavesDelegateTest {
+
+    private lateinit var holder: SaveChannelStateHolder
+    private lateinit var saveCacheManager: SaveCacheManager
+    private lateinit var delegate: SaveChannelSavesDelegate
+
+    @Before
+    fun setup() {
+        holder = SaveChannelStateHolder()
+        saveCacheManager = mockk(relaxed = true)
+        val context = mockk<Context>(relaxed = true)
+        every { context.getString(R.string.ui_save_channel_slot_autosave) } returns "Autosave"
+        every { context.getString(R.string.ui_save_channel_slot_archived) } returns "Archived"
+        delegate = SaveChannelSavesDelegate(
+            context = context,
+            holder = holder,
+            getUnifiedSavesUseCase = mockk(relaxed = true),
+            restoreCachedSaveUseCase = mockk(relaxed = true),
+            activateSaveChannelUseCase = mockk(relaxed = true),
+            restoreSaveChannelPointUseCase = mockk(relaxed = true),
+            createSaveChannelUseCase = mockk(relaxed = true),
+            copySaveChannelUseCase = mockk(relaxed = true),
+            renameSaveChannelUseCase = mockk(relaxed = true),
+            deleteSaveChannelUseCase = mockk(relaxed = true),
+            saveCacheManager = saveCacheManager,
+            saveSyncRepository = mockk(relaxed = true),
+            gameRepository = mockk(relaxed = true),
+            activeSaveRepository = mockk(relaxed = true),
+            notificationManager = mockk(relaxed = true),
+            titleIdDownloadObserver = mockk(relaxed = true),
+            syncCoordinator = mockk(relaxed = true)
+        )
+    }
+
+    private fun entry(
+        channelName: String?,
+        userCreated: Boolean = false,
+        archival: Boolean = false,
+        ms: Long = 1L
+    ) = UnifiedSaveEntry(
+        timestamp = Instant.ofEpochMilli(ms),
+        size = 100L,
+        channelName = channelName,
+        source = UnifiedSaveEntry.Source.LOCAL,
+        isUserCreatedSlot = userCreated,
+        isArchival = archival
+    )
+
+    private fun serverArchival(serverSaveId: Long, ms: Long) = UnifiedSaveEntry(
+        localCacheId = null,
+        serverSaveId = serverSaveId,
+        timestamp = Instant.ofEpochMilli(ms),
+        size = 100L,
+        channelName = null,
+        source = UnifiedSaveEntry.Source.SERVER,
+        isArchival = true
+    )
+
+    @Test
+    fun `archived server-only saves sharing a timestamp produce unique history keys`() {
+        val entries = listOf(
+            serverArchival(serverSaveId = 1, ms = 1000),
+            serverArchival(serverSaveId = 2, ms = 1000),
+            serverArchival(serverSaveId = 3, ms = 1000)
+        )
+        holder.rawEntries = entries
+        val slots = delegate.buildSaveSlots(entries, activeChannel = null)
+        val archivedIndex = slots.indexOfFirst { it.isArchivedBucket }
+        holder.state.value = holder.state.value.copy(
+            saveSlots = slots,
+            selectedSlotIndex = archivedIndex
+        )
+
+        delegate.updateHistoryForFocusedSlot()
+
+        val keys = holder.state.value.saveHistory.map { it.historyKey }
+        assertEquals(3, keys.size)
+        assertEquals("history keys must be unique", keys.size, keys.toSet().size)
+    }
+
+    @Test
+    fun `a server-only latest save appears in the autosave slot's history`() {
+        val entries = listOf(
+            UnifiedSaveEntry(
+                localCacheId = null,
+                serverSaveId = 9,
+                timestamp = Instant.ofEpochMilli(2000),
+                size = 100L,
+                channelName = null,
+                source = UnifiedSaveEntry.Source.SERVER,
+                isLatest = true
+            )
+        )
+        holder.rawEntries = entries
+        val slots = delegate.buildSaveSlots(entries, activeChannel = null)
+        val autosaveIndex = slots.indexOfFirst {
+            it.channelName.equals(SaveSyncApiClient.AUTOSAVE_SLOT_NAME, ignoreCase = true)
+        }
+        holder.state.value = holder.state.value.copy(
+            saveSlots = slots,
+            selectedSlotIndex = autosaveIndex
+        )
+
+        delegate.updateHistoryForFocusedSlot()
+
+        assertEquals(1, slots[autosaveIndex].saveCount)
+        assertEquals(
+            "the slot counts it, so its history must list it",
+            1,
+            holder.state.value.saveHistory.size
+        )
+    }
+
+    @Test
+    fun `channel colliding with autosave does not produce duplicate slot keys`() {
+        val entries = listOf(entry(channelName = "Autosave", userCreated = true))
+
+        val slots = delegate.buildSaveSlots(entries, activeChannel = "Autosave")
+
+        val keys = slots.map { it.slotKey }
+        assertEquals("slot keys must be unique", keys.size, keys.toSet().size)
+        val names = slots.map { it.displayName }
+        assertEquals("display names must be unique", names.size, names.toSet().size)
+        assertEquals(1, slots.count { it.displayName == "Autosave" })
+
+        val autosave = slots.first { it.displayName == "Autosave" }
+        assertEquals(SaveSyncApiClient.AUTOSAVE_SLOT_NAME, autosave.channelName)
+        assertEquals(1, autosave.saveCount)
+    }
+
+    @Test
+    fun `slots sharing a display name still have distinct keys`() {
+        val canonical = SaveSlotItem(
+            channelName = SaveSyncApiClient.AUTOSAVE_SLOT_NAME,
+            displayName = "Autosave",
+            isActive = false,
+            saveCount = 1,
+            latestTimestamp = null
+        )
+        val colliding = SaveSlotItem(
+            channelName = "Autosave",
+            displayName = "Autosave",
+            isActive = true,
+            saveCount = 0,
+            latestTimestamp = null
+        )
+
+        assertEquals(canonical.displayName, colliding.displayName)
+        assertTrue(
+            "slotKey must disambiguate slots with identical display names",
+            canonical.slotKey != colliding.slotKey
+        )
+    }
+
+    @Test
+    fun `active channel with no saves still gets its own slot`() {
+        val slots = delegate.buildSaveSlots(emptyList(), activeChannel = "flip2")
+
+        assertTrue(slots.any { it.channelName == "flip2" && it.isActive })
+        val keys = slots.map { it.slotKey }
+        assertEquals(keys.size, keys.toSet().size)
+    }
+
+    @Test
+    fun `the newest save of a named slot cannot be copied into that same slot`() = runTest {
+        val entries = listOf(
+            UnifiedSaveEntry(
+                localCacheId = 4L,
+                timestamp = Instant.ofEpochMilli(3000),
+                size = 100L,
+                channelName = "speedrun",
+                source = UnifiedSaveEntry.Source.LOCAL,
+                isUserCreatedSlot = true,
+                isLocked = true
+            )
+        )
+        holder.rawEntries = entries
+        val slots = delegate.buildSaveSlots(entries, activeChannel = null)
+        holder.state.value = holder.state.value.copy(
+            saveSlots = slots,
+            selectedSlotIndex = slots.indexOfFirst { it.channelName == "speedrun" }
+        )
+        delegate.updateHistoryForFocusedSlot()
+        delegate.focusHistoryColumn()
+
+        delegate.showSlotPicker(this)
+        advanceUntilIdle()
+
+        val destinations = holder.state.value.slotPickerItems.map { it.channelName }
+        assertTrue(
+            "the slot the save already lives in must not be offered: $destinations",
+            destinations.none { it.equals("speedrun", ignoreCase = true) }
+        )
+        assertTrue(
+            "every other slot stays available: $destinations",
+            destinations.any { it.equals(SaveSyncApiClient.AUTOSAVE_SLOT_NAME, ignoreCase = true) }
+        )
+    }
+
+    @Test
+    fun `confirmRename rejects a reserved autosave name`() = runTest {
+        holder.state.value = holder.state.value.copy(
+            renameMode = RenameMode.NEW_SLOT,
+            renameText = "Autosave"
+        )
+
+        delegate.confirmRename(this)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { saveCacheManager.channelExists(any(), any()) }
+    }
+
+    @Test
+    fun `confirmRename allows a normal slot name`() = runTest {
+        coEvery { saveCacheManager.channelExists(any(), any()) } returns false
+        holder.state.value = holder.state.value.copy(
+            renameMode = RenameMode.NEW_SLOT,
+            renameText = "flip3"
+        )
+
+        delegate.confirmRename(this)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { saveCacheManager.channelExists(0L, "flip3") }
+    }
+
+    private fun cached(
+        cacheId: Long,
+        ms: Long,
+        channelName: String? = null,
+        archival: Boolean = false,
+        locked: Boolean = false,
+        serverSaveId: Long? = null,
+        uploaded: Boolean = serverSaveId != null
+    ) = UnifiedSaveEntry(
+        localCacheId = cacheId,
+        serverSaveId = serverSaveId,
+        localCopyUploaded = uploaded,
+        timestamp = Instant.ofEpochMilli(ms),
+        size = 100L,
+        channelName = channelName,
+        source = if (serverSaveId != null) UnifiedSaveEntry.Source.BOTH else UnifiedSaveEntry.Source.LOCAL,
+        isLocked = locked,
+        isArchival = archival
+    )
+
+    private fun focusSlot(entries: List<UnifiedSaveEntry>, pick: (SaveSlotItem) -> Boolean) {
+        holder.rawEntries = entries
+        val slots = delegate.buildSaveSlots(entries, activeChannel = null)
+        holder.state.value = holder.state.value.copy(
+            saveSlots = slots,
+            selectedSlotIndex = slots.indexOfFirst(pick)
+        )
+        delegate.updateHistoryForFocusedSlot()
+    }
+
+    @Test
+    fun `deleting the Archived slot removes every archived copy on this device and nothing on the server`() = runTest {
+        focusSlot(
+            listOf(cached(1, 1000, archival = true), cached(2, 2000, archival = true), serverArchival(9, 3000)),
+            SaveSlotItem::isArchivedBucket
+        )
+
+        delegate.showDeleteConfirmation()
+        assertEquals(SaveDeleteTarget.Archived(listOf(1L, 2L), allOnServer = false), holder.state.value.deleteTarget)
+        delegate.confirmDelete(this) {}
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { saveCacheManager.deleteCachedSave(1L) }
+        coVerify(exactly = 1) { saveCacheManager.deleteCachedSave(2L) }
+        coVerify(exactly = 2) { saveCacheManager.deleteCachedSave(any()) }
+    }
+
+    @Test
+    fun `an older version of a slot can be deleted but its newest cannot`() = runTest {
+        focusSlot(
+            listOf(cached(5, 5000, "flip", locked = true), cached(4, 4000, "flip", locked = true)),
+            { it.channelName == "flip" }
+        )
+        holder.state.value = holder.state.value.copy(saveFocusColumn = SaveFocusColumn.HISTORY)
+
+        holder.state.value = holder.state.value.copy(selectedHistoryIndex = 0)
+        delegate.showDeleteVersionConfirmation()
+        assertEquals(null, holder.state.value.deleteTarget)
+
+        holder.state.value = holder.state.value.copy(selectedHistoryIndex = 1)
+        delegate.showDeleteVersionConfirmation()
+        assertEquals(SaveDeleteTarget.Version(4L, 4000L, onServer = false), holder.state.value.deleteTarget)
+        delegate.confirmDelete(this) {}
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { saveCacheManager.deleteCachedSave(4L) }
+        coVerify(exactly = 0) { saveCacheManager.deleteCachedSave(5L) }
+    }
+
+    @Test
+    fun `a version with a server copy is marked as kept on the server`() {
+        focusSlot(
+            listOf(cached(5, 5000, "flip", locked = true), cached(4, 4000, "flip", locked = true, serverSaveId = 40L)),
+            { it.channelName == "flip" }
+        )
+        holder.state.value = holder.state.value.copy(saveFocusColumn = SaveFocusColumn.HISTORY, selectedHistoryIndex = 1)
+
+        delegate.showDeleteVersionConfirmation()
+
+        assertEquals(SaveDeleteTarget.Version(4L, 4000L, onServer = true), holder.state.value.deleteTarget)
+    }
+
+    @Test
+    fun `a rollback that only took a server id by name match is the only copy`() {
+        focusSlot(
+            listOf(
+                cached(5, 5000, "flip", locked = true),
+                cached(4, 4000, "flip", locked = true, serverSaveId = 40L, uploaded = false)
+            ),
+            { it.channelName == "flip" }
+        )
+        holder.state.value = holder.state.value.copy(saveFocusColumn = SaveFocusColumn.HISTORY, selectedHistoryIndex = 1)
+
+        delegate.showDeleteVersionConfirmation()
+
+        assertEquals(SaveDeleteTarget.Version(4L, 4000L, onServer = false), holder.state.value.deleteTarget)
+    }
+
+    @Test
+    fun `archived copies count as kept on the server only when every one was uploaded`() {
+        focusSlot(
+            listOf(cached(1, 1000, archival = true, serverSaveId = 10L), cached(2, 2000, archival = true, serverSaveId = 20L)),
+            SaveSlotItem::isArchivedBucket
+        )
+        delegate.showDeleteConfirmation()
+        assertEquals(SaveDeleteTarget.Archived(listOf(1L, 2L), allOnServer = true), holder.state.value.deleteTarget)
+
+        focusSlot(
+            listOf(cached(1, 1000, archival = true, serverSaveId = 10L), cached(2, 2000, archival = true)),
+            SaveSlotItem::isArchivedBucket
+        )
+        delegate.showDeleteConfirmation()
+        assertEquals(SaveDeleteTarget.Archived(listOf(1L, 2L), allOnServer = false), holder.state.value.deleteTarget)
+    }
+
+    @Test
+    fun `an archived copy that exists only on the server has no delete`() {
+        focusSlot(listOf(serverArchival(9, 3000)), SaveSlotItem::isArchivedBucket)
+        holder.state.value = holder.state.value.copy(saveFocusColumn = SaveFocusColumn.HISTORY)
+
+        delegate.showDeleteVersionConfirmation()
+
+        assertEquals(null, holder.state.value.deleteTarget)
+        assertTrue(!holder.state.value.canDeleteVersion)
+    }
+}

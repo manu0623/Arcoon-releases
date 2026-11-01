@@ -1,0 +1,271 @@
+package com.nendo.argosy.data.local
+
+import androidx.room.Database
+import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
+import com.nendo.argosy.data.local.converter.Converters
+import com.nendo.argosy.data.local.dao.AchievementDao
+import com.nendo.argosy.data.local.dao.AppCategoryDao
+import com.nendo.argosy.data.local.dao.AudioLoudnessDao
+import com.nendo.argosy.data.local.dao.BgmPlaylistDao
+import com.nendo.argosy.data.local.dao.CheatDao
+import com.nendo.argosy.data.local.dao.CollectionDao
+import com.nendo.argosy.data.local.dao.CoreOptionOverrideDao
+import com.nendo.argosy.data.local.dao.GameCoreOptionOverrideDao
+import com.nendo.argosy.data.local.dao.GameControllerMappingDao
+import com.nendo.argosy.data.local.dao.ControllerMappingDao
+import com.nendo.argosy.data.local.dao.ControllerOrderDao
+import com.nendo.argosy.data.local.dao.CoreVersionDao
+import com.nendo.argosy.data.local.dao.CoreVersionHistoryDao
+import com.nendo.argosy.data.local.dao.HotkeyDao
+import com.nendo.argosy.data.local.dao.DownloadQueueDao
+import com.nendo.argosy.data.local.dao.MediaDownloadQueueDao
+import com.nendo.argosy.data.local.dao.MediaCreditDao
+import com.nendo.argosy.data.local.dao.MediaItemDao
+import com.nendo.argosy.data.local.dao.MediaLibraryDao
+import com.nendo.argosy.data.local.dao.MediaSourceDao
+import com.nendo.argosy.data.local.dao.MediaStreamDao
+import com.nendo.argosy.data.local.dao.MediaUserDataDao
+import com.nendo.argosy.data.local.dao.EmulatorConfigDao
+import com.nendo.argosy.data.local.dao.EmulatorLaunchArgsDao
+import com.nendo.argosy.data.local.dao.EmulatorSaveConfigDao
+import com.nendo.argosy.data.local.dao.EmulatorUpdateDao
+import com.nendo.argosy.data.local.dao.FirmwareDao
+import com.nendo.argosy.data.local.dao.CollectionMembershipDao
+import com.nendo.argosy.data.local.dao.GameDao
+import com.nendo.argosy.data.local.dao.GameDiscDao
+import com.nendo.argosy.data.local.dao.GameUserOverlayDao
+import com.nendo.argosy.data.local.dao.UserRomsHiddenDao
+import com.nendo.argosy.data.local.dao.GameFileDao
+import com.nendo.argosy.data.local.dao.OrphanedFileDao
+import com.nendo.argosy.data.local.dao.PendingConflictDao
+import com.nendo.argosy.data.local.dao.PendingSocialSyncDao
+import com.nendo.argosy.data.local.dao.PendingSyncQueueDao
+import com.nendo.argosy.data.local.dao.PinnedCollectionDao
+import com.nendo.argosy.data.local.dao.PlatformDao
+import com.nendo.argosy.data.local.dao.PlaySessionDao
+import com.nendo.argosy.data.local.dao.PlatformLibretroSettingsDao
+import com.nendo.argosy.data.local.dao.QuayPassDailyStatsDao
+import com.nendo.argosy.data.local.dao.QuayPassEncounterDao
+import com.nendo.argosy.data.local.dao.QuayPassPendingReportDao
+import com.nendo.argosy.data.local.dao.SaveCacheDao
+import com.nendo.argosy.data.local.dao.SaveChannelDao
+import com.nendo.argosy.data.local.dao.RomMAccountDao
+import com.nendo.argosy.data.local.dao.SaveOwnershipDao
+import com.nendo.argosy.data.local.dao.SaveSyncDao
+import com.nendo.argosy.data.local.dao.SocialGameCacheDao
+import com.nendo.argosy.data.local.dao.StateCacheDao
+import com.nendo.argosy.data.local.dao.StateOwnershipDao
+import com.nendo.argosy.data.local.dao.StateTombstoneDao
+import com.nendo.argosy.data.local.dao.CachedLicenseDao
+import com.nendo.argosy.data.local.dao.SteamAccountDao
+import com.nendo.argosy.data.local.dao.SteamLicenseDao
+import com.nendo.argosy.data.local.entity.AchievementEntity
+import com.nendo.argosy.data.local.entity.AppCategoryEntity
+import com.nendo.argosy.data.local.entity.AudioLoudnessEntity
+import com.nendo.argosy.data.local.entity.BgmPlaylistEntity
+import com.nendo.argosy.data.local.entity.CheatEntity
+import com.nendo.argosy.data.local.entity.CollectionEntity
+import com.nendo.argosy.data.local.entity.CollectionGameEntity
+import com.nendo.argosy.data.local.entity.CachedLicenseEntity
+import com.nendo.argosy.data.local.entity.CoreOptionOverrideEntity
+import com.nendo.argosy.data.local.entity.GameCoreOptionOverrideEntity
+import com.nendo.argosy.data.local.entity.GameControllerMappingEntity
+import com.nendo.argosy.data.local.entity.ControllerMappingEntity
+import com.nendo.argosy.data.local.entity.ControllerOrderEntity
+import com.nendo.argosy.data.local.entity.CoreVersionEntity
+import com.nendo.argosy.data.local.entity.CoreVersionHistoryEntity
+import com.nendo.argosy.data.local.entity.HotkeyEntity
+import com.nendo.argosy.data.local.entity.DownloadQueueEntity
+import com.nendo.argosy.data.local.entity.EmulatorConfigEntity
+import com.nendo.argosy.data.local.entity.EmulatorLaunchArgsEntity
+import com.nendo.argosy.data.local.entity.EmulatorSaveConfigEntity
+import com.nendo.argosy.data.local.entity.EmulatorUpdateEntity
+import com.nendo.argosy.data.local.entity.FirmwareEntity
+import com.nendo.argosy.data.local.entity.GameDiscEntity
+import com.nendo.argosy.data.local.entity.CollectionMembershipEntity
+import com.nendo.argosy.data.local.entity.GameEntity
+import com.nendo.argosy.data.local.entity.GameFileEntity
+import com.nendo.argosy.data.local.entity.MediaDownloadQueueEntity
+import com.nendo.argosy.data.local.entity.MediaCreditEntity
+import com.nendo.argosy.data.local.entity.MediaItemEntity
+import com.nendo.argosy.data.local.entity.MediaLibraryEntity
+import com.nendo.argosy.data.local.entity.MediaSourceEntity
+import com.nendo.argosy.data.local.entity.MediaStreamEntity
+import com.nendo.argosy.data.local.entity.MediaUserDataEntity
+import com.nendo.argosy.data.local.entity.GameUserOverlayEntity
+import com.nendo.argosy.data.local.entity.UserRomHiddenEntity
+import com.nendo.argosy.data.local.entity.OrphanedFileEntity
+import com.nendo.argosy.data.local.entity.PendingConflictEntity
+import com.nendo.argosy.data.local.entity.PendingSyncQueueEntity
+import com.nendo.argosy.data.local.entity.PinnedCollectionEntity
+import com.nendo.argosy.data.local.entity.PlatformEntity
+import com.nendo.argosy.data.local.entity.PlatformLibretroSettingsEntity
+import com.nendo.argosy.data.local.entity.PlaySessionEntity
+import com.nendo.argosy.data.local.entity.QuayPassDailyStatsEntity
+import com.nendo.argosy.data.local.entity.QuayPassEncounterEntity
+import com.nendo.argosy.data.local.entity.QuayPassPendingReportEntity
+import com.nendo.argosy.data.local.entity.SaveCacheEntity
+import com.nendo.argosy.data.local.entity.SaveChannelEntity
+import com.nendo.argosy.data.local.entity.RomMAccountEntity
+import com.nendo.argosy.data.local.entity.SaveOwnershipEntity
+import com.nendo.argosy.data.local.entity.SaveSyncEntity
+import com.nendo.argosy.data.local.entity.PendingSocialSyncEntity
+import com.nendo.argosy.data.local.entity.SocialGameCacheEntity
+import com.nendo.argosy.data.local.entity.StateCacheEntity
+import com.nendo.argosy.data.local.entity.StateOwnershipEntity
+import com.nendo.argosy.data.local.entity.StateTombstoneEntity
+import com.nendo.argosy.data.local.entity.SteamAccountEntity
+import com.nendo.argosy.data.local.entity.SteamLicenseEntity
+
+@Database(
+    entities = [
+        PlatformEntity::class,
+        GameEntity::class,
+        GameUserOverlayEntity::class,
+        UserRomHiddenEntity::class,
+        CollectionMembershipEntity::class,
+        EmulatorConfigEntity::class,
+        DownloadQueueEntity::class,
+        SaveSyncEntity::class,
+        EmulatorSaveConfigEntity::class,
+        GameDiscEntity::class,
+        AchievementEntity::class,
+        SaveCacheEntity::class,
+        SaveChannelEntity::class,
+        SaveOwnershipEntity::class,
+        RomMAccountEntity::class,
+        StateCacheEntity::class,
+        StateOwnershipEntity::class,
+        StateTombstoneEntity::class,
+        OrphanedFileEntity::class,
+        AppCategoryEntity::class,
+        FirmwareEntity::class,
+        CollectionEntity::class,
+        CollectionGameEntity::class,
+        PinnedCollectionEntity::class,
+        GameFileEntity::class,
+        CoreVersionEntity::class,
+        CoreVersionHistoryEntity::class,
+        ControllerOrderEntity::class,
+        ControllerMappingEntity::class,
+        HotkeyEntity::class,
+        CheatEntity::class,
+        PlatformLibretroSettingsEntity::class,
+        EmulatorUpdateEntity::class,
+        PendingSyncQueueEntity::class,
+        PlaySessionEntity::class,
+        SocialGameCacheEntity::class,
+        PendingSocialSyncEntity::class,
+        CoreOptionOverrideEntity::class,
+        GameCoreOptionOverrideEntity::class,
+        GameControllerMappingEntity::class,
+        SteamAccountEntity::class,
+        SteamLicenseEntity::class,
+        CachedLicenseEntity::class,
+        EmulatorLaunchArgsEntity::class,
+        PendingConflictEntity::class,
+        com.nendo.argosy.data.local.entity.TouchLayoutOverrideEntity::class,
+        com.nendo.argosy.data.local.entity.SpeedrunCategoryEntity::class,
+        com.nendo.argosy.data.local.entity.SpeedrunSegmentEntity::class,
+        com.nendo.argosy.data.local.entity.SpeedrunAttemptEntity::class,
+        BgmPlaylistEntity::class,
+        AudioLoudnessEntity::class,
+        QuayPassEncounterEntity::class,
+        QuayPassDailyStatsEntity::class,
+        QuayPassPendingReportEntity::class,
+        com.nendo.argosy.data.local.entity.HomeTileEntity::class,
+        com.nendo.argosy.data.local.entity.HomeTileEpisodeEntity::class,
+        com.nendo.argosy.data.local.entity.HomeGridPageEntity::class,
+        MediaLibraryEntity::class,
+        MediaItemEntity::class,
+        MediaStreamEntity::class,
+        MediaSourceEntity::class,
+        MediaUserDataEntity::class,
+        MediaDownloadQueueEntity::class,
+        MediaCreditEntity::class,
+        com.nendo.argosy.data.local.entity.ManagedInstallerEntity::class,
+        com.nendo.argosy.data.local.entity.GameGroupPickEntity::class,
+        com.nendo.argosy.data.local.entity.GameArtEntity::class,
+        com.nendo.argosy.data.local.entity.SigilSyncStateEntity::class,
+        com.nendo.argosy.data.local.entity.SnapshotChannelEntity::class,
+        com.nendo.argosy.data.local.entity.GameScreenshotEntity::class,
+        com.nendo.argosy.data.local.entity.RAPatchCacheEntity::class,
+        com.nendo.argosy.data.local.entity.PlayRecordDeletionEntity::class
+    ],
+    version = 221,
+    exportSchema = true
+)
+@TypeConverters(Converters::class)
+abstract class ALauncherDatabase : RoomDatabase() {
+    abstract fun platformDao(): PlatformDao
+    abstract fun gameDao(): GameDao
+    abstract fun gameUserOverlayDao(): GameUserOverlayDao
+    abstract fun userRomsHiddenDao(): UserRomsHiddenDao
+    abstract fun collectionMembershipDao(): CollectionMembershipDao
+    abstract fun gameDiscDao(): GameDiscDao
+    abstract fun emulatorConfigDao(): EmulatorConfigDao
+    abstract fun downloadQueueDao(): DownloadQueueDao
+    abstract fun saveSyncDao(): SaveSyncDao
+    abstract fun pendingSyncQueueDao(): PendingSyncQueueDao
+    abstract fun emulatorSaveConfigDao(): EmulatorSaveConfigDao
+    abstract fun emulatorLaunchArgsDao(): EmulatorLaunchArgsDao
+    abstract fun achievementDao(): AchievementDao
+    abstract fun saveCacheDao(): SaveCacheDao
+    abstract fun saveChannelDao(): SaveChannelDao
+    abstract fun saveOwnershipDao(): SaveOwnershipDao
+    abstract fun rommAccountDao(): RomMAccountDao
+    abstract fun stateCacheDao(): StateCacheDao
+    abstract fun stateOwnershipDao(): StateOwnershipDao
+    abstract fun stateTombstoneDao(): StateTombstoneDao
+    abstract fun orphanedFileDao(): OrphanedFileDao
+    abstract fun appCategoryDao(): AppCategoryDao
+    abstract fun firmwareDao(): FirmwareDao
+    abstract fun collectionDao(): CollectionDao
+    abstract fun pinnedCollectionDao(): PinnedCollectionDao
+    abstract fun gameFileDao(): GameFileDao
+    abstract fun coreVersionDao(): CoreVersionDao
+    abstract fun coreVersionHistoryDao(): CoreVersionHistoryDao
+    abstract fun controllerOrderDao(): ControllerOrderDao
+    abstract fun controllerMappingDao(): ControllerMappingDao
+    abstract fun hotkeyDao(): HotkeyDao
+    abstract fun cheatDao(): CheatDao
+    abstract fun platformLibretroSettingsDao(): PlatformLibretroSettingsDao
+    abstract fun emulatorUpdateDao(): EmulatorUpdateDao
+    abstract fun playSessionDao(): PlaySessionDao
+    abstract fun pendingSocialSyncDao(): PendingSocialSyncDao
+    abstract fun socialGameCacheDao(): SocialGameCacheDao
+    abstract fun coreOptionOverrideDao(): CoreOptionOverrideDao
+    abstract fun gameCoreOptionOverrideDao(): GameCoreOptionOverrideDao
+    abstract fun gameControllerMappingDao(): GameControllerMappingDao
+    abstract fun steamAccountDao(): SteamAccountDao
+    abstract fun steamLicenseDao(): SteamLicenseDao
+    abstract fun cachedLicenseDao(): CachedLicenseDao
+    abstract fun pendingConflictDao(): PendingConflictDao
+    abstract fun touchLayoutOverrideDao(): com.nendo.argosy.data.local.dao.TouchLayoutOverrideDao
+    abstract fun speedrunDao(): com.nendo.argosy.data.local.dao.SpeedrunDao
+    abstract fun bgmPlaylistDao(): BgmPlaylistDao
+    abstract fun audioLoudnessDao(): AudioLoudnessDao
+    abstract fun quayPassEncounterDao(): QuayPassEncounterDao
+    abstract fun quayPassDailyStatsDao(): QuayPassDailyStatsDao
+    abstract fun quayPassPendingReportDao(): QuayPassPendingReportDao
+    abstract fun homeTileDao(): com.nendo.argosy.data.local.dao.HomeTileDao
+
+    abstract fun homeGridPageDao(): com.nendo.argosy.data.local.dao.HomeGridPageDao
+    abstract fun mediaLibraryDao(): MediaLibraryDao
+    abstract fun mediaItemDao(): MediaItemDao
+    abstract fun mediaStreamDao(): MediaStreamDao
+    abstract fun mediaSourceDao(): MediaSourceDao
+    abstract fun mediaUserDataDao(): MediaUserDataDao
+    abstract fun mediaDownloadQueueDao(): MediaDownloadQueueDao
+    abstract fun mediaCreditDao(): MediaCreditDao
+    abstract fun managedInstallerDao(): com.nendo.argosy.data.local.dao.ManagedInstallerDao
+    abstract fun gameGroupPickDao(): com.nendo.argosy.data.local.dao.GameGroupPickDao
+    abstract fun gameArtDao(): com.nendo.argosy.data.local.dao.GameArtDao
+    abstract fun sigilSyncStateDao(): com.nendo.argosy.data.local.dao.SigilSyncStateDao
+    abstract fun snapshotChannelDao(): com.nendo.argosy.data.local.dao.SnapshotChannelDao
+    abstract fun gameScreenshotDao(): com.nendo.argosy.data.local.dao.GameScreenshotDao
+    abstract fun raPatchCacheDao(): com.nendo.argosy.data.local.dao.RAPatchCacheDao
+    abstract fun playRecordDeletionDao(): com.nendo.argosy.data.local.dao.PlayRecordDeletionDao
+
+}

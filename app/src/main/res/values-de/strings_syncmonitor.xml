@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="syncmonitor_title">Bibliothek-Sync</string>
+    <string name="syncmonitor_drawer_title">Bibliothek-Sync</string>
+
+    <string name="syncmonitor_progress_starting">Wird gestartet</string>
+    <string name="syncmonitor_never_synced">Noch nie synchronisiert</string>
+    <string name="syncmonitor_last_synced">Zuletzt synchronisiert %1$s</string>
+    <string name="syncmonitor_finished_with_failures">%1$d Plattformen fehlgeschlagen</string>
+    <string name="syncmonitor_not_connected">Nicht mit RomM verbunden</string>
+    <string name="syncmonitor_library_summary">%1$d Plattformen · %2$d Spiele · %3$d auf dem Gerät</string>
+
+    <string name="syncmonitor_group_disabled">Deaktiviert</string>
+
+    <string name="syncmonitor_row_summary">%1$d Spiele · %2$d auf dem Gerät · %3$d mit Spielständen</string>
+    <string name="syncmonitor_row_excluded">Ausgeschlossen · %1$d Spiele · %2$d auf dem Gerät</string>
+
+    <string name="syncmonitor_state_queued">In Warteschlange</string>
+    <string name="syncmonitor_state_syncing">%1$d / %2$d</string>
+    <string name="syncmonitor_state_failed">Fehlgeschlagen</string>
+
+    <string name="syncmonitor_action_sync">Synchronisieren</string>
+    <string name="syncmonitor_action_enable">Aktivieren &amp; synchronisieren</string>
+
+    <string name="syncmonitor_badge_added">%1$d neu</string>
+    <string name="syncmonitor_badge_updated">%1$d aktualisiert</string>
+    <string name="syncmonitor_badge_removed">%1$d entfernt</string>
+
+    <string name="syncmonitor_empty_idle">Synchronisieren, um die Bibliothek von RomM zu laden</string>
+    <string name="syncmonitor_empty_disconnected">Mit RomM verbinden, um die Bibliothek zu synchronisieren</string>
+
+    <string name="syncmonitor_footer_sync_all">Alle synchronisieren</string>
+    <string name="syncmonitor_footer_back">Zurück</string>
+</resources>

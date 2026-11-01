@@ -1,0 +1,395 @@
+package com.nendo.argosy.ui.screens.settings.sections
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import com.nendo.argosy.R
+import com.nendo.argosy.ui.components.FocusedScroll
+import com.nendo.argosy.libretro.shader.ShaderChainManager
+import com.nendo.argosy.ui.screens.settings.ShaderParamDef
+import com.nendo.argosy.ui.screens.settings.ShaderStackEntry
+import com.nendo.argosy.ui.screens.settings.ShaderStackState
+import com.nendo.argosy.ui.screens.settings.components.LocalSettingsTouchFocus
+import com.nendo.argosy.ui.screens.settings.components.ShaderPickerModal
+import com.nendo.argosy.ui.primitives.StepperControl
+import com.nendo.argosy.ui.theme.Dimens
+import com.nendo.argosy.ui.theme.LocalArgosyTheme
+import com.nendo.argosy.ui.theme.Motion
+import com.nendo.argosy.ui.util.clickableNoFocus
+
+@Composable
+fun ShaderStackSection(
+    manager: ShaderChainManager
+) {
+    val listState = rememberLazyListState()
+    val shaderStack = manager.shaderStack
+    val entries = shaderStack.entries
+    val params = shaderStack.selectedShaderParams
+    val previewBitmap = manager.previewBitmap
+
+    FocusedScroll(
+        listState = listState,
+        focusedIndex = shaderStack.paramFocusIndex,
+        isTouchMode = LocalSettingsTouchFocus.current.isTouchMode
+    )
+
+    val pickerBlur = if (shaderStack.showShaderPicker) Motion.blurRadiusModal else 0.dp
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(pickerBlur)
+                .padding(Dimens.spacingMd),
+            horizontalArrangement = Arrangement.spacedBy(Dimens.spacingLg)
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(0.4f)
+                    .fillMaxHeight()
+            ) {
+                if (entries.isEmpty()) {
+                    ShaderStackEmptyState()
+                } else {
+                    ShaderTabBar(
+                        entries = entries,
+                        selectedIndex = shaderStack.selectedIndex,
+                        heldIndex = shaderStack.reorder?.heldIndex,
+                        onTabTap = { index ->
+                            if (shaderStack.isReordering) {
+                                manager.moveHeldShaderTo(index)
+                            } else {
+                                manager.selectShaderInStack(index)
+                            }
+                        },
+                        onTabLongPress = { index ->
+                            if (!shaderStack.isReordering) {
+                                manager.selectShaderInStack(index)
+                                manager.liftShader()
+                            }
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(Dimens.spacingSm))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Spacer(modifier = Modifier.height(Dimens.spacingSm))
+
+                    if (params.isEmpty()) {
+                        ShaderNoParamsState(entries[shaderStack.selectedIndex].displayName)
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(Dimens.spacingXs)
+                        ) {
+                            itemsIndexed(
+                                params,
+                                key = { _, param -> param.name }
+                            ) { index, paramDef ->
+                                val entry = shaderStack.selectedEntry
+                                val currentValue = entry?.params?.get(paramDef.name)
+                                    ?.toFloatOrNull() ?: paramDef.initial
+                                ShaderParamItem(
+                                    paramDef = paramDef,
+                                    currentValue = currentValue,
+                                    isFocused = shaderStack.paramFocusIndex == index,
+                                    onClick = { manager.moveShaderParamFocus(index - shaderStack.paramFocusIndex) },
+                                    onAdjust = { delta ->
+                                        if (shaderStack.paramFocusIndex == index) manager.adjustShaderParam(delta)
+                                        else manager.moveShaderParamFocus(index - shaderStack.paramFocusIndex)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            ShaderPreviewPanel(
+                previewBitmap = previewBitmap,
+                modifier = Modifier
+                    .weight(0.6f)
+                    .fillMaxHeight()
+            )
+        }
+
+        AnimatedVisibility(
+            visible = shaderStack.showShaderPicker,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            val registry = manager.getShaderRegistry()
+            val allShaders = remember { registry.getShadersForPicker() }
+            val installedIds = remember(shaderStack.downloadingShaderId) {
+                registry.getInstalledIds()
+            }
+            ShaderPickerModal(
+                shaders = allShaders,
+                focusIndex = shaderStack.shaderPickerFocusIndex,
+                installedIds = installedIds,
+                downloadingShaderId = shaderStack.downloadingShaderId,
+                onSelect = { entry ->
+                    manager.addShaderToStack(entry.id, entry.displayName)
+                },
+                onDismiss = { manager.dismissShaderPicker() },
+                onItemTap = { index -> manager.setShaderPickerFocusIndex(index) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShaderTabBar(
+    entries: List<ShaderStackEntry>,
+    selectedIndex: Int,
+    heldIndex: Int?,
+    onTabTap: (Int) -> Unit,
+    onTabLongPress: (Int) -> Unit
+) {
+    val scrollState = rememberScrollState()
+    val tabWidths = remember { mutableMapOf<Int, Int>() }
+    val spacingPx = with(androidx.compose.ui.platform.LocalDensity.current) { Dimens.spacingXs.roundToPx() }
+
+    LaunchedEffect(selectedIndex, tabWidths.size) {
+        if (tabWidths.size < entries.size) return@LaunchedEffect
+        var targetScroll = 0
+        for (i in 0 until selectedIndex) {
+            targetScroll += (tabWidths[i] ?: 0) + spacingPx
+        }
+        val selectedWidth = tabWidths[selectedIndex] ?: 0
+        val viewportWidth = scrollState.viewportSize
+        val centeredScroll = (targetScroll + selectedWidth / 2 - viewportWidth / 2)
+            .coerceIn(0, scrollState.maxValue)
+        scrollState.animateScrollTo(centeredScroll)
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(scrollState),
+        horizontalArrangement = Arrangement.spacedBy(Dimens.spacingXs)
+    ) {
+        entries.forEachIndexed { index, entry ->
+            val isSelected = index == selectedIndex
+            val isHeld = index == heldIndex
+            val focusAccent = LocalArgosyTheme.current.focusAccent
+            val bgColor = when {
+                isHeld -> focusAccent.copy(alpha = 0.3f)
+                isSelected -> focusAccent.copy(alpha = 0.15f)
+                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            }
+            val textColor = if (isSelected) {
+                lerp(focusAccent, Color.White, 0.45f)
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Dimens.radiusMd))
+                    .background(bgColor)
+                    .then(
+                        if (isHeld) {
+                            Modifier.border(
+                                width = Dimens.borderThin,
+                                color = focusAccent,
+                                shape = RoundedCornerShape(Dimens.radiusMd)
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .clickableNoFocus(
+                        onClick = { onTabTap(index) },
+                        onLongClick = { onTabLongPress(index) }
+                    )
+                    .padding(horizontal = Dimens.spacingMd, vertical = Dimens.spacingSm)
+                    .onSizeChanged { size -> tabWidths[index] = size.width }
+            ) {
+                Text(
+                    text = stringResource(
+                        R.string.settings_shell_shaderstack_tab_label,
+                        index + 1,
+                        entry.displayName
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = textColor,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShaderParamItem(
+    paramDef: ShaderParamDef,
+    currentValue: Float,
+    isFocused: Boolean,
+    onClick: () -> Unit,
+    onAdjust: (Int) -> Unit
+) {
+    val bgColor = if (isFocused) {
+        LocalArgosyTheme.current.focusAccent.copy(alpha = 0.15f)
+            .compositeOver(MaterialTheme.colorScheme.surface)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val textColor = if (isFocused) {
+        lerp(LocalArgosyTheme.current.focusAccent, Color.White, 0.45f)
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    val displayValue = formatParamValue(currentValue, paramDef.step)
+    val isSectionLabel = paramDef.min == paramDef.max
+    val displayName = formatParamDescription(paramDef.description, isSectionLabel)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Dimens.radiusControl))
+            .background(bgColor)
+            .clickableNoFocus(onClick = onClick)
+            .padding(Dimens.spacingMd),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = displayName,
+            style = if (isSectionLabel) MaterialTheme.typography.labelMedium
+                    else MaterialTheme.typography.titleMedium,
+            color = if (isSectionLabel) MaterialTheme.colorScheme.primary else textColor,
+            modifier = Modifier.weight(1f)
+        )
+        if (!isSectionLabel) {
+            StepperControl(
+                display = displayValue,
+                focused = isFocused,
+                onDecrement = { onAdjust(-1) },
+                onIncrement = { onAdjust(1) },
+                numericValue = if (paramDef.step > 0f) kotlin.math.round(currentValue / paramDef.step).toInt() else null
+            )
+        }
+    }
+}
+
+private val BRACKET_LABEL = Regex("""^\s*\[?\s*(.+?)\s*]?\s*$""")
+
+private fun formatParamDescription(description: String, isSectionLabel: Boolean): String {
+    if (!isSectionLabel) return description
+    val inner = BRACKET_LABEL.find(description.trim())?.groupValues?.get(1)?.trim() ?: description.trim()
+    return inner.ifEmpty { description }
+}
+
+private fun formatParamValue(value: Float, step: Float): String {
+    return if (step >= 1f && value == value.toLong().toFloat()) {
+        value.toLong().toString()
+    } else {
+        val decimals = step.toString().substringAfter('.', "").trimEnd('0').length
+            .coerceIn(1, 3)
+        String.format("%.${decimals}f", value)
+    }
+}
+
+@Composable
+private fun ShaderPreviewPanel(
+    previewBitmap: ImageBitmap?,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(Dimens.radiusLg))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (previewBitmap != null) {
+            Image(
+                bitmap = previewBitmap,
+                contentDescription = stringResource(R.string.settings_shell_shaderstack_preview_desc),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(Dimens.radiusLg)),
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            Text(
+                text = stringResource(R.string.settings_shell_shaderstack_no_preview),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShaderStackEmptyState() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Dimens.spacingLg),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = stringResource(R.string.settings_shell_shaderstack_empty),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ShaderNoParamsState(shaderName: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(Dimens.spacingLg),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = stringResource(R.string.settings_shell_shaderstack_no_params),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+internal fun shaderStackMaxFocusIndex(state: ShaderStackState): Int =
+    (state.selectedShaderParams.size - 1).coerceAtLeast(0)

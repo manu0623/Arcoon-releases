@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cocoon-style home board. Small label under a folder's name on the hero card: the item is a folder of games. -->
+    <string name="cocoon_kind_folder">Folder</string>
+    <!-- Small label under a collection's name on the hero card. -->
+    <string name="cocoon_kind_collection">Collection</string>
+    <!-- Small label under a board shortcut (Settings, Android Games, Emulators) on the hero card. -->
+    <string name="cocoon_kind_shortcut">Shortcut</string>
+    <!-- Board tile that opens the settings screen. -->
+    <string name="cocoon_tile_settings">Settings</string>
+    <!-- Board tile that opens the list of installed Android games and apps. -->
+    <string name="cocoon_tile_android_games">Android Games</string>
+    <!-- Board tile that opens per-platform emulator settings. -->
+    <string name="cocoon_tile_emulators">Emulators</string>
+    <!-- Shown on the board while the library has no platforms yet. -->
+    <string name="cocoon_board_empty">No folders yet. Connect RomM or scan your games in Settings.</string>
+    <!-- Cocoon-style settings: left navigation categories. -->
+    <string name="cocoon_settings_personalization">Personalization</string>
+    <!-- Subtitle under Personalization in the settings navigation. -->
+    <string name="cocoon_settings_personalization_sub">Make Argosy yours</string>
+    <!-- Settings category holding library, platforms, storage and play time. -->
+    <string name="cocoon_settings_library">Library &amp; data</string>
+    <!-- Settings category holding the built-in emulator, saves, BIOS and drivers. -->
+    <string name="cocoon_settings_gameplay">Gameplay &amp; saves</string>
+    <!-- Subtitle under Gameplay & saves in the settings navigation. -->
+    <string name="cocoon_settings_gameplay_sub">Emulators, saves and sync</string>
+    <!-- Settings category holding RomM, RetroAchievements, Steam and other linked services. -->
+    <string name="cocoon_settings_integrations">Integrations</string>
+    <!-- Subtitle under Integrations in the settings navigation. -->
+    <string name="cocoon_settings_integrations_sub">Manage linked apps</string>
+    <!-- Settings category holding permissions, installers and device settings. -->
+    <string name="cocoon_settings_system">System &amp; Advance</string>
+    <!-- Subtitle under System & Advance in the settings navigation. -->
+    <string name="cocoon_settings_system_sub">Miscellaneous config</string>
+    <!-- Settings category with the app version and credits. -->
+    <string name="cocoon_settings_about">About</string>
+    <!-- Folder menu (Start inside a folder): opens the list of installed apps. -->
+    <string name="cocoon_menu_apps">Apps</string>
+    <!-- Folder menu: opens sorting and filter options for the folder. -->
+    <string name="cocoon_menu_sort">Sort</string>
+    <!-- Folder menu: opens game search. -->
+    <string name="cocoon_menu_search">Search</string>
+    <!-- Folder menu: opens the settings screen. -->
+    <string name="cocoon_menu_settings">Settings</string>
+    <!-- Small pill on the top screen: press the shown button to show or hide the game's info panel. -->
+    <string name="cocoon_info">Info</string>
+    <!-- Board folder menu: open the folder. -->
+    <string name="cocoon_tile_menu_open">Open</string>
+    <!-- Board folder menu: edit the folder's platform settings (emulator, paths). -->
+    <string name="cocoon_tile_menu_edit">Edit</string>
+    <!-- Dock button that opens the list of all installed apps. -->
+    <string name="cocoon_dock_all_apps">All apps</string>
+    <string name="cocoon_quit_game">Quit game</string>
+    <string name="cocoon_switch_games">Switch games</string>
+    <string name="cocoon_unsaved_lost">Any unsaved data will be lost</string>
+    <string name="cocoon_force_quit">Force Quit</string>
+    <string name="cocoon_quit_and_launch">Quit and launch</string>
+    <string name="cocoon_closing_game">Closing game…</string>
+    <string name="cocoon_switch_body">%1$s is currently running in %2$s. You must quit the current session before launching a new game.</string>
+    <string name="cocoon_resume">Resume</string>
+    <string name="cocoon_close">Close</string>
+    <string name="cocoon_tile_menu_edit_grid">Edit Grid</string>
+    <string name="cocoon_edit_grid_hint">Edit Grid · move the folder with the D-pad · A to finish</string>
+    <string name="cocoon_edit_game">Edit Game</string>
+    <string name="cocoon_menu_launch">Launch</string>
+    <string name="cocoon_menu_edit">Edit</string>
+    <string name="cocoon_menu_achievements">Achievements</string>
+    <string name="cocoon_tile_menu_new_folder">New Folder</string>
+    <string name="cocoon_tile_menu_delete_folder">Delete Folder</string>
+    <string name="cocoon_tile_menu_delete_confirm">Press A again to delete</string>
+    <string name="cocoon_back">Back</string>
+    <string name="cocoon_kind_app">App</string>
+    <string name="cocoon_kind_game">Game</string>
+    <string name="cocoon_kind_smart">Smart Folder</string>
+    <string name="cocoon_start_add_smart">Add Smart Folder</string>
+    <string name="cocoon_start_grid_rows">Grid Rows: %1$d</string>
+    <string name="cocoon_smart_favorites">Favorites</string>
+    <string name="cocoon_smart_recent">Recently Played</string>
+    <string name="cocoon_smart_most_played">Most Played</string>
+    <string name="cocoon_smart_newly_added">Newly Added</string>
+    <string name="cocoon_kind_pod">Pod</string>
+    <string name="cocoon_kind_widget">Widget</string>
+    <string name="cocoon_tile_menu_remove">Remove from Home</string>
+    <string name="cocoon_tile_menu_move">Move to Folder</string>
+    <string name="cocoon_start_new_home_folder">New Home Folder</string>
+    <string name="cocoon_home">Home</string>
+    <string name="cocoon_tile_menu_appearance">Appearance</string>
+    <string name="cocoon_look_color">Color</string>
+    <string name="cocoon_look_symbol">Symbol</string>
+    <string name="cocoon_look_image">Custom Icon</string>
+    <string name="cocoon_look_image_choose">Choose…</string>
+    <string name="cocoon_look_reset">Reset to Default</string>
+    <string name="cocoon_look_default">Default</string>
+    <string name="cocoon_start_title">Start</string>
+    <string name="cocoon_start_add_app">Add App</string>
+    <string name="cocoon_start_add_widget">Add Widget</string>
+    <string name="cocoon_start_add_pod">Add Pod</string>
+    <string name="cocoon_start_more">More</string>
+    <string name="cocoon_start_new">New</string>
+    <string name="cocoon_opt_wordmark" translatable="false">Arcoon</string>
+    <string name="cocoon_opt_title">Optimizing your device</string>
+    <string name="cocoon_opt_done">All set</string>
+    <string name="cocoon_opt_done_detail">Everything is ready</string>
+    <string name="cocoon_opt_starting">Getting started…</string>
+    <string name="cocoon_opt_covers">Preparing covers</string>
+    <string name="cocoon_opt_icons">Loading folder art and theme</string>
+    <string name="cocoon_opt_library">Warming up your library</string>
+    <string name="cocoon_opt_compile">Speeding up the app</string>
+    <string name="cocoon_opt_compile_detail">Speeding up the app · this can take a minute</string>
+    <string name="cocoon_opt_tidy">Tidying up</string>
+    <string name="cocoon_opt_count">%1$d of %2$d</string>
+    <string name="cocoon_opt_skip">Skip</string>
+    <string name="cocoon_opt_skip_note">The rest finishes quietly in the background.</string>
+    <string name="cocoon_optimize_now">Optimize now</string>
+    <string name="cocoon_opt_apps">Preparing app icons</string>
+    <string name="cocoon_opt_database">Tuning up the game database</string>
+    <string name="cocoon_opt_warmup">Preparing screens and effects</string>
+    <string name="cocoon_free_memory">Free picture memory</string>
+    <string name="cocoon_free_memory_done">Picture memory freed</string>
+    <string name="cocoon_preview_home">Preview · Home</string>
+    <string name="cocoon_preview_top">Preview · Top screen</string>
+    <string name="cocoon_friends_signed_out">Link your Argosy account in Settings ▸ Social to see your friends here.</string>
+    <string name="cocoon_pods_title">Pods</string>
+    <string name="cocoon_jingle">Jingle</string>
+    <string name="cocoon_jingle_loading">Loading jingle collections…</string>
+    <string name="cocoon_jingle_no_repos">No jingle collections yet. Pick &#8220;Add a jingle collection…&#8221; below.</string>
+    <string name="cocoon_jingle_from_file">Choose a file…</string>
+    <string name="cocoon_jingle_hints">A choose · X preview · B back</string>
+    <string name="cocoon_jingle_repos">Jingle Collections</string>
+    <string name="cocoon_jingle_repo_add">Add Collection (owner/repository)</string>
+    <string name="cocoon_jingle_repo_hint">A add · X remove · B back</string>
+    <string name="cocoon_jingles">Jingles</string>
+    <string name="cocoon_jingles_subtitle">Sounds on games, defaults and GitHub collections</string>
+    <string name="cocoon_jingle_add_collection">Add a jingle collection…</string>
+    <string name="cocoon_jingle_volume">Jingle Volume</string>
+    <string name="cocoon_jingle_default">Default Jingle</string>
+    <string name="cocoon_jingle_platform">Console Jingle</string>
+    <string name="cocoon_jingle_none">None</string>
+    <string name="cocoon_jingle_clear">Clear All Game Jingles</string>
+    <string name="cocoon_pod_log">Log</string>
+    <string name="cocoon_log_this_week">This week</string>
+    <string name="cocoon_log_top">Most played · last 30 days</string>
+    <string name="cocoon_log_empty">Nothing played yet</string>
+    <string name="cocoon_log_sessions">%1$d sessions in the last 30 days</string>
+    <string name="cocoon_pod_screenshots">Screenshots</string>
+    <string name="cocoon_pod_screenshots_empty">No screenshots yet</string>
+    <string name="cocoon_shots_all">All</string>
+    <string name="cocoon_shots_favorites">Favorites</string>
+    <string name="cocoon_shots_view">View</string>
+    <string name="cocoon_shots_favorite">Favorite</string>
+    <string name="cocoon_shots_share">Share</string>
+    <string name="cocoon_widget_clock">Clock</string>
+    <string name="cocoon_widget_clock_analog">Analog Clock</string>
+    <string name="cocoon_widget_recent">Recently Played</string>
+    <string name="cocoon_widget_last_played">Last Played</string>
+    <string name="cocoon_widget_random">Random Game</string>
+    <string name="cocoon_widget_playtime">Playtime</string>
+    <string name="cocoon_widget_this_week">this week</string>
+    <string name="cocoon_widget_image_pin">Image Pin</string>
+    <string name="cocoon_widget_blank">Blank</string>
+    <string name="cocoon_widget_size">Size</string>
+    <string name="cocoon_themes_title">Themes</string>
+    <string name="cocoon_personal_title">Personalization</string>
+    <string name="cocoon_personal_subtitle">Cursor, highlight, dock and grid</string>
+    <string name="cocoon_personal_theme">Theme</string>
+    <string name="cocoon_personal_cursor">Cursor Style</string>
+    <string name="cocoon_personal_thickness">Highlight Thickness</string>
+    <string name="cocoon_personal_dock_shape">Dock Icon Shape</string>
+    <string name="cocoon_personal_grid_rows">Grid Rows</string>
+    <string name="cocoon_personal_dock_position">Dock Position</string>
+    <string name="cocoon_personal_surface">Surfaces</string>
+    <string name="cocoon_personal_icon_style">Icon Style</string>
+    <string name="cocoon_icon_colored">Colored</string>
+    <string name="cocoon_icon_accent">Accent</string>
+    <string name="cocoon_icon_flat">Flat</string>
+    <string name="cocoon_personal_motion">Animation Style</string>
+    <string name="cocoon_motion_comfortable">Comfortable</string>
+    <string name="cocoon_motion_snappy">Snappy</string>
+    <string name="cocoon_motion_reduced">Reduced</string>
+    <string name="cocoon_scrape_game">Scrape Game</string>
+    <string name="cocoon_store_title">Theme Store</string>
+    <string name="cocoon_store_popular">Popular</string>
+    <string name="cocoon_store_popular_sub">Most downloaded themes</string>
+    <string name="cocoon_store_new">New</string>
+    <string name="cocoon_store_new_sub">Recently added themes</string>
+    <string name="cocoon_store_browse">Browse</string>
+    <string name="cocoon_store_browse_sub">Every theme in your catalogues</string>
+    <string name="cocoon_store_device">On This Device</string>
+    <string name="cocoon_store_device_sub">Theme and pack ZIPs in Download</string>
+    <string name="cocoon_store_updates">Check for Updates</string>
+    <string name="cocoon_store_updates_sub">Newer versions of installed themes</string>
+    <string name="cocoon_store_catalogs">Catalogues</string>
+    <string name="cocoon_store_catalogs_sub">GitHub repos the store reads</string>
+    <string name="cocoon_store_catalog_add">Add Catalogue (owner/repository)</string>
+    <string name="cocoon_store_loading">Loading…</string>
+    <string name="cocoon_store_empty">Nothing here yet</string>
+    <string name="cocoon_store_hints">←/→ browse · A install · B back</string>
+    <string name="cocoon_backup">Back Up Home &amp; Personalization</string>
+    <string name="cocoon_restore">Restore Home &amp; Personalization</string>
+    <string name="cocoon_backup_done">Saved to %1$s</string>
+    <string name="cocoon_restore_done">Restored. Restart Arcoon to reload everything.</string>
+    <string name="cocoon_backup_failed">Didn\'t work: %1$s</string>
+    <string name="cocoon_personal_hero">Hero Art</string>
+    <string name="cocoon_hero_full">Full Screen</string>
+    <string name="cocoon_hero_vignette">Vignette</string>
+    <string name="cocoon_hero_none">Off</string>
+    <string name="cocoon_personal_hero_size">Single-Screen Preview</string>
+    <string name="cocoon_size_small">Small</string>
+    <string name="cocoon_size_medium">Medium</string>
+    <string name="cocoon_size_large">Large</string>
+    <string name="cocoon_widget_music">Music Player</string>
+    <string name="cocoon_widget_music_idle">Music off</string>
+    <string name="cocoon_surface_solid">Solid</string>
+    <string name="cocoon_surface_glass">Glass</string>
+    <string name="cocoon_personal_now_playing">Now Playing Style</string>
+    <string name="cocoon_np_artwork">Artwork</string>
+    <string name="cocoon_np_minimal">Minimal</string>
+    <string name="cocoon_np_dashboard">Dashboard</string>
+    <string name="cocoon_np_off">Screen Off</string>
+    <string name="cocoon_np_playing">Now playing</string>
+    <string name="cocoon_search_settings">Search Settings</string>
+    <string name="cocoon_search_hint">Type to search…</string>
+    <string name="cocoon_search_none">No matches</string>
+    <string name="cocoon_personal_dock_background">Dock Background</string>
+    <string name="cocoon_personal_dock_autohide">Hide Dock Until Selected</string>
+    <string name="cocoon_dock_top">Top</string>
+    <string name="cocoon_dock_bottom">Bottom</string>
+    <string name="cocoon_cursor_animated">Corners (Animated)</string>
+    <string name="cocoon_cursor_outlined">Outlined</string>
+    <string name="cocoon_cursor_alt_animated">Alternative (Animated)</string>
+    <string name="cocoon_cursor_alt">Alternative</string>
+    <string name="cocoon_shape_circle">Circle</string>
+    <string name="cocoon_shape_squircle">Squircle</string>
+    <string name="cocoon_shape_rounded">Rounded Square</string>
+    <string name="cocoon_shape_square">Square</string>
+    <string name="cocoon_launch_on_screen">Launch on Screen %1$d</string>
+    <string name="cocoon_pack_on">Asset pack · on</string>
+    <string name="cocoon_pack_off">Asset pack · off</string>
+    <string name="cocoon_themes_apply">Apply</string>
+    <string name="cocoon_themes_delete">Delete</string>
+    <string name="cocoon_themes_delete_confirm">Press again to delete</string>
+    <string name="cocoon_themes_default">Default</string>
+    <string name="cocoon_themes_default_sub">Arcoon\'s built-in look</string>
+    <string name="cocoon_themes_by">by %1$s</string>
+    <string name="cocoon_themes_import">Import ZIP</string>
+    <string name="cocoon_themes_import_sub">A Cocoon theme .zip file</string>
+    <string name="cocoon_themes_importing">Importing…</string>
+    <string name="cocoon_themes_imported">Installed %1$s</string>
+    <string name="cocoon_themes_import_failed">Import failed: %1$s</string>
+    <string name="cocoon_dock_add_app">Add App</string>
+    <string name="cocoon_dock_launch">Launch</string>
+    <string name="cocoon_dock_edit_app">Edit App</string>
+    <string name="cocoon_dock_app_info">App Info</string>
+    <string name="cocoon_dock_change_app">Change App</string>
+    <string name="cocoon_app_name">Name</string>
+    <string name="cocoon_app_icon">Icon</string>
+    <string name="cocoon_app_icon_default">App\'s own</string>
+    <string name="cocoon_app_treat_game">Treat as Game</string>
+    <string name="cocoon_app_treat_game_sub">Times your sessions for Log and Playtime</string>
+    <string name="cocoon_app_open_on">Open On</string>
+    <string name="cocoon_app_default_screen">Default</string>
+    <string name="cocoon_app_screen_n">Screen %1$d</string>
+    <string name="cocoon_app_reset">Reset Edits</string>
+    <string name="cocoon_on">On</string>
+    <string name="cocoon_off">Off</string>
+    <string name="cocoon_dock_clear_slot">Clear Slot</string>
+</resources>

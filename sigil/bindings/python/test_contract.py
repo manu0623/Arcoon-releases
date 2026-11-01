@@ -1,0 +1,499 @@
+# SPDX-License-Identifier: MPL-2.0
+"""Cross-language contract tests.
+
+The C `sigil_usage` enum, the Python and CLI string maps, the Kotlin `Usage`
+enum, and the JNI constructor descriptor are five hand-maintained copies of
+the same facts. Nothing at compile time keeps them in step: a JNI descriptor
+that disagrees with the Kotlin constructor only fails at first extraction on a
+device, and a usage value missing from a string map only shows up at runtime.
+
+These tests parse the sources directly (no compiled extension, no Android
+toolchain) so a drift between any two copies fails in plain CI.
+"""
+
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+HEADER = ROOT / "include" / "sigil.h"
+CLI = ROOT / "cli" / "sigil.c"
+PY_INIT = ROOT / "bindings" / "python" / "sigil" / "__init__.py"
+KOTLIN = ROOT / "bindings" / "android" / "src" / "main" / "kotlin" / "com" / "nendo" / "sigil" / "Sigil.kt"
+JNI = ROOT / "bindings" / "android" / "src" / "main" / "cpp" / "sigil_jni.c"
+
+# Kotlin/JVM primitive and reference types to their field descriptors.
+_JVM_DESCRIPTORS = {
+    "String": "Ljava/lang/String;",
+    "List": "Ljava/util/List;",
+    "ByteArray": "[B",
+    "Int": "I",
+    "Long": "J",
+    "Boolean": "Z",
+    "Float": "F",
+    "Double": "D",
+}
+
+# Kotlin classes the JNI constructs, keyed by the global jclass that holds them.
+_JNI_CLASSES = {
+    "SigilResult": "g_result_class",
+    "SigilSaveMember": "g_member_class",
+    "SigilSaveUnit": "g_unit_class",
+    "SigilCardEntry": "g_card_entry_class",
+    "SigilCardListing": "g_card_listing_class",
+    "SigilCardRepairEntry": "g_repair_entry_class",
+    "SigilCardRepair": "g_repair_class",
+    "SigilSyncResult": "g_sync_result_class",
+    "SigilCompanionResult": "g_companion_result_class",
+    "SigilSaveAlternate": "g_alternate_class",
+    "SigilException": "g_exception_class",
+}
+
+# One row per operation the C API offers, with the name each binding gives it.
+# A binding that lacks a row is not a binding of that operation.
+_API_SURFACE = {
+    "version": ("fun version(", "def version(", "func Version("),
+    "platform slug": ("fun platformSlug(", "def platform_from_slug(", "func PlatformFromSlug("),
+    "extract": ("fun extract(", "def extract(", "func Extract("),
+    "header key from prod.keys": (
+        "fun loadHeaderKeyFromProdKeys(",
+        "def load_header_key_from_prod_keys(",
+        "func LoadHeaderKeyFromProdKeys(",
+    ),
+    "persisted result": ("fun persisted(", "def persisted(", "func PersistedResult("),
+    "locate saves": ("fun locateSaves(", "def locate_saves(", "func LocateSaves("),
+    "hash saves": ("fun hashSaves(", "def hash_saves(", "func HashSaves("),
+    "layout subdirs": ("fun layoutSubdirs(", "def layout_subdirs(", "func LayoutSubdirs("),
+    "layouts": ("fun layouts(", "def layouts(", "func Layouts("),
+    "content stem": ("fun contentStem(", "def content_stem(", "func ContentStem("),
+    "list save root": ("fun listSaveRoot(", "def list_save_root(", "func ListSaveRoot("),
+    "list card": ("fun listCard(", "def list_card(", "func ListCard("),
+    "repair card": ("fun repairCard(", "def repair_card(", "func RepairCard("),
+    "collect": ("fun collect(", "def collect(", "func Collect("),
+    "restore": ("fun restore(", "def restore(", "func Restore("),
+}
+
+_EXTRACT_OPTIONS = {
+    "filename fallback": ("filenameFallback", "filename_fallback", "DisableFilenameFallback"),
+    "3ds homebrew": ("allow3dsHomebrew", "allow_3ds_homebrew", "Allow3DSHomebrew"),
+    "switch header key": ("headerKey", "header_key", "SwitchHeaderKey"),
+    "switch prod.keys path": ("prodKeysPath", "prod_keys_path", "SwitchProdKeysPath"),
+    "switch prod.keys text": ("prodKeysText", "prod_keys_text", "SwitchProdKeysBlob"),
+}
+
+_RESULT_FIELDS = {
+    "title id": ("titleId", "title_id", "TitleID"),
+    "raw serial": ("rawSerial", "raw_serial", "RawSerial"),
+    "save id": ("saveId", "save_id", "SaveID"),
+    "platform slug": ("platformSlug", "platform", "PlatformSlug"),
+    "source": ("source", "source", "Source"),
+    "usage": ("usage", "usage", "Usage"),
+    "experimental": ("experimental", "experimental", "Experimental"),
+    "switch content type": ("switchContentType", "switch_content_type", "SwitchContentType"),
+    "title version": ("titleVersion", "title_version", "TitleVersion"),
+    "features": ("features", "features", "Features"),
+    "n64 header": ("n64Header", "n64_header", "N64Header"),
+    "n64 md5": ("n64Md5", "n64_md5", "N64MD5"),
+    "n64 md5 in n64 order": ("n64Md5N64", "n64_md5_n64", "N64MD5N64"),
+}
+
+_UNIT_FIELDS = {
+    "key": ("key", "key", "Key"),
+    "shape": ("shape", "shape", "Shape"),
+    "members": ("members", "members", "Members"),
+    "expected": ("expected", "expected", "Expected"),
+    "unkeyed": ("unkeyed", "unkeyed", "Unkeyed"),
+    "artifact": ("artifact", "artifact", "Artifact"),
+    "content hash": ("contentHash", "content_hash", "ContentHash"),
+    "identity hash": ("identityHash", "identity_hash", "IdentityHash"),
+    "alternates": ("alternates", "alternates", "Alternates"),
+    "alternate options": ("val options: Map", "options: Mapping", "Options map[string]string"),
+}
+
+_SYNC_FIELDS = {
+    "claimed": ("claimed", "claimed", "Claimed"),
+    "overwrite local": ("overwriteLocal", "overwrite_local", "OverwriteLocal"),
+    "holding": ("holding", "holding", "Holding"),
+    "unowned": ("unowned", "unowned", "Unowned"),
+    "restore again": ("restoreAgain", "restore_again", "RestoreAgain"),
+    "hardcore marker": ("hardcoreMarker", "hardcore_marker", "HardcoreMarker"),
+    "unowned changed": ("unownedChanged", "unowned_changed", "UnownedChanged"),
+    "state": ("state", "state", "State"),
+    "conflict": ("CONFLICT = -9", "SigilConflictError", "ErrConflict "),
+    "companions": ("companions", "companions", "Companions"),
+    "companion game ids": ("gameIds", "game_ids", "GameIDs"),
+    "problem": ("problem", "problem", "Problem:"),
+    "blocks short": ("blocksShort", "blocks_short", "BlocksShort"),
+    "repair": ("repair", "repair", "Repair"),
+}
+
+GO = ROOT / "bindings" / "go" / "sigil.go"
+KEEP_RULES = ROOT / "bindings" / "android" / "consumer-rules.pro"
+
+
+def _canonical_string(enum_name: str) -> str:
+    """FOLDER_EXACT -> folder-exact: the string form the maps must emit."""
+    return enum_name.lower().replace("_", "-")
+
+
+def _pascal_to_upper_snake(name: str) -> str:
+    """FolderSplit -> FOLDER_SPLIT, to compare Kotlin names against C names."""
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
+
+
+def _c_usage_enum() -> list[tuple[str, int]]:
+    block = re.search(
+        r"typedef enum\s*\{(.*?)\}\s*sigil_usage;", HEADER.read_text(), re.DOTALL
+    )
+    assert block, "sigil_usage enum not found in sigil.h"
+    pairs = re.findall(r"SIGIL_USAGE_(\w+)\s*=\s*(\d+)", block.group(1))
+    assert pairs, "no SIGIL_USAGE_* members parsed"
+    return [(name, int(value)) for name, value in pairs]
+
+
+def _kotlin_usage_entries() -> list[tuple[str, int]]:
+    # Enum entries run from the opening brace to the ';' before the companion.
+    block = re.search(
+        r"enum class Usage\(val code: Int\)\s*\{(.*?);", KOTLIN.read_text(), re.DOTALL
+    )
+    assert block, "Kotlin Usage enum not found"
+    entries = re.findall(r"(\w+)\((\d+)\)", block.group(1))
+    return [(_pascal_to_upper_snake(n), int(v)) for n, v in entries]
+
+
+def _kotlin_ctor_types(class_name: str) -> list[str]:
+    block = re.search(
+        rf"\bclass {class_name}\((.*?)\)", KOTLIN.read_text(), re.DOTALL
+    )
+    assert block, f"Kotlin {class_name} constructor not found"
+    types = re.findall(r"(?:^|,)\s*(?:private\s+)?(?:val\s+)?\w+:\s*(\w+)", block.group(1))
+    assert types, f"no {class_name} constructor params parsed"
+    return types
+
+
+def test_python_package_version_is_the_library_version():
+    cmake = re.search(r"project\(sigil VERSION (\S+)", (ROOT / "CMakeLists.txt").read_text())
+    pyproject = re.search(r'^version = "([^"]+)"', (ROOT / "bindings/python/pyproject.toml").read_text(), re.M)
+    assert cmake and pyproject
+    assert pyproject.group(1) == cmake.group(1)
+
+
+def test_python_usage_map_covers_c_enum():
+    c_names = {name for name, _ in _c_usage_enum()}
+    py_map = dict(
+        re.findall(r'lib\.SIGIL_USAGE_(\w+):\s*"([^"]+)"', PY_INIT.read_text())
+    )
+    assert set(py_map) == c_names, (
+        "_USAGE_NAMES is out of sync with sigil_usage: "
+        f"missing {c_names - set(py_map)}, extra {set(py_map) - c_names}"
+    )
+    for name, string in py_map.items():
+        assert string == _canonical_string(name), f"{name} maps to {string!r}"
+
+
+def test_cli_usage_switch_covers_c_enum():
+    c_names = {name for name, _ in _c_usage_enum()}
+    cli_map = dict(
+        re.findall(r'case SIGIL_USAGE_(\w+):\s*return\s*"([^"]+)";', CLI.read_text())
+    )
+    assert c_names <= set(cli_map), (
+        f"usage_to_str is missing cases: {c_names - set(cli_map)}"
+    )
+    for name, string in cli_map.items():
+        assert string == _canonical_string(name), f"{name} returns {string!r}"
+
+
+def test_kotlin_usage_enum_matches_c_enum():
+    kotlin = _kotlin_usage_entries()
+    c_enum = _c_usage_enum()
+    assert kotlin == c_enum, (
+        f"Kotlin Usage enum {kotlin} disagrees with sigil_usage {c_enum}"
+    )
+
+
+def _kotlin_ctor_descriptor(class_name: str) -> str:
+    tokens = []
+    for t in _kotlin_ctor_types(class_name):
+        assert t in _JVM_DESCRIPTORS, f"unmapped Kotlin type {t!r}"
+        tokens.append(_JVM_DESCRIPTORS[t])
+    return "(" + "".join(tokens) + ")V"
+
+
+def _jni_ctor_descriptor(global_class: str) -> str:
+    match = re.search(
+        rf'(?:GetMethodID|find_method)\(env,\s*{global_class},\s*"<init>",\s*"([^"]+)"',
+        JNI.read_text(),
+        re.DOTALL,
+    )
+    assert match, f"<init> lookup for {global_class} not found in sigil_jni.c"
+    return match.group(1)
+
+
+def _jni_ctor_args(global_class: str) -> list[str]:
+    match = re.search(
+        rf"NewObject\(env,\s*{global_class},\s*\w+,\s*(.*?)\);", JNI.read_text(), re.DOTALL
+    )
+    assert match, f"NewObject for {global_class} not found in sigil_jni.c"
+    return [a.strip() for a in match.group(1).split(",")]
+
+
+def test_jni_descriptors_match_kotlin_constructors():
+    """The bug in cde2301: the JNI descriptor kept a String param the Kotlin
+    constructor had dropped, so GetMethodID missed the constructor and every
+    extraction crashed. This locks each pair together."""
+    for class_name, global_class in _JNI_CLASSES.items():
+        assert _jni_ctor_descriptor(global_class) == _kotlin_ctor_descriptor(class_name), (
+            f"{class_name} descriptor drifted"
+        )
+
+
+def test_jni_string_args_match_descriptors():
+    jstring_locals = set(re.findall(r"\bjstring\s+(\w+)\s*=", JNI.read_text()))
+    for class_name, global_class in _JNI_CLASSES.items():
+        string_params = _jni_ctor_descriptor(global_class).count("Ljava/lang/String;")
+        string_args = [a for a in _jni_ctor_args(global_class) if a in jstring_locals]
+        assert len(string_args) == string_params, (
+            f"{class_name}: {len(string_args)} jstring args feed a "
+            f"{string_params}-String constructor"
+        )
+
+
+def _c_card_formats() -> list[str]:
+    block = re.search(
+        r"typedef enum\s*\{(.*?)\}\s*sigil_card_format;", HEADER.read_text(), re.DOTALL
+    )
+    assert block, "sigil_card_format enum not found in sigil.h"
+    names = re.findall(r"SIGIL_CARD_FORMAT_(\w+)", block.group(1))
+    assert names and names[0] == "UNKNOWN", "sigil_card_format must start at UNKNOWN = 0"
+    return names
+
+
+_JNI_PARAM_TYPES = {
+    "String": "jstring",
+    "Int": "jint",
+    "Long": "jlong",
+    "Boolean": "jboolean",
+    "ByteArray": "jbyteArray",
+    "IntArray": "jintArray",
+    "SigilFileAccess": "jobject",
+}
+
+
+def _kotlin_native_params(body: str) -> list[str]:
+    types = []
+    for param in _split_top_level(body):
+        kind = param.split(":", 1)[1].strip().rstrip("?")
+        types.append("jobjectArray" if kind.startswith("Array<") else _JNI_PARAM_TYPES[kind])
+    return types
+
+
+def _split_top_level(text: str) -> list[str]:
+    parts, depth, current = [], 0, ""
+    for ch in text:
+        depth += ch == "<"
+        depth -= ch == ">"
+        if ch == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        parts.append(current)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def test_jni_strings_cross_as_standard_utf8():
+    """GetStringUTFChars and NewStringUTF use modified UTF-8: a character outside the BMP reaches
+    sigil as surrogate bytes no file system name holds, and four-byte UTF-8 from sigil aborts
+    NewStringUTF under CheckJNI. Strings go through jni_utf8 and jni_string instead."""
+    jni = JNI.read_text()
+    for call in ("GetStringUTFChars", "ReleaseStringUTFChars", "NewStringUTF"):
+        assert call not in jni, f"sigil_jni.c calls {call}"
+
+
+def test_the_library_opens_files_by_utf8_path():
+    """sigil takes UTF-8 paths. Windows' fopen and its ...A calls read a path in the ANSI code
+    page, so a game named in Japanese wouldn't open; sigil_fopen and the ...W calls take it."""
+    ansi = re.compile(r"\b(fopen|FindFirstFileA|FindNextFileA|GetFileAttributesA|CreateFileA|chd_open)\s*\(")
+    for source in sorted((ROOT / "src").glob("*.c")) + [ROOT / "cli" / "sigil.c"]:
+        text = re.sub(r"/\*.*?\*/", "", source.read_text(), flags=re.S)
+        if source.name == "io_file.c":
+            text = text.replace("return fopen(path, mode);", "")
+        assert not ansi.search(text), f"{source.relative_to(ROOT)} opens a file by ANSI path"
+
+
+def test_jni_natives_take_the_kotlin_parameters():
+    """Kotlin binds `external fun` by name alone, so a parameter one side has
+    and the other lacks reads the wrong argument at run time rather than
+    failing to link."""
+    kotlin = KOTLIN.read_text()
+    jni = JNI.read_text()
+    natives = re.findall(r"external fun (native\w+)\(([^)]*)\)", kotlin)
+    assert natives, "no Kotlin natives parsed"
+    for name, body in natives:
+        m = re.search(rf"Java_com_nendo_sigil_Sigil_{name}\(JNIEnv \*env, jclass clazz,?([^)]*)\)", jni)
+        assert m, f"{name} has no JNI function"
+        jni_types = [p.split()[0] for p in _split_top_level(m.group(1))]
+        assert jni_types == _kotlin_native_params(body), f"{name}: JNI {jni_types} vs Kotlin {_kotlin_native_params(body)}"
+
+
+def test_card_format_names_match_across_bindings():
+    """Each binding names a card format by its position in the C enum; a
+    format added in C and missed in a binding reads back as unknown."""
+    formats = _c_card_formats()
+    py_map = dict(re.findall(r'lib\.SIGIL_CARD_FORMAT_(\w+):\s*"([^"]+)"', PY_INIT.read_text()))
+    assert set(py_map) == set(formats), f"_CARD_FORMAT_NAMES differs from sigil_card_format: {py_map}"
+    for name, string in py_map.items():
+        assert string == _canonical_string(name), f"{name} maps to {string!r}"
+
+    go_names = re.findall(r"C\.SIGIL_CARD_FORMAT_(\w+)", GO.read_text())
+    assert set(go_names) == set(formats), "Go CardFormat constants differ from sigil_card_format"
+
+    kotlin = re.search(r"enum class Format\(val code: Int\)\s*\{(.*?);", KOTLIN.read_text(), re.DOTALL)
+    assert kotlin, "Kotlin SigilCardListing.Format enum not found"
+    entries = [(_pascal_to_upper_snake(n), int(v)) for n, v in re.findall(r"(\w+)\((\d+)\)", kotlin.group(1))]
+    assert entries == list(zip(formats, range(len(formats)))), (
+        f"Kotlin Format {entries} disagrees with sigil_card_format {formats}"
+    )
+
+
+def test_card_damage_names_match_across_bindings():
+    """A damage added in C and missed in a binding reads back as the generic `chain`."""
+    block = re.search(r"typedef enum\s*\{([^}]*)\}\s*sigil_card_damage;", HEADER.read_text())
+    assert block, "sigil_card_damage enum not found in sigil.h"
+    damages = re.findall(r"SIGIL_CARD_DAMAGE_(\w+)", block.group(1))
+    assert damages and damages[0] == "CHAIN" and "= 1" in block.group(1).split(",")[0], "sigil_card_damage starts at CHAIN = 1"
+
+    py_map = dict(re.findall(r'lib\.SIGIL_CARD_DAMAGE_(\w+):\s*"([^"]+)"', PY_INIT.read_text()))
+    assert set(py_map) == set(damages), f"_CARD_DAMAGE_NAMES differs from sigil_card_damage: {py_map}"
+    for name, string in py_map.items():
+        assert string == _canonical_string(name), f"{name} maps to {string!r}"
+
+    go = GO.read_text()
+    assert set(re.findall(r"C\.SIGIL_CARD_DAMAGE_(\w+)", go)) == set(damages), "Go CardDamage constants differ"
+    go_strings = dict(re.findall(r'case CardDamage(\w+):\s*return "([^"]+)"', go))
+    assert set(go_strings.values()) | {"chain"} == {_canonical_string(d) for d in damages}, f"Go CardDamage strings {go_strings}"
+
+    kotlin = re.search(r"enum class Damage\(val code: Int\)\s*\{(.*?);", KOTLIN.read_text(), re.DOTALL)
+    assert kotlin, "Kotlin SigilCardRepairEntry.Damage enum not found"
+    entries = [(_pascal_to_upper_snake(n), int(v)) for n, v in re.findall(r"(\w+)\((\d+)\)", kotlin.group(1))]
+    assert entries == list(zip(damages, range(1, len(damages) + 1))), (
+        f"Kotlin Damage {entries} disagrees with sigil_card_damage {damages}"
+    )
+
+
+def test_every_error_code_has_an_error_in_each_binding():
+    """A code with no mapping reaches Python as the bare base class and Go as
+    a formatted number, so a caller can't match on it."""
+    codes = re.findall(r"#define SIGIL_ERR_(\w+)\s+(-\d+)", HEADER.read_text())
+    assert codes, "no SIGIL_ERR_* codes in sigil.h"
+    py = PY_INIT.read_text()
+    go = GO.read_text()
+    kotlin = KOTLIN.read_text()
+    py_map = dict(re.findall(r"lib\.SIGIL_ERR_(\w+):\s*Sigil(\w+)Error", py))
+    go_map = dict(re.findall(r"case C\.SIGIL_ERR_(\w+):\s*return Err(\w+)", go))
+    for code, value in codes:
+        assert f"lib.SIGIL_ERR_{code}:" in py, f"_ERROR_CLASSES lacks SIGIL_ERR_{code}"
+        assert f"case C.SIGIL_ERR_{code}:" in go, f"errFromCode lacks SIGIL_ERR_{code}"
+        # Each code maps to the error named for it, so a caller matching one
+        # error never catches another code.
+        want = code.replace("_", "").lower()
+        assert py_map.get(code, "").lower() == want, f"SIGIL_ERR_{code} maps to Sigil{py_map.get(code)}Error"
+        assert go_map.get(code, "").lower() == want, f"SIGIL_ERR_{code} maps to Err{go_map.get(code)}"
+        assert f"const val {code} = {value}" in kotlin, f"SigilException lacks {code} = {value}"
+
+
+def _jni_exception_thrown_on_failure() -> bool:
+    return "throw_sigil(env, rc)" in JNI.read_text()
+
+
+def _binding_sources() -> dict[str, str]:
+    return {"kotlin": KOTLIN.read_text(), "python": PY_INIT.read_text(), "go": GO.read_text()}
+
+
+def _assert_each_binding_has(table: dict[str, tuple[str, str, str]], what: str) -> None:
+    sources = _binding_sources()
+    for operation, names in table.items():
+        for language, name in zip(("kotlin", "python", "go"), names):
+            assert name in sources[language], f"{language} binding lacks {what} {operation!r} ({name})"
+
+
+def test_every_binding_exposes_every_operation():
+    _assert_each_binding_has(_API_SURFACE, "operation")
+
+
+def test_every_binding_takes_every_extract_option():
+    _assert_each_binding_has(_EXTRACT_OPTIONS, "extract option")
+
+
+def test_every_binding_returns_every_result_field():
+    _assert_each_binding_has(_RESULT_FIELDS, "result field")
+
+
+def test_every_binding_returns_every_save_unit_field():
+    _assert_each_binding_has(_UNIT_FIELDS, "save unit field")
+
+
+def test_every_binding_carries_every_sync_field():
+    _assert_each_binding_has(_SYNC_FIELDS, "sync field")
+
+
+def test_every_binding_lists_the_save_root_to_the_same_depth():
+    """A Switch save sits under nand/user/save/0000000000000000/<profile>/<title>/ and keeps its
+    own folders below that, Hades three deep; a binding that lists less deep loses them."""
+    sources = {
+        "kotlin": (r"SUBDIR_LIST_DEPTH\s*=\s*(\d+)", KOTLIN),
+        "python": (r"_SUBDIR_LIST_DEPTH\s*=\s*(\d+)", PY_INIT),
+        "go": (r"subdirListDepth\s*=\s*(\d+)", GO),
+    }
+    for language, (pattern, path) in sources.items():
+        match = re.search(pattern, path.read_text())
+        assert match, f"{language} listing depth not found"
+        assert int(match.group(1)) == 12, f"{language} lists {match.group(1)} levels deep"
+
+
+def _keep_rule_patterns() -> list[re.Pattern[str]]:
+    patterns = []
+    for name in re.findall(r"^-keep\s+class\s+([\w.$*]+)", KEEP_RULES.read_text(), re.MULTILINE):
+        regex = re.escape(name).replace(r"\*\*", r"[\w.$]+").replace(r"\*", r"[\w$]+")
+        patterns.append(re.compile(rf"^{regex}$"))
+    return patterns
+
+
+def _jni_looked_up_classes() -> set[str]:
+    names = re.findall(r'(?:FindClass|global_class)\(env,\s*"(com/nendo/sigil/[\w$/]+)"', JNI.read_text())
+    return {n.replace("/", ".") for n in names}
+
+
+def _kotlin_binding_classes() -> set[str]:
+    text = KOTLIN.read_text()
+    names = set(re.findall(r"^(?:data |enum )?class (\w+)", text, re.MULTILINE))
+    names |= set(re.findall(r"^object (\w+)", text, re.MULTILINE))
+    return {f"com.nendo.sigil.{n}" for n in names}
+
+
+def test_keep_rules_cover_every_class_the_jni_looks_up():
+    """v2.15.0 shipped without a keep rule for SigilSaveMember; R8 renamed it,
+    FindClass failed, and the app crash-looped on every start (#429)."""
+    patterns = _keep_rule_patterns()
+    assert patterns, "no -keep class rules in consumer-rules.pro"
+    for name in sorted(_jni_looked_up_classes() | _kotlin_binding_classes()):
+        assert any(p.match(name) for p in patterns), f"consumer-rules.pro does not keep {name}"
+
+
+def test_jni_never_stacks_a_lookup_on_a_pending_exception():
+    """The second FindClass after a failed one is what turns a missing class into
+    a SIGABRT; every lookup goes through the clearing helpers."""
+    text = JNI.read_text()
+    raw = re.findall(r"\(\*env\)->FindClass\(env,\s*\"([^\"]+)\"", text)
+    assert all(n in ("java/lang/IllegalStateException", "java/lang/String") for n in raw), (
+        f"direct FindClass on {raw}; use global_class/find_class"
+    )
+    assert "ExceptionClear" in text
+
+
+def test_every_binding_reports_the_c_error_code():
+    sources = _binding_sources()
+    assert re.search(r"class SigilException\(\s*val code: Int", sources["kotlin"])
+    assert _jni_exception_thrown_on_failure()
+    assert "self.code = code" in sources["python"]
+    assert "func errFromCode(rc C.int) error" in sources["go"]

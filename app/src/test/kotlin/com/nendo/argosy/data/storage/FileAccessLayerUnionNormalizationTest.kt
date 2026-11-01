@@ -1,0 +1,103 @@
+package com.nendo.argosy.data.storage
+
+import android.content.Context
+import io.mockk.every
+import io.mockk.mockk
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Before
+import org.junit.Test
+import java.io.File
+import kotlin.io.path.createTempDirectory
+
+class FileAccessLayerUnionNormalizationTest {
+
+    private lateinit var tempDir: File
+    private val context = mockk<Context>(relaxed = true)
+    private val androidDataAccessor = mockk<AndroidDataAccessor>(relaxed = true)
+    private val managedStorageAccessor = mockk<ManagedStorageAccessor>(relaxed = true)
+    private val rootFileAccessor = mockk<RootFileAccessor>(relaxed = true)
+
+    private lateinit var fal: FileAccessLayerImpl
+
+    private val androidPath = "/storage/emulated/0/Android/data/dev.eden.eden_emulator/files/nand/user/save"
+    private val altPath = "/storage/emulated/0/UCData/data/dev.eden.eden_emulator/files/nand/user/save"
+
+    @Before
+    fun setUp() {
+        tempDir = createTempDirectory("fal_union_norm_test").toFile()
+        every { context.filesDir } returns tempDir
+        every { androidDataAccessor.isRestrictedAndroidPath(any()) } answers {
+            val p = firstArg<String>()
+            p.contains("/Android/data/") || p.contains("/UCData/data/")
+        }
+        every { androidDataAccessor.normalizePathForDisplay(any()) } answers {
+            firstArg<String>().replace("/UCData/", "/Android/")
+        }
+        every { managedStorageAccessor.listFiles(any(), any()) } returns null
+        fal = FileAccessLayerImpl(context, androidDataAccessor, managedStorageAccessor, rootFileAccessor)
+    }
+
+    @After
+    fun tearDown() {
+        tempDir.deleteRecursively()
+    }
+
+    @Test
+    fun `union returns normalized Android path when alt-access lists alt path entries`() {
+        val altChild = File("$altPath/0000000000000000")
+        every { androidDataAccessor.isAltAccessSupported() } returns true
+        every { androidDataAccessor.listFiles(androidPath) } returns arrayOf(altChild)
+
+        val result = fal.listFilesUnion(androidPath)
+
+        assertEquals(1, result.size)
+        assertEquals("/storage/emulated/0/Android/data/dev.eden.eden_emulator/files/nand/user/save/0000000000000000", result[0].path)
+    }
+
+    @Test
+    fun `listFiles returns the Android path when alt-access lists alt path entries`() {
+        every { androidDataAccessor.isAltAccessSupported() } returns true
+        every { androidDataAccessor.listFiles(androidPath) } returns arrayOf(File("$altPath/0100A5C00D162000"))
+
+        val result = fal.listFiles(androidPath).orEmpty()
+
+        assertEquals(listOf("$androidPath/0100A5C00D162000"), result.map { it.path })
+    }
+
+    @Test
+    fun `walk returns Android paths when alt-access walks alt path entries`() {
+        every { androidDataAccessor.isAltAccessSupported() } returns true
+        every { androidDataAccessor.walk(androidPath) } returns
+            sequenceOf(File(altPath), File("$altPath/0100A5C00D162000"))
+
+        val result = fal.walk(androidPath).map { it.path }.toList()
+
+        assertEquals(listOf(androidPath, "$androidPath/0100A5C00D162000"), result)
+    }
+
+    @Test
+    fun `managed fallback receives the Android relative path for an alt path`() {
+        every { androidDataAccessor.isAltAccessSupported() } returns false
+        every { managedStorageAccessor.listFiles(any(), any()) } returns null
+
+        fal.listFiles(altPath)
+
+        io.mockk.verify {
+            managedStorageAccessor.listFiles(
+                "primary",
+                "Android/data/dev.eden.eden_emulator/files/nand/user/save"
+            )
+        }
+    }
+
+    @Test
+    fun `union skips alt-access branch when alt not supported`() {
+        every { androidDataAccessor.isAltAccessSupported() } returns false
+        every { androidDataAccessor.listFiles(any()) } returns null
+
+        val result = fal.listFilesUnion(androidPath)
+
+        assertEquals(0, result.size)
+    }
+}

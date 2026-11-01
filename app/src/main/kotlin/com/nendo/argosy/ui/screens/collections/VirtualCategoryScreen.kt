@@ -1,0 +1,460 @@
+package com.nendo.argosy.ui.screens.collections
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.nendo.argosy.R
+import com.nendo.argosy.ui.components.AlphabetSidebar
+import com.nendo.argosy.ui.components.FooterHints
+import com.nendo.argosy.ui.components.InputButton
+import com.nendo.argosy.ui.input.LocalInputDispatcher
+import com.nendo.argosy.ui.navigation.Screen
+import com.nendo.argosy.ui.primitives.ArgosyConfirmModalHost
+import com.nendo.argosy.ui.primitives.ArgosyProgressBar
+import com.nendo.argosy.ui.components.gamelist.GameListRow
+import com.nendo.argosy.ui.theme.Dimens
+
+@Composable
+fun VirtualCategoryScreen(
+    onBack: () -> Unit,
+    onGameClick: (Long) -> Unit,
+    viewModel: VirtualCategoryViewModel = hiltViewModel()
+) {
+    val inputDispatcher = LocalInputDispatcher.current
+    val inputHandler = remember(onBack, onGameClick) {
+        viewModel.createInputHandler(
+            onBack = onBack,
+            onGameClick = onGameClick
+        )
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, inputHandler) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_VIRTUAL_BROWSER)
+                viewModel.republishCompanionDetail()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_VIRTUAL_BROWSER)
+        viewModel.republishCompanionDetail()
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.clearCompanionDetail()
+        }
+    }
+
+    val uiState by viewModel.uiState.collectAsState()
+    val downloadAllConfirmVisible by viewModel.downloadAllConfirmVisible.collectAsState()
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(uiState.focusedIndex) {
+        if (uiState.games.isNotEmpty() && uiState.focusedIndex in uiState.games.indices) {
+            val visibleItems = listState.layoutInfo.visibleItemsInfo
+            val viewportHeight = listState.layoutInfo.viewportEndOffset
+            val avgItemHeight = if (visibleItems.isNotEmpty()) {
+                visibleItems.sumOf { it.size } / visibleItems.size
+            } else 120
+            val targetOffset = (viewportHeight / 2) - (avgItemHeight / 2)
+            listState.animateScrollToItem(uiState.focusedIndex, -targetOffset)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            VirtualCategoryHeader(
+                categoryName = uiState.categoryName,
+                gameCount = uiState.games.size,
+                isSearchActive = uiState.isSearchActive,
+                searchQuery = uiState.searchQuery,
+                onBack = { if (uiState.isSearchActive) viewModel.closeSearch() else onBack() },
+                onSearchOpen = { viewModel.openSearch() },
+                onSearchChange = { viewModel.setSearchQuery(it) },
+                onSearchClose = { viewModel.closeSearch() }
+            )
+
+            when {
+                uiState.isLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = stringResource(R.string.collections_category_loading),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                uiState.games.isEmpty() -> {
+                    EmptyVirtualCategory()
+                }
+                else -> {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                start = Dimens.spacingLg,
+                                end = if (uiState.showSectionSidebar) Dimens.spacingLg + 44.dp else Dimens.spacingLg,
+                                top = Dimens.spacingSm,
+                                bottom = 80.dp
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(Dimens.spacingMd)
+                        ) {
+                            itemsIndexed(uiState.games, key = { _, g -> g.id }) { index, game ->
+                                GameListRow(
+                                    title = game.title,
+                                    platformSlug = game.platformSlug,
+                                    platformDisplayName = game.platformDisplayName,
+                                    coverPath = com.nendo.argosy.ui.common.rememberResolvedCoverPath(game.id, null),
+                                    details = game.details,
+                                    isDownloaded = game.isDownloaded,
+                                    isFocused = uiState.focusedIndex == index,
+                                    onClick = { onGameClick(game.id) },
+                                    onLongClick = { inputHandler.onLongConfirm() }
+                                )
+                            }
+                        }
+
+                        if (uiState.showSectionSidebar) {
+                            AlphabetSidebar(
+                                availableLetters = uiState.sectionLabels,
+                                currentLetter = uiState.currentSectionLabel,
+                                onLetterClick = { viewModel.jumpToSection(it) },
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .fillMaxHeight(),
+                                topPadding = Dimens.spacingSm,
+                                bottomPadding = 80.dp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        val selectSwapMode = com.nendo.argosy.ui.dualscreen.selectSwapModeState()
+        val selectSwapsRoles = selectSwapMode == com.nendo.argosy.data.preferences.SelectSwapMode.TAP
+        val selectHintSwaps = selectSwapsRoles ||
+            (selectSwapMode == com.nendo.argosy.data.preferences.SelectSwapMode.HOLD && !uiState.canDownloadAll)
+        FooterHints(
+            hints = if (uiState.isSearchActive) {
+                listOf(
+                    InputButton.A to stringResource(R.string.collections_category_hint_search_open),
+                    InputButton.B to stringResource(R.string.collections_category_hint_search_close)
+                )
+            } else {
+                buildList {
+                    add(InputButton.DPAD to stringResource(R.string.collections_category_hint_navigate))
+                    add(
+                        InputButton.A to if (selectSwapsRoles && uiState.canDownloadAll) {
+                            stringResource(
+                                R.string.collections_category_hint_open_hold_download_all,
+                                uiState.downloadableGamesCount
+                            )
+                        } else {
+                            stringResource(R.string.collections_category_hint_open)
+                        }
+                    )
+                    add(InputButton.B to stringResource(R.string.collections_category_hint_back))
+                    add(InputButton.X to stringResource(R.string.collections_category_hint_search))
+                    add(
+                        InputButton.Y to stringResource(
+                            if (uiState.isPinned) R.string.collections_category_hint_unpin else R.string.collections_category_hint_pin
+                        )
+                    )
+                    if (uiState.sectionLabels.size > 1) {
+                        add(InputButton.LT_RT to stringResource(R.string.collections_category_hint_jump))
+                    }
+                    add(
+                        InputButton.START to stringResource(
+                            if (uiState.isRefreshing) R.string.collections_category_hint_refreshing else R.string.collections_category_hint_refresh
+                        )
+                    )
+                    when {
+                        selectSwapsRoles ->
+                            add(InputButton.SELECT to stringResource(R.string.collections_category_hint_swap_screens))
+                        selectHintSwaps ->
+                            add(InputButton.SELECT to stringResource(R.string.collections_category_hint_hold_swap_screens))
+                        selectSwapMode != null && uiState.canDownloadAll -> add(
+                            InputButton.SELECT to stringResource(
+                                R.string.collections_category_hint_download_all_hold_swap_screens,
+                                uiState.downloadableGamesCount
+                            )
+                        )
+                        uiState.canDownloadAll -> add(
+                            InputButton.SELECT to stringResource(
+                                R.string.collections_category_hint_download_all,
+                                uiState.downloadableGamesCount
+                            )
+                        )
+                    }
+                }
+            },
+            onHintClick = { button ->
+                when (button) {
+                    InputButton.A -> { inputHandler.onConfirm() }
+                    InputButton.B -> { inputHandler.onBack() }
+                    InputButton.X -> { inputHandler.onContextMenu() }
+                    InputButton.Y -> { inputHandler.onSecondaryAction() }
+                    InputButton.SELECT -> if (selectHintSwaps) {
+                        com.nendo.argosy.DualScreenManagerHolder.instance?.swapRoles()
+                    } else {
+                        inputHandler.onSelect()
+                    }
+                    InputButton.START -> { inputHandler.onMenu() }
+                    else -> Unit
+                }
+            }
+        )
+
+        uiState.overlayLetter?.let { letter ->
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(96.dp)
+                        .clip(RoundedCornerShape(Dimens.radiusLg))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = letter,
+                        style = MaterialTheme.typography.displayMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+
+        ArgosyConfirmModalHost(
+            visible = downloadAllConfirmVisible,
+            title = stringResource(R.string.collections_category_downloadall_confirm_title),
+            message = pluralStringResource(
+                R.plurals.collections_category_downloadall_confirm_message,
+                uiState.downloadableGamesCount,
+                uiState.downloadableGamesCount
+            ),
+            confirmLabel = stringResource(R.string.collections_category_downloadall_confirm_action),
+            onConfirm = viewModel::confirmDownloadAll,
+            onDismiss = viewModel::dismissDownloadAllConfirm
+        )
+
+        if (uiState.downloadAllProgress.isActive) {
+            DownloadAllModal(
+                currentIndex = uiState.downloadAllProgress.currentIndex,
+                totalCount = uiState.downloadAllProgress.totalCount
+            )
+        }
+    }
+}
+
+@Composable
+private fun DownloadAllModal(
+    currentIndex: Int,
+    totalCount: Int
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Dimens.spacingXl),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            shape = RoundedCornerShape(Dimens.radiusXl),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = Dimens.elevationLg)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(Dimens.spacingLg)
+                    .width(Dimens.modalWidthLg - 170.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Download,
+                    contentDescription = null,
+                    modifier = Modifier.size(Dimens.iconXl),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.height(Dimens.spacingMd))
+
+                Text(
+                    text = stringResource(R.string.collections_category_downloadall_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Spacer(modifier = Modifier.height(Dimens.spacingSm))
+
+                Text(
+                    text = pluralStringResource(
+                        R.plurals.collections_category_downloadall_progress,
+                        totalCount,
+                        currentIndex,
+                        totalCount
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(Dimens.spacingMd))
+
+                ArgosyProgressBar(progress = if (totalCount > 0) currentIndex.toFloat() / totalCount else 0f)
+            }
+        }
+    }
+}
+
+@Composable
+private fun VirtualCategoryHeader(
+    categoryName: String,
+    gameCount: Int,
+    isSearchActive: Boolean,
+    searchQuery: String,
+    onBack: () -> Unit,
+    onSearchOpen: () -> Unit,
+    onSearchChange: (String) -> Unit,
+    onSearchClose: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Dimens.spacingMd, vertical = Dimens.spacingSm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(R.string.collections_category_back_description),
+                tint = MaterialTheme.colorScheme.onSurface
+            )
+        }
+
+        Spacer(modifier = Modifier.width(Dimens.spacingSm))
+
+        if (isSearchActive) {
+            val focusRequester = remember { FocusRequester() }
+            LaunchedEffect(Unit) { focusRequester.requestFocus() }
+            TextField(
+                value = searchQuery,
+                onValueChange = onSearchChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focusRequester),
+                placeholder = { Text(stringResource(R.string.collections_category_search_placeholder, categoryName)) },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            )
+            IconButton(onClick = onSearchClose) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = stringResource(R.string.collections_category_close_search_description),
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        } else {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = categoryName,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = pluralStringResource(R.plurals.collections_category_header_game_count, gameCount, gameCount),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = onSearchOpen) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = stringResource(R.string.collections_category_search_description),
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyVirtualCategory() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                Icons.Default.Category,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.size(Dimens.iconXl + Dimens.spacingMd)
+            )
+            Spacer(modifier = Modifier.height(Dimens.spacingMd))
+            Text(
+                text = stringResource(R.string.collections_category_empty_title),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}

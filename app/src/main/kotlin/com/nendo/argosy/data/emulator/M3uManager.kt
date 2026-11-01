@@ -1,0 +1,345 @@
+package com.nendo.argosy.data.emulator
+
+import android.util.Log
+import com.nendo.argosy.data.local.dao.GameDao
+import com.nendo.argosy.data.local.dao.GameDiscDao
+import com.nendo.argosy.data.local.dao.GameFileDao
+import com.nendo.argosy.data.local.entity.GameDiscEntity
+import com.nendo.argosy.data.local.entity.GameEntity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import javax.inject.Inject
+import javax.inject.Singleton
+
+private const val TAG = "M3uManager"
+
+sealed class M3uResult {
+    data class Valid(val m3uFile: File) : M3uResult()
+    data class Generated(val m3uFile: File) : M3uResult()
+    data class SingleDisc(val discFile: File) : M3uResult()
+    data class NotApplicable(val reason: String) : M3uResult()
+    data class Error(val message: String) : M3uResult()
+}
+
+@Singleton
+class M3uManager @Inject constructor(
+    private val gameDao: GameDao,
+    private val gameDiscDao: GameDiscDao,
+    private val gameFileDao: GameFileDao
+) {
+    companion object {
+        private val SUPPORTED_PLATFORMS = setOf("psx", "saturn", "dreamcast", "dc", "amiga")
+        private val DISC_IMAGE_EXTENSIONS = setOf(
+            "cue", "gdi", "ccd", "mds", "toc", "chd", "iso", "bin", "img", "mdf", "cdi", "nrg", "ecm", "pbp",
+            "cso", "zso", "gz", "gcm", "gcz", "rvz", "ciso", "wia", "wbfs",
+            "adf", "adz", "dms", "fdi", "ipf"
+        )
+
+        fun supportsM3u(platformSlug: String): Boolean = platformSlug in SUPPORTED_PLATFORMS
+
+        fun parseFirstDisc(m3uFile: File): File? {
+            return parseAllDiscs(m3uFile).firstOrNull()
+        }
+
+        fun parseAllDiscs(m3uFile: File): List<File> {
+            if (!m3uFile.exists() || m3uFile.extension.lowercase() != "m3u") return emptyList()
+            val parentDir = m3uFile.parentFile ?: return emptyList()
+
+            return parseM3uLines(m3uFile).mapNotNull { line ->
+                val discFile = File(parentDir, line)
+                if (discFile.isFile) discFile else null
+            }
+        }
+
+        fun isMultiDiscContainer(m3uFile: File): Boolean =
+            parseAllDiscs(m3uFile)
+                .filter { it.extension.lowercase() in DISC_IMAGE_EXTENSIONS }
+                .distinctBy { it.absolutePath }
+                .size >= 2
+
+        fun resolveLaunchableFile(discPath: File): File? {
+            if (discPath.isFile) return discPath
+            if (!discPath.isDirectory) return null
+
+            val files = discPath.walkTopDown()
+                .filter { it.isFile && !it.name.startsWith("._") }
+                .sortedBy { it.name }
+                .toList()
+
+            files.firstOrNull { it.extension.lowercase() == "m3u" }
+                ?.let { return parseFirstDisc(it) }
+            files.firstOrNull { it.extension.lowercase() in setOf("cue", "gdi") }
+                ?.let { return it }
+            return files.filter { it.extension.lowercase() == "chd" }.maxByOrNull { it.length() }
+                ?: files.filter { it.extension.lowercase() in setOf("iso", "bin", "img", "cdi") }.maxByOrNull { it.length() }
+                ?: files.maxByOrNull { it.length() }
+        }
+
+        fun isM3uComplete(m3uFile: File): Boolean {
+            if (!m3uFile.exists() || m3uFile.extension.lowercase() != "m3u") return false
+            val parentDir = m3uFile.parentFile ?: return false
+
+            val lines = parseM3uLines(m3uFile)
+            if (lines.isEmpty()) return false
+
+            return lines.all { line -> File(parentDir, line).isFile }
+        }
+
+        private fun parseM3uLines(m3uFile: File): List<String> {
+            return try {
+                m3uFile.readLines()
+                    .filter { it.isNotBlank() && !it.startsWith("#") }
+                    .map { line ->
+                        val commentIndex = line.indexOf('#')
+                        if (commentIndex > 0) line.substring(0, commentIndex).trim()
+                        else line.trim()
+                    }
+                    .filter { it.isNotEmpty() }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse m3u: ${e.message}")
+                emptyList()
+            }
+        }
+    }
+
+    suspend fun ensureM3u(game: GameEntity): M3uResult {
+        if (!game.isMultiDisc) {
+            return M3uResult.NotApplicable("Not a multi-disc game")
+        }
+
+        if (!supportsM3u(game.platformSlug)) {
+            return M3uResult.NotApplicable("Platform ${game.platformSlug} does not support m3u")
+        }
+
+        val discs = repairedDiscs(game.id)
+        if (discs.isEmpty()) {
+            return M3uResult.Error("No discs found for game")
+        }
+
+        val presentDiscs = presentDiscs(discs)
+        if (presentDiscs.isEmpty()) {
+            return M3uResult.NotApplicable("No disc downloaded yet")
+        }
+
+        val existingM3u = game.m3uPath?.let { File(it) }
+        if (existingM3u != null && validateM3u(existingM3u, presentDiscs)) {
+            Log.d(TAG, "Existing m3u is valid: ${existingM3u.absolutePath}")
+            adoptPlaylist(game.id, existingM3u)
+            return M3uResult.Valid(existingM3u)
+        }
+
+        return generateM3u(game, presentDiscs, totalDiscs = discs.size)
+    }
+
+    /**
+     * Rewrites a multi-disc game's playlist to list the discs now on disk, so a disc downloaded
+     * or deleted on its own is reflected before the next launch. With no disc left the playlist
+     * goes and the game reads as not downloaded.
+     */
+    suspend fun refreshPlaylist(gameId: Long): M3uResult {
+        val game = gameDao.getById(gameId)
+            ?: return M3uResult.Error("Game not found")
+        if (!game.isMultiDisc || !supportsM3u(game.platformSlug)) {
+            return M3uResult.NotApplicable("Not applicable for this game")
+        }
+        val discs = repairedDiscs(gameId)
+        val present = presentDiscs(discs)
+        if (present.isEmpty()) {
+            withContext(Dispatchers.IO) { game.m3uPath?.let { File(it).takeIf(File::isFile)?.delete() } }
+            gameDao.updateM3uPath(game.id, null)
+            gameDao.clearLocalPath(game.id)
+            return M3uResult.NotApplicable("No disc downloaded")
+        }
+        return generateM3u(game, present, totalDiscs = discs.size)
+    }
+
+    /**
+     * Points the disc stored as [fileName] at [path], or marks it absent when [path] is null, and
+     * rewrites the playlist. False when no disc of the game carries that file name.
+     */
+    suspend fun recordDiscFile(gameId: Long, fileName: String, path: String?): Boolean {
+        val disc = gameDiscDao.getDiscsForGame(gameId).firstOrNull { it.fileName == fileName } ?: return false
+        gameDiscDao.updateLocalPath(disc.id, path)
+        refreshPlaylist(gameId)
+        return true
+    }
+
+    private fun presentDiscs(discs: List<GameDiscEntity>): List<GameDiscEntity> =
+        discs.filter { disc -> disc.localPath?.let(::isDiscImageOnDisk) == true }
+
+    private fun isDiscImageOnDisk(path: String): Boolean {
+        val file = File(path)
+        return file.exists() && !file.extension.equals("m3u", ignoreCase = true)
+    }
+
+    private suspend fun repairedDiscs(gameId: Long): List<GameDiscEntity> {
+        val discs = gameDiscDao.getDiscsForGame(gameId)
+        val stray = discs.filter { disc -> disc.localPath?.let(::isDiscImageOnDisk) != true }
+        if (stray.isEmpty()) return discs
+        val filesByName = gameFileDao.getFilesForGame(gameId).associateBy { it.fileName }
+        var repaired = false
+        for (disc in stray) {
+            val onDisk = filesByName[disc.fileName]?.localPath?.takeIf(::isDiscImageOnDisk) ?: continue
+            gameDiscDao.updateLocalPath(disc.id, onDisk)
+            Log.i(TAG, "Repaired disc ${disc.discNumber} of game $gameId: ${disc.localPath} -> $onDisk")
+            repaired = true
+        }
+        return if (repaired) gameDiscDao.getDiscsForGame(gameId) else discs
+    }
+
+    private suspend fun adoptPlaylist(gameId: Long, playlist: File) {
+        if (gameDao.getById(gameId)?.localPath != playlist.absolutePath) {
+            gameDao.relocateLocalPath(gameId, playlist.absolutePath)
+        }
+    }
+
+    private suspend fun generateM3u(
+        game: GameEntity,
+        discs: List<GameDiscEntity>,
+        totalDiscs: Int
+    ): M3uResult = withContext(Dispatchers.IO) {
+        val firstDiscPath = discs.firstOrNull { it.localPath != null }?.localPath
+            ?: return@withContext M3uResult.Error("No disc paths available")
+
+        val parentDir = File(firstDiscPath).parentFile
+            ?: return@withContext M3uResult.Error("Could not determine parent directory")
+
+        val launchableFiles = discs
+            .filter { it.localPath != null }
+            .sortedBy { it.discNumber }
+            .mapNotNull { resolveLaunchableFile(File(it.localPath!!)) }
+            .filterNot { it.extension.equals("m3u", ignoreCase = true) }
+            .distinctBy { it.absolutePath }
+        when {
+            launchableFiles.isEmpty() -> return@withContext M3uResult.Error("No launchable disc files for game")
+            totalDiscs <= 1 && launchableFiles.size == 1 -> {
+                game.m3uPath?.let { File(it).takeIf(File::isFile)?.delete() }
+                gameDao.updateM3uPath(game.id, null)
+                return@withContext M3uResult.SingleDisc(launchableFiles.first())
+            }
+        }
+
+        val folderNames = folderNamesFor(game)
+        val targetDir = conformToPlaylistFolder(parentDir, folderNames) ?: parentDir
+        val m3uFile = File(targetDir, playlistNameFor(targetDir, folderNames.first()))
+
+        val content = launchableFiles.joinToString("\n") {
+            val placed = rebase(it, parentDir, targetDir)
+            placed.relativeToOrNull(targetDir)?.path ?: placed.name
+        }
+
+        if (targetDir != parentDir) {
+            discs.forEach { disc ->
+                val path = disc.localPath ?: return@forEach
+                gameDiscDao.updateLocalPath(disc.id, rebase(File(path), parentDir, targetDir).absolutePath)
+            }
+            game.localPath?.let {
+                gameDao.relocateLocalPath(game.id, rebase(File(it), parentDir, targetDir).absolutePath)
+            }
+        }
+
+        try {
+            m3uFile.writeText(content, Charsets.UTF_8)
+            gameDao.updateM3uPath(game.id, m3uFile.absolutePath)
+            adoptPlaylist(game.id, m3uFile)
+            Log.d(TAG, "Generated m3u: ${m3uFile.absolutePath}")
+            M3uResult.Generated(m3uFile)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to generate m3u", e)
+            M3uResult.Error("Failed to write m3u: ${e.message}")
+        }
+    }
+
+    /**
+     * The names this game's folder may legitimately carry, newest rule first. The downloader names
+     * a folder after the server's own file name and older releases named it after the title, so
+     * both have to be recognised as this game's own folder.
+     */
+    private fun folderNamesFor(game: GameEntity): List<String> =
+        listOfNotNull(game.rommFileName?.substringBeforeLast('.')?.takeIf { it.isNotBlank() }, game.title)
+            .map(::downloadFolderName)
+            .distinct()
+
+    /**
+     * Renames a game's disc folder to `<name>.m3u` so ES-DE collapses it to a single entry.
+     *
+     * ES-DE treats a directory as one game only when its name matches a playlist inside it.
+     * The rename is refused unless the directory is demonstrably this game's own folder, since
+     * discs downloaded straight into a platform directory share it with every other game.
+     * Returns null when the folder must be left alone.
+     */
+    private fun conformToPlaylistFolder(parentDir: File, folderNames: List<String>): File? {
+        val playlistName = "${folderNames.first()}.m3u"
+        if (folderNames.any { parentDir.name.equals("$it.m3u", ignoreCase = true) }) return parentDir
+        if (folderNames.none { parentDir.name.equals(it, ignoreCase = true) }) return null
+
+        val target = File(parentDir.parentFile ?: return null, playlistName)
+        if (target.exists()) {
+            Log.w(TAG, "Playlist folder already occupied, keeping ${parentDir.name}")
+            return null
+        }
+        if (!parentDir.renameTo(target)) {
+            Log.w(TAG, "Could not rename ${parentDir.name} to $playlistName")
+            return null
+        }
+        return target
+    }
+
+    /**
+     * The playlist takes the folder's own name once the folder is conformed, so the two agree
+     * even where the download path and this one sanitize a title differently.
+     */
+    private fun playlistNameFor(targetDir: File, folderName: String): String =
+        if (targetDir.name.endsWith(".m3u", ignoreCase = true)) {
+            targetDir.name
+        } else {
+            sanitizeFileName(folderName) + ".m3u"
+        }
+
+    private fun downloadFolderName(title: String): String = title
+        .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(200)
+
+    private fun rebase(file: File, from: File, to: File): File {
+        if (from.absolutePath == to.absolutePath) return file
+        val prefix = from.absolutePath + File.separator
+        val path = file.absolutePath
+        if (!path.startsWith(prefix)) return file
+        return File(to, path.removePrefix(prefix))
+    }
+
+    private fun validateM3u(m3uFile: File, discs: List<GameDiscEntity>): Boolean {
+        if (!m3uFile.exists()) {
+            Log.d(TAG, "M3u file does not exist: ${m3uFile.absolutePath}")
+            return false
+        }
+
+        val m3uDir = m3uFile.parentFile ?: return false
+        val lines = parseM3uLines(m3uFile)
+
+        if (lines.size != discs.size) {
+            Log.d(TAG, "M3u line count (${lines.size}) doesn't match disc count (${discs.size})")
+            return false
+        }
+
+        for (line in lines) {
+            val referencedFile = File(m3uDir, line)
+            if (!referencedFile.isFile) {
+                Log.d(TAG, "Referenced entry is not a file: ${referencedFile.absolutePath}")
+                return false
+            }
+        }
+
+        return true
+    }
+
+    private fun sanitizeFileName(name: String): String {
+        return name
+            .replace(Regex("[<>:\"/\\\\|?*]"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+}

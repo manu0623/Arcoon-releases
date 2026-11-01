@@ -1,0 +1,132 @@
+package com.nendo.argosy.ui.theme
+
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.nendo.argosy.ui.theme.generated.ComponentDefaults
+import com.nendo.argosy.ui.theme.generated.DimensionTokens
+
+object Dimens {
+    private val scale: Float
+        @Composable get() = LocalUiScale.current.scale
+
+    private val footerHeightBase: Int
+        @Composable get() = if (LocalUiScale.current.compactFooter) {
+            DimensionTokens.Layout.footerHeightCompact
+        } else {
+            DimensionTokens.Layout.footerHeight
+        }
+
+    val spacingXs: Dp @Composable get() = maxOf(DimensionTokens.Spacing.Xs.base.dp * scale, DimensionTokens.Spacing.Xs.floor.dp)
+    val spacingSm: Dp @Composable get() = maxOf(DimensionTokens.Spacing.Sm.base.dp * scale, DimensionTokens.Spacing.Sm.floor.dp)
+    val spacingMd: Dp @Composable get() = maxOf(DimensionTokens.Spacing.Md.base.dp * scale, DimensionTokens.Spacing.Md.floor.dp)
+    val spacingLg: Dp @Composable get() = maxOf(DimensionTokens.Spacing.Lg.base.dp * scale, DimensionTokens.Spacing.Lg.floor.dp)
+    val spacingXl: Dp @Composable get() = maxOf(DimensionTokens.Spacing.Xl.base.dp * scale, DimensionTokens.Spacing.Xl.floor.dp)
+    val spacingXxl: Dp @Composable get() = maxOf(DimensionTokens.Spacing.Xxl.base.dp * scale, DimensionTokens.Spacing.Xxl.floor.dp)
+
+    val radiusSm: Dp @Composable get() = DimensionTokens.Radius.sm.dp * scale
+    val radiusMd: Dp @Composable get() = DimensionTokens.Radius.md.dp * scale
+    val radiusLg: Dp @Composable get() = DimensionTokens.Radius.lg.dp * scale
+    val radiusXl: Dp @Composable get() = DimensionTokens.Radius.xl.dp * scale
+    val radiusPanel: Dp @Composable get() = DimensionTokens.Radius.panel.dp * scale
+    val radiusControl: Dp @Composable get() = DimensionTokens.Radius.control.dp * scale
+    val radiusPill: Dp get() = DimensionTokens.Radius.pill.dp
+
+    val gameCardWidth: Dp @Composable get() = DimensionTokens.Layout.gameCardWidth.dp * scale
+    val gameCardHeight: Dp @Composable get() = DimensionTokens.Layout.gameCardHeight.dp * scale
+    val coverPanelWidth: Dp @Composable get() = DimensionTokens.Layout.coverPanelWidth.dp * scale
+    val storageGameCoverWidth: Dp @Composable get() = DimensionTokens.Layout.storageGameCoverWidth.dp * scale
+    val storageGameCoverHeight: Dp @Composable get() = DimensionTokens.Layout.storageGameCoverHeight.dp * scale
+    val settingsItemMinHeight: Dp @Composable get() = DimensionTokens.Layout.settingsItemMinHeight.dp * scale
+    val menuRowHeight: Dp @Composable get() = DimensionTokens.Layout.menuRowHeight.dp * scale
+    val menuRowHeightLg: Dp @Composable get() = DimensionTokens.Layout.menuRowHeightLg.dp * scale
+    val listGap: Dp @Composable get() = maxOf(DimensionTokens.Layout.listGap.dp * scale, 4.dp)
+    val buttonHeight: Dp @Composable get() = DimensionTokens.Layout.buttonHeight.dp * scale
+    val buttonPaddingH: Dp @Composable get() = DimensionTokens.Layout.buttonPaddingH.dp * scale
+    val buttonPaddingV: Dp @Composable get() = DimensionTokens.Layout.buttonPaddingV.dp * scale
+
+    val mediaPosterWidth: Dp @Composable get() = DimensionTokens.Layout.mediaPosterWidth.dp * scale
+    val mediaPosterHeight: Dp @Composable get() = DimensionTokens.Layout.mediaPosterHeight.dp * scale
+    val mediaBackdropWidth: Dp @Composable get() = DimensionTokens.Layout.mediaBackdropWidth.dp * scale
+    val mediaBackdropHeight: Dp @Composable get() = DimensionTokens.Layout.mediaBackdropHeight.dp * scale
+    val mediaEpisodeRowHeight: Dp @Composable get() = DimensionTokens.Layout.mediaEpisodeRowHeight.dp * scale
+    val mediaSeasonTabHeight: Dp @Composable get() = DimensionTokens.Layout.mediaSeasonTabHeight.dp * scale
+    val mediaCastPortraitSize: Dp @Composable get() = DimensionTokens.Layout.mediaCastPortraitSize.dp * scale
+    val mediaCastTileWidth: Dp @Composable get() = DimensionTokens.Layout.mediaCastTileWidth.dp * scale
+    val mediaSimilarTileWidth: Dp @Composable get() = DimensionTokens.Layout.mediaSimilarTileWidth.dp * scale
+    val mediaSimilarTileHeight: Dp @Composable get() = DimensionTokens.Layout.mediaSimilarTileHeight.dp * scale
+    val mediaMenuRailWidth: Dp @Composable get() = DimensionTokens.Layout.mediaMenuRailWidth.dp * scale
+    val searchResultArtwork: Dp @Composable get() = DimensionTokens.Layout.searchResultArtwork.dp * scale
+    val saveSyncRowCover: Dp @Composable get() = DimensionTokens.Layout.saveSyncRowCover.dp * scale
+    val saveSyncAttentionCover: Dp @Composable get() = DimensionTokens.Layout.saveSyncAttentionCover.dp * scale
+    val screenMapCardWidth: Dp @Composable get() =DimensionTokens.Layout.screenMapCardWidth.dp * scale
+    val seatCardMaxWidth: Dp @Composable get() = DimensionTokens.Layout.seatCardMaxWidth.dp * scale
+    val seatCardHeight: Dp @Composable get() = DimensionTokens.Layout.seatCardHeight.dp * scale
+    val seatArtSize: Dp @Composable get() = DimensionTokens.Layout.seatArtSize.dp * scale
+    val saveChannelTileWidth: Dp @Composable get() = DimensionTokens.Layout.saveChannelTileWidth.dp * scale
+    val saveChannelCardWidth: Dp @Composable get() = DimensionTokens.Layout.saveChannelCardWidth.dp * scale
+    val saveChannelRowHeight: Dp @Composable get() = DimensionTokens.Layout.saveChannelRowHeight.dp * scale
+    val saveChannelModalWidth: Dp @Composable get() = DimensionTokens.Layout.saveChannelModalWidth.dp * scale
+    val saveTimelineColumnWidth: Dp @Composable get() = DimensionTokens.Layout.saveTimelineColumnWidth.dp * scale
+    val saveTimelineLaneHeight: Dp @Composable get() = DimensionTokens.Layout.saveTimelineLaneHeight.dp * scale
+    val saveTimelineLabelWidth: Dp @Composable get() = DimensionTokens.Layout.saveTimelineLabelWidth.dp * scale
+    val saveTimelineDot: Dp @Composable get() = DimensionTokens.Layout.saveTimelineDot.dp * scale
+    val saveTimelineDotCurrent: Dp @Composable get() = DimensionTokens.Layout.saveTimelineDotCurrent.dp * scale
+    val saveTimelinePinMark: Dp @Composable get() = DimensionTokens.Layout.saveTimelinePinMark.dp * scale
+    val saveTimelineFloaterWidth: Dp @Composable get() = DimensionTokens.Layout.saveTimelineFloaterWidth.dp * scale
+    val saveTimelineFloaterThumb: Dp @Composable get() = DimensionTokens.Layout.saveTimelineFloaterThumb.dp * scale
+    val saveTimelineHeaderCover: Dp @Composable get() = DimensionTokens.Layout.saveTimelineHeaderCover.dp * scale
+    val saveTimelineBackdropBlur: Dp @Composable get() = DimensionTokens.Layout.saveTimelineBackdropBlur.dp
+    val dotSm: Dp @Composable get() = DimensionTokens.Dot.sm.dp * scale
+    val dotLg: Dp @Composable get() = DimensionTokens.Dot.lg.dp * scale
+    val avatarXs: Dp @Composable get() = DimensionTokens.Avatar.xs.dp * scale
+    val avatarSm: Dp @Composable get() = DimensionTokens.Avatar.sm.dp * scale
+    val avatarMd: Dp @Composable get() = DimensionTokens.Avatar.md.dp * scale
+    val avatarLg: Dp @Composable get() = DimensionTokens.Avatar.lg.dp * scale
+    val avatarXl: Dp @Composable get() = DimensionTokens.Avatar.xl.dp * scale
+    val iconXs: Dp @Composable get() = DimensionTokens.Icon.xs.dp * scale
+    val iconSm: Dp @Composable get() = DimensionTokens.Icon.sm.dp * scale
+    val iconMd: Dp @Composable get() = DimensionTokens.Icon.md.dp * scale
+    val iconLg: Dp @Composable get() = DimensionTokens.Icon.lg.dp * scale
+    val iconXl: Dp @Composable get() = DimensionTokens.Icon.xl.dp * scale
+
+    val headerHeight: Dp @Composable get() = DimensionTokens.Layout.headerHeight.dp * scale
+    val headerHeightLg: Dp @Composable get() = DimensionTokens.Layout.headerHeightLg.dp * scale
+    val breadcrumbMaxWidth: Dp @Composable get() = DimensionTokens.Layout.breadcrumbMaxWidth.dp * scale
+    val footerHeight: Dp @Composable get() = maxOf(
+        footerHeightBase,
+        ComponentDefaults.FrostedSurface.minimumTouchTargetDp
+    ).dp * scale
+    val footerClearance: Dp @Composable get() = footerHeight + spacingMd
+    val modalWidth: Dp @Composable get() = DimensionTokens.Layout.modalWidth.dp * scale
+    val modalWidthLg: Dp @Composable get() = DimensionTokens.Layout.modalWidthLg.dp * scale
+    val quickPanelWidthWide: Dp @Composable get() = DimensionTokens.Layout.quickPanelWidthWide.dp * scale
+    val navDrawerWidth: Dp get() = DimensionTokens.Layout.navDrawerWidth.dp
+    val quickPanelWidthMedia: Dp @Composable get() = DimensionTokens.Layout.quickPanelWidthMedia.dp * scale
+    val quickPanelRailWidth: Dp @Composable get() = DimensionTokens.Layout.quickPanelRailWidth.dp * scale
+    val quickPanelHeaderHeight: Dp @Composable get() = DimensionTokens.Layout.quickPanelHeaderHeight.dp * scale
+    val modalWidthXl: Dp @Composable get() = DimensionTokens.Layout.modalWidthXl.dp * scale
+
+    val playerTransportHeight: Dp @Composable get() = DimensionTokens.Layout.playerTransportHeight.dp * scale
+    val playerChromePadding: Dp @Composable get() = DimensionTokens.Layout.playerChromePadding.dp * scale
+    val playerScrubTrackHeight: Dp @Composable get() = DimensionTokens.Layout.playerScrubTrackHeight.dp * scale
+    val playerScrubThumbSize: Dp @Composable get() = DimensionTokens.Layout.playerScrubThumbSize.dp * scale
+    val playerTrickplayWidth: Dp @Composable get() = DimensionTokens.Layout.playerTrickplayWidth.dp * scale
+    val playerTrickplayHeight: Dp @Composable get() = DimensionTokens.Layout.playerTrickplayHeight.dp * scale
+    val playerSkipButtonWidth: Dp @Composable get() = DimensionTokens.Layout.playerSkipButtonWidth.dp * scale
+    val timelineTrackHeight: Dp @Composable get() = DimensionTokens.Layout.timelineTrackHeight.dp * scale
+    val timelineDotEmpty: Dp @Composable get() = DimensionTokens.Layout.timelineDotEmpty.dp * scale
+    val timelineDotActive: Dp @Composable get() = DimensionTokens.Layout.timelineDotActive.dp * scale
+    val timelineDotSelected: Dp @Composable get() = DimensionTokens.Layout.timelineDotSelected.dp * scale
+    val timelineCoverHeight: Dp @Composable get() = DimensionTokens.Layout.timelineCoverHeight.dp * scale
+
+    val borderThin = DimensionTokens.Border.thin.dp
+    val borderMedium = DimensionTokens.Border.medium.dp
+    val borderThick = DimensionTokens.Border.thick.dp
+
+    val elevationNone = DimensionTokens.Elevation.none.dp
+    val elevationSm = DimensionTokens.Elevation.sm.dp
+    val elevationMd = DimensionTokens.Elevation.md.dp
+    val elevationLg = DimensionTokens.Elevation.lg.dp
+    val elevationFocused = DimensionTokens.Elevation.focused.dp
+}

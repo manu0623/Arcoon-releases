@@ -1,0 +1,1214 @@
+package com.nendo.argosy.libretro.ui
+
+import androidx.annotation.StringRes
+import com.nendo.argosy.data.local.entity.CoreInputMode
+import com.nendo.argosy.data.local.entity.HotkeyAction
+import com.nendo.argosy.data.local.entity.HotkeyScopeType
+import com.nendo.argosy.libretro.coreoptions.CoreControlDef
+import com.nendo.argosy.data.local.entity.HotkeyEntity
+import com.nendo.argosy.data.repository.ControllerInfo
+import com.nendo.argosy.data.repository.InputSource
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.SortByAlpha
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.nendo.argosy.R
+import com.nendo.argosy.ui.components.CyclePreference
+import com.nendo.argosy.ui.components.FooterBar
+import com.nendo.argosy.ui.components.InputButton
+import com.nendo.argosy.ui.components.NavigationPreference
+import com.nendo.argosy.ui.components.SectionFocusedScroll
+import com.nendo.argosy.ui.components.SwitchPreference
+import com.nendo.argosy.ui.screens.settings.CoreOptionViewItem
+import com.nendo.argosy.ui.input.InputHandler
+import com.nendo.argosy.ui.input.InputResult
+import com.nendo.argosy.ui.screens.settings.components.GripSettingsModal
+import com.nendo.argosy.ui.screens.settings.components.HotkeysModal
+import com.nendo.argosy.data.repository.MappingPlatforms
+import com.nendo.argosy.ui.screens.settings.components.InputMappingModal
+import com.nendo.argosy.ui.screens.settings.components.ScopedMapping
+import com.nendo.argosy.ui.components.HudCorner
+import com.nendo.argosy.ui.components.SegmentedPreference
+import com.nendo.argosy.ui.input.stepOption
+import com.nendo.argosy.ui.common.hudCornerFromStored
+import com.nendo.argosy.ui.common.labelRes
+import com.nendo.argosy.core.emulator.LibretroSettingDef
+import com.nendo.argosy.core.input.ActiveController
+import com.nendo.argosy.core.input.SoundType
+import kotlinx.coroutines.flow.StateFlow
+import com.nendo.argosy.ui.screens.settings.libretro.LibretroSettingsAccessor
+import com.nendo.argosy.data.platform.PlatformWeightRegistry
+import com.nendo.argosy.ui.screens.settings.libretro.LibretroSettingsSection
+import com.nendo.argosy.ui.screens.settings.libretro.libretroSettingsItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.libretro.libretroSettingsMaxFocusIndex
+import com.nendo.argosy.ui.screens.settings.libretro.step
+import com.nendo.argosy.ui.screens.settings.menu.SettingsLayout
+import com.nendo.argosy.ui.theme.Dimens
+import com.nendo.argosy.data.preferences.GripReserveMode
+import com.nendo.argosy.ui.theme.GRIP_RESERVE_DEFAULT_PERCENT
+import com.nendo.argosy.ui.util.touchOnly
+import com.nendo.argosy.ui.util.verticalEdgeFade
+
+
+enum class InGameSettingsTab(@StringRes val labelRes: Int) {
+    VIDEO(R.string.ingame_settings_tab_video),
+    CONTROLS(R.string.ingame_settings_tab_controls),
+    CORE_OPTIONS(R.string.ingame_settings_tab_core_options)
+}
+
+/**
+ * One libretro port the running core advertises. [options] are the core's own device
+ * descriptions, in the core's order; [selectedIndex] indexes into them.
+ */
+data class ControllerPortOption(
+    val port: Int,
+    val options: List<String>,
+    val selectedIndex: Int,
+    val autoIndex: Int?,
+    val followsAuto: Boolean,
+    val isOverridden: Boolean,
+    val pendingRestart: Boolean = false
+)
+
+data class InGameControlsState(
+    val gameSpecificControls: Boolean = false,
+    val supportsGameSpecificControls: Boolean = false,
+    val controllerPorts: List<ControllerPortOption> = emptyList(),
+    val rumbleEnabled: Boolean = true,
+    val motionEnabled: Boolean = true,
+    val analogAsDpad: Boolean = false,
+    val dpadAsAnalog: Boolean = false,
+    val limitHotkeysToPlayer1: Boolean = true,
+    val fastForwardMode: com.nendo.argosy.data.local.entity.FastForwardMode =
+        com.nendo.argosy.data.local.entity.FastForwardMode.HOLD,
+    val selectAsBack: com.nendo.argosy.data.local.entity.SelectAsBackMode =
+        com.nendo.argosy.data.local.entity.SelectAsBackMode.AUTO,
+    val fastForwardPreservePitch: Boolean = false,
+    val controllerOrderCount: Int = 0,
+    val gripReserveMode: GripReserveMode = GripReserveMode.OFF,
+    val gripReservePercent: Int = GRIP_RESERVE_DEFAULT_PERCENT,
+    val gripAutoControllers: List<com.nendo.argosy.domain.model.GripAutoController> = emptyList(),
+    val touchEnabled: Boolean = true,
+    val touchOpacityLandscape: Float = 0.45f,
+    val touchOpacityPortrait: Float = 1.0f,
+    val touchSizeScale: Float = 1.0f,
+    val touchHaptic: Boolean = true,
+    val touchLockOrientation: Boolean = false,
+    val touchGenesis6Button: Boolean = false,
+    val hudEnabled: Boolean = false,
+    val hudCorner: String = "Top Left",
+    val hudShowBattery: Boolean = true,
+    val hudShowClock: Boolean = true,
+    val hudShowPlaytime: Boolean = false,
+    val hudShowFps: Boolean = false,
+    val hudShowLastSave: Boolean = false
+)
+
+sealed class InGameControlsAction {
+    data class SetGameSpecificControls(val enabled: Boolean) : InGameControlsAction()
+    data class SetRumble(val enabled: Boolean) : InGameControlsAction()
+    data class SetMotion(val enabled: Boolean) : InGameControlsAction()
+    data class SetAnalogAsDpad(val enabled: Boolean) : InGameControlsAction()
+    data class SetDpadAsAnalog(val enabled: Boolean) : InGameControlsAction()
+    data class SetLimitHotkeys(val enabled: Boolean) : InGameControlsAction()
+    data class SetFastForwardMode(
+        val mode: com.nendo.argosy.data.local.entity.FastForwardMode
+    ) : InGameControlsAction()
+    data class SetFastForwardPreservePitch(val enabled: Boolean) : InGameControlsAction()
+    data class SetSelectAsBack(
+        val mode: com.nendo.argosy.data.local.entity.SelectAsBackMode
+    ) : InGameControlsAction()
+    data class CycleControllerType(val port: Int, val direction: Int) : InGameControlsAction()
+    data class SelectControllerType(val port: Int, val optionIndex: Int) : InGameControlsAction()
+    data class ResetControllerType(val port: Int) : InGameControlsAction()
+    data class CycleGripReserveMode(val direction: Int) : InGameControlsAction()
+    data class AdjustGripReservePercent(val delta: Int) : InGameControlsAction()
+    data class AddGripAutoController(val controllerId: String, val name: String) : InGameControlsAction()
+    data class RemoveGripAutoController(val controllerId: String) : InGameControlsAction()
+    data object ShowControllerOrder : InGameControlsAction()
+    data object ShowGripSettings : InGameControlsAction()
+    data object ShowInputMapping : InGameControlsAction()
+    data object ShowHotkeys : InGameControlsAction()
+    data class SetTouchEnabled(val enabled: Boolean) : InGameControlsAction()
+    data class SetTouchHaptic(val enabled: Boolean) : InGameControlsAction()
+    data class SetTouchLockOrientation(val enabled: Boolean) : InGameControlsAction()
+    data class SetTouchGenesis6Button(val enabled: Boolean) : InGameControlsAction()
+    data class SetHudEnabled(val enabled: Boolean) : InGameControlsAction()
+    data class SetHudCorner(val corner: HudCorner) : InGameControlsAction()
+    data class SetHudShowBattery(val enabled: Boolean) : InGameControlsAction()
+    data class SetHudShowClock(val enabled: Boolean) : InGameControlsAction()
+    data class SetHudShowPlaytime(val enabled: Boolean) : InGameControlsAction()
+    data class SetHudShowFps(val enabled: Boolean) : InGameControlsAction()
+    data class SetHudShowLastSave(val enabled: Boolean) : InGameControlsAction()
+}
+
+data class InGameModalCallbacks(
+    val hotkeys: List<HotkeyEntity>,
+    val connectedControllers: StateFlow<List<ControllerInfo>>,
+    val activeController: StateFlow<ActiveController?>,
+    val onHoldActiveController: (Boolean) -> Unit,
+    val lockedProfileIndexFor: (ControllerInfo) -> Int?,
+    val onGetMapping: suspend (ControllerInfo, String?) -> ScopedMapping,
+    val onSaveMapping: suspend (ControllerInfo, Map<InputSource, Int>, String?, Boolean, String?) -> Unit,
+    val onApplyPreset: suspend (ControllerInfo, String) -> Unit,
+    val onSaveHotkey: suspend (HotkeyAction, List<Int>, HotkeyScopeType, String?) -> Unit,
+    val onClearHotkey: suspend (HotkeyAction, HotkeyScopeType, String?) -> Unit,
+    val onSetHotkeyHoldMs: suspend (HotkeyAction, Long, HotkeyScopeType, String?) -> Unit,
+    val coreId: String? = null,
+    val coreName: String? = null,
+    val platformSlug: String? = null,
+    val platformName: String? = null,
+    val coreControls: List<CoreControlDef> = emptyList(),
+    val onSaveCoreControl: suspend (Int, CoreInputMode, List<Int>) -> Unit = { _, _, _ -> },
+    val onClearCoreBind: suspend (Long) -> Unit = {}
+)
+
+internal sealed class InGameControlsItem(
+    val key: String,
+    val section: String
+) {
+    val isFocusable: Boolean get() = this !is Header
+
+    class Header(key: String, section: String, @StringRes val titleRes: Int) :
+        InGameControlsItem(key, section)
+    data object GameSpecificControls : InGameControlsItem("gameSpecificControls", "controllers")
+    data object ControllerOrder : InGameControlsItem("controllerOrder", "controllers")
+    data class ControllerType(val port: Int) : InGameControlsItem("controllerType$port", "controllers")
+    data object InputMapping : InGameControlsItem("inputMapping", "controllers")
+    data object ControllerGrip : InGameControlsItem("controllerGrip", "controllers")
+    data object Rumble : InGameControlsItem("rumble", "controllers")
+    data object Motion : InGameControlsItem("motion", "controllers")
+    data object SelectAsBack : InGameControlsItem("selectAsBack", "controllers")
+    data object AnalogAsDpad : InGameControlsItem("analogAsDpad", "sticks")
+    data object DpadAsAnalog : InGameControlsItem("dpadAsAnalog", "sticks")
+    data object Hotkeys : InGameControlsItem("hotkeys", "hotkeys")
+    data object LimitHotkeysToPlayer1 : InGameControlsItem("limitHotkeys", "hotkeys")
+    data object ToggleFastForward : InGameControlsItem("toggleFastForward", "hotkeys")
+    data object PreserveFastForwardPitch : InGameControlsItem("preserveFastForwardPitch", "hotkeys")
+    data object TouchEnabled : InGameControlsItem("touchEnabled", "touchControls")
+    data object TouchHaptic : InGameControlsItem("touchHaptic", "touchControls")
+    data object TouchLockOrientation : InGameControlsItem("touchLockOrientation", "touchControls")
+    data object TouchGenesis6Button : InGameControlsItem("touchGenesis6Button", "touchControls")
+
+    companion object {
+        val ALL: List<InGameControlsItem>
+            get() = listOf(
+                Header("controllersHeader", "controllers", R.string.ingame_settings_header_controllers),
+                GameSpecificControls,
+                ControllerOrder,
+                ControllerType(0),
+                ControllerType(1),
+                ControllerType(2),
+                ControllerType(3),
+                InputMapping,
+                ControllerGrip,
+                Rumble,
+                Motion,
+                SelectAsBack,
+                Header("sticksHeader", "sticks", R.string.ingame_settings_header_sticks),
+                AnalogAsDpad,
+                DpadAsAnalog,
+                Header("hotkeysHeader", "hotkeys", R.string.ingame_settings_header_hotkeys),
+                Hotkeys,
+                LimitHotkeysToPlayer1,
+                ToggleFastForward,
+                PreserveFastForwardPitch,
+                Header("touchControlsHeader", "touchControls", R.string.ingame_settings_header_touch),
+                TouchEnabled,
+                TouchHaptic,
+                TouchLockOrientation,
+                TouchGenesis6Button
+            )
+    }
+}
+
+/**
+ * The Argosy status-bar overlay rows appended after the libretro settings on the Video tab.
+ * Declaration order is the on-screen order and the focus order.
+ */
+internal enum class InGameHudItem(val key: String) {
+    ENABLED("hudEnabled"),
+    CORNER("hudCorner"),
+    BATTERY("hudBattery"),
+    CLOCK("hudClock"),
+    PLAYTIME("hudPlaytime"),
+    FPS("hudFps"),
+    LAST_SAVE("hudLastSave")
+}
+
+private fun hudSwitchValue(item: InGameHudItem, state: InGameControlsState): Boolean? = when (item) {
+    InGameHudItem.ENABLED -> state.hudEnabled
+    InGameHudItem.CORNER -> null
+    InGameHudItem.BATTERY -> state.hudShowBattery
+    InGameHudItem.CLOCK -> state.hudShowClock
+    InGameHudItem.PLAYTIME -> state.hudShowPlaytime
+    InGameHudItem.FPS -> state.hudShowFps
+    InGameHudItem.LAST_SAVE -> state.hudShowLastSave
+}
+
+private fun hudSwitchAction(item: InGameHudItem, enabled: Boolean): InGameControlsAction? = when (item) {
+    InGameHudItem.ENABLED -> InGameControlsAction.SetHudEnabled(enabled)
+    InGameHudItem.CORNER -> null
+    InGameHudItem.BATTERY -> InGameControlsAction.SetHudShowBattery(enabled)
+    InGameHudItem.CLOCK -> InGameControlsAction.SetHudShowClock(enabled)
+    InGameHudItem.PLAYTIME -> InGameControlsAction.SetHudShowPlaytime(enabled)
+    InGameHudItem.FPS -> InGameControlsAction.SetHudShowFps(enabled)
+    InGameHudItem.LAST_SAVE -> InGameControlsAction.SetHudShowLastSave(enabled)
+}
+
+internal data class InGameControlsVisibility(
+    val hasAnalogStick: Boolean,
+    val hasRumble: Boolean,
+    val hasMotion: Boolean,
+    val hasGame: Boolean,
+    val selectablePorts: Set<Int>
+)
+
+private val controlsLayout = SettingsLayout<InGameControlsItem, InGameControlsVisibility>(
+    allItems = InGameControlsItem.ALL,
+    isFocusable = { it.isFocusable },
+    visibleWhen = { item, visibility ->
+        when (item) {
+            InGameControlsItem.Rumble -> visibility.hasRumble
+            InGameControlsItem.Motion -> visibility.hasMotion
+            InGameControlsItem.DpadAsAnalog -> visibility.hasAnalogStick
+            InGameControlsItem.GameSpecificControls -> visibility.hasGame
+            is InGameControlsItem.ControllerType -> item.port in visibility.selectablePorts
+            else -> true
+        }
+    },
+    sectionOf = { it.section }
+)
+
+@Composable
+fun InGameSettingsScreen(
+    accessor: LibretroSettingsAccessor,
+    platformSlug: String?,
+    canEnableBFI: Boolean,
+    menuWrapMode: com.nendo.argosy.data.preferences.MenuWrapMode = com.nendo.argosy.data.preferences.MenuWrapMode.HARD_STOP,
+    controlsState: InGameControlsState,
+    onControlsAction: (InGameControlsAction) -> Unit,
+    coreOptions: List<CoreOptionViewItem>,
+    coreOptionsSupported: Boolean,
+    onCoreOptionCycle: (String, Int) -> Unit,
+    onCoreOptionReset: (String) -> Unit,
+    perGameSettingsSupported: Boolean = false,
+    perGameSettingsEnabled: Boolean = false,
+    onTogglePerGameSettings: (Boolean) -> Unit = {},
+    modalCallbacks: InGameModalCallbacks,
+    onDismiss: () -> Unit
+): InputHandler {
+    var currentTab by remember { mutableStateOf(InGameSettingsTab.VIDEO) }
+    var focusedIndex by remember { mutableIntStateOf(0) }
+    val videoListState = rememberLazyListState()
+    val controlsListState = rememberLazyListState()
+    val coreOptionsListState = rememberLazyListState()
+    var showInputMappingModal by remember { mutableStateOf(false) }
+    var showHotkeysModal by remember { mutableStateOf(false) }
+    var showGripSettingsModal by remember { mutableStateOf(false) }
+
+    val currentOnDismiss = rememberUpdatedState(onDismiss)
+    val currentControlsState = rememberUpdatedState(controlsState)
+    val currentOnControlsAction = rememberUpdatedState(onControlsAction)
+    val currentCoreOptions = rememberUpdatedState(coreOptions)
+    val currentCoreOptionsSupported = rememberUpdatedState(coreOptionsSupported)
+    val currentOnCoreOptionCycle = rememberUpdatedState(onCoreOptionCycle)
+    val currentOnCoreOptionReset = rememberUpdatedState(onCoreOptionReset)
+    val currentPerGameSupported = rememberUpdatedState(perGameSettingsSupported)
+    val currentPerGameEnabled = rememberUpdatedState(perGameSettingsEnabled)
+    val currentOnTogglePerGame = rememberUpdatedState(onTogglePerGameSettings)
+
+    val selectablePorts = remember(controlsState.controllerPorts) {
+        controlsState.controllerPorts.mapTo(mutableSetOf()) { it.port }
+    }
+    val controlsVisibility = remember(
+        platformSlug,
+        controlsState.supportsGameSpecificControls,
+        selectablePorts
+    ) {
+        InGameControlsVisibility(
+            hasAnalogStick = platformSlug != null && PlatformWeightRegistry.hasAnalogStick(platformSlug),
+            hasRumble = platformSlug != null && PlatformWeightRegistry.hasRumble(platformSlug),
+            hasMotion = platformSlug != null && PlatformWeightRegistry.hasMotion(platformSlug),
+            hasGame = controlsState.supportsGameSpecificControls,
+            selectablePorts = selectablePorts
+        )
+    }
+    val videoLibretroCount = remember(platformSlug, canEnableBFI) {
+        libretroSettingsMaxFocusIndex(platformSlug, canEnableBFI) + 1
+    }
+    val maxVideoFocusIndex = videoLibretroCount + InGameHudItem.entries.size - 1
+    val controlsMaxFocusIndex = remember(controlsVisibility) {
+        controlsLayout.maxFocusIndex(controlsVisibility)
+    }
+
+    /**
+     * The input handler is remembered once, so every bound it reads has to be a state it can
+     * re-read. Captured as values they froze at the composition that built the handler, and a
+     * later pass that changed how many rows are drawn left navigation addressing the old list.
+     */
+    val currentVideoLibretroCount = rememberUpdatedState(videoLibretroCount)
+    val currentMaxVideoFocusIndex = rememberUpdatedState(maxVideoFocusIndex)
+    val currentControlsMaxFocusIndex = rememberUpdatedState(controlsMaxFocusIndex)
+
+    fun getMaxFocusIndex(): Int = when (currentTab) {
+        InGameSettingsTab.VIDEO -> currentMaxVideoFocusIndex.value
+        InGameSettingsTab.CONTROLS -> currentControlsMaxFocusIndex.value
+        InGameSettingsTab.CORE_OPTIONS -> {
+            val offset = if (currentPerGameSupported.value) 1 else 0
+            (currentCoreOptions.value.size - 1 + offset).coerceAtLeast(0)
+        }
+    }
+
+    fun getSettingAtIndex(index: Int): LibretroSettingDef? = when (currentTab) {
+        InGameSettingsTab.VIDEO -> libretroSettingsItemAtFocusIndex(
+            index = index,
+            platformSlug = platformSlug,
+            canEnableBFI = canEnableBFI
+        )
+        InGameSettingsTab.CONTROLS -> null
+        InGameSettingsTab.CORE_OPTIONS -> null
+    }
+
+    fun getHudItemAtIndex(index: Int): InGameHudItem? =
+        if (currentTab == InGameSettingsTab.VIDEO) {
+            InGameHudItem.entries.getOrNull(index - currentVideoLibretroCount.value)
+        } else {
+            null
+        }
+
+    fun handleHudConfirm(item: InGameHudItem): InputResult {
+        val action = currentOnControlsAction.value
+        val enabled = hudSwitchValue(item, currentControlsState.value)
+            ?: return InputResult.handled(SoundType.SILENT)
+        hudSwitchAction(item, !enabled)?.let { action(it) }
+        return InputResult.HANDLED
+    }
+
+    fun handleHudAdjust(item: InGameHudItem, direction: Int): InputResult {
+        val action = currentOnControlsAction.value
+        val state = currentControlsState.value
+        val enabled = hudSwitchValue(item, state)
+        if (enabled == null) {
+            return stepOption(HudCorner.entries, hudCornerFromStored(state.hudCorner), direction) {
+                action(InGameControlsAction.SetHudCorner(it))
+            }
+        }
+        val next = direction > 0
+        if (next != enabled) hudSwitchAction(item, next)?.let { action(it) }
+        return InputResult.HANDLED
+    }
+
+    fun isTabEnabled(tab: InGameSettingsTab): Boolean =
+        tab != InGameSettingsTab.CORE_OPTIONS || currentCoreOptionsSupported.value
+
+    fun coreOptionKeyAt(index: Int): String? {
+        val offset = if (currentPerGameSupported.value) 1 else 0
+        if (offset == 1 && index == 0) return null
+        return currentCoreOptions.value.getOrNull(index - offset)?.key
+    }
+
+    fun openControllerOrder() {
+        currentOnControlsAction.value(InGameControlsAction.ShowControllerOrder)
+    }
+
+    fun cycleControlsItem(direction: Int): Boolean {
+        return when (val item = controlsLayout.itemAtFocusIndex(focusedIndex, controlsVisibility)) {
+            is InGameControlsItem.ControllerType -> {
+                currentOnControlsAction.value(InGameControlsAction.CycleControllerType(item.port, direction))
+                true
+            }
+            InGameControlsItem.SelectAsBack -> {
+                val modes = com.nendo.argosy.data.local.entity.SelectAsBackMode.entries
+                val current = modes.indexOf(currentControlsState.value.selectAsBack)
+                val next = (current + direction).coerceIn(0, modes.lastIndex)
+                if (next != current) currentOnControlsAction.value(InGameControlsAction.SetSelectAsBack(modes[next]))
+                true
+            }
+            else -> false
+        }
+    }
+
+    fun handleControlsConfirm() {
+        val item = controlsLayout.itemAtFocusIndex(focusedIndex, controlsVisibility) ?: return
+        val state = currentControlsState.value
+        val action = currentOnControlsAction.value
+        when (item) {
+            InGameControlsItem.GameSpecificControls -> action(InGameControlsAction.SetGameSpecificControls(!state.gameSpecificControls))
+            InGameControlsItem.Rumble -> action(InGameControlsAction.SetRumble(!state.rumbleEnabled))
+            InGameControlsItem.Motion -> action(InGameControlsAction.SetMotion(!state.motionEnabled))
+            InGameControlsItem.ControllerOrder -> openControllerOrder()
+            is InGameControlsItem.ControllerType ->
+                action(InGameControlsAction.CycleControllerType(item.port, 1))
+            InGameControlsItem.InputMapping -> showInputMappingModal = true
+            InGameControlsItem.ControllerGrip -> showGripSettingsModal = true
+            InGameControlsItem.AnalogAsDpad -> action(InGameControlsAction.SetAnalogAsDpad(!state.analogAsDpad))
+            InGameControlsItem.DpadAsAnalog -> action(InGameControlsAction.SetDpadAsAnalog(!state.dpadAsAnalog))
+            InGameControlsItem.Hotkeys -> showHotkeysModal = true
+            InGameControlsItem.LimitHotkeysToPlayer1 -> action(InGameControlsAction.SetLimitHotkeys(!state.limitHotkeysToPlayer1))
+            InGameControlsItem.ToggleFastForward -> {
+                val next = if (state.fastForwardMode == com.nendo.argosy.data.local.entity.FastForwardMode.TOGGLE) {
+                    com.nendo.argosy.data.local.entity.FastForwardMode.HOLD
+                } else {
+                    com.nendo.argosy.data.local.entity.FastForwardMode.TOGGLE
+                }
+                action(InGameControlsAction.SetFastForwardMode(next))
+            }
+            InGameControlsItem.PreserveFastForwardPitch ->
+                action(InGameControlsAction.SetFastForwardPreservePitch(!state.fastForwardPreservePitch))
+            InGameControlsItem.TouchEnabled ->
+                action(InGameControlsAction.SetTouchEnabled(!state.touchEnabled))
+            InGameControlsItem.TouchHaptic ->
+                action(InGameControlsAction.SetTouchHaptic(!state.touchHaptic))
+            InGameControlsItem.TouchLockOrientation ->
+                action(InGameControlsAction.SetTouchLockOrientation(!state.touchLockOrientation))
+            InGameControlsItem.TouchGenesis6Button ->
+                action(InGameControlsAction.SetTouchGenesis6Button(!state.touchGenesis6Button))
+            else -> {}
+        }
+    }
+
+    fun switchTab(direction: Int) {
+        val tabs = InGameSettingsTab.entries
+        var newIndex = tabs.indexOf(currentTab)
+        repeat(tabs.size) {
+            newIndex = (newIndex + direction).mod(tabs.size)
+            if (isTabEnabled(tabs[newIndex])) {
+                currentTab = tabs[newIndex]
+                focusedIndex = 0
+                return
+            }
+        }
+    }
+
+    val inputHandler = remember {
+        object : InputHandler {
+            override fun onUp(): InputResult {
+                val newIndex = com.nendo.argosy.ui.input.InputDispatcher.computeWrappedIndex(
+                    focusedIndex, -1, getMaxFocusIndex(), menuWrapMode
+                )
+                if (newIndex != focusedIndex) focusedIndex = newIndex
+                return InputResult.HANDLED
+            }
+
+            override fun onDown(): InputResult {
+                val newIndex = com.nendo.argosy.ui.input.InputDispatcher.computeWrappedIndex(
+                    focusedIndex, 1, getMaxFocusIndex(), menuWrapMode
+                )
+                if (newIndex != focusedIndex) focusedIndex = newIndex
+                return InputResult.HANDLED
+            }
+
+            override fun onLeft(): InputResult {
+                if (currentTab == InGameSettingsTab.CORE_OPTIONS) {
+                    if (currentPerGameSupported.value && focusedIndex == 0) {
+                        currentOnTogglePerGame.value(false)
+                        return InputResult.HANDLED
+                    }
+                    val key = coreOptionKeyAt(focusedIndex) ?: return InputResult.UNHANDLED
+                    currentOnCoreOptionCycle.value(key, -1)
+                    return InputResult.HANDLED
+                }
+                if (currentTab == InGameSettingsTab.CONTROLS) {
+                    return if (cycleControlsItem(-1)) InputResult.HANDLED else InputResult.UNHANDLED
+                }
+                val hudItem = getHudItemAtIndex(focusedIndex)
+                if (hudItem != null) return handleHudAdjust(hudItem, -1)
+                val setting = getSettingAtIndex(focusedIndex) ?: return InputResult.UNHANDLED
+                if (accessor.isActionItem(setting)) return InputResult.UNHANDLED
+                return accessor.step(setting, -1)
+            }
+
+            override fun onRight(): InputResult {
+                if (currentTab == InGameSettingsTab.CORE_OPTIONS) {
+                    if (currentPerGameSupported.value && focusedIndex == 0) {
+                        currentOnTogglePerGame.value(true)
+                    } else {
+                        coreOptionKeyAt(focusedIndex)?.let { currentOnCoreOptionCycle.value(it, 1) }
+                    }
+                    return InputResult.HANDLED
+                }
+                if (currentTab == InGameSettingsTab.CONTROLS) {
+                    cycleControlsItem(1)
+                    return InputResult.HANDLED
+                }
+                val hudItem = getHudItemAtIndex(focusedIndex)
+                if (hudItem != null) return handleHudAdjust(hudItem, 1)
+                val setting = getSettingAtIndex(focusedIndex) ?: return InputResult.HANDLED
+                if (accessor.isActionItem(setting)) return InputResult.HANDLED
+                if (setting.type is LibretroSettingDef.SettingType.Cycle) return accessor.step(setting, 1)
+                return InputResult.HANDLED
+            }
+
+            override fun onConfirm(): InputResult {
+                when (currentTab) {
+                    InGameSettingsTab.VIDEO -> {
+                        val hudItem = getHudItemAtIndex(focusedIndex)
+                        if (hudItem != null) return handleHudConfirm(hudItem)
+                        val setting = getSettingAtIndex(focusedIndex) ?: return InputResult.HANDLED
+                        if (accessor.isActionItem(setting)) {
+                            accessor.onAction(setting)
+                        } else when (setting.type) {
+                            is LibretroSettingDef.SettingType.Switch -> accessor.toggle(setting)
+                            is LibretroSettingDef.SettingType.Cycle -> return InputResult.handled(SoundType.SILENT)
+                        }
+                    }
+                    InGameSettingsTab.CONTROLS -> handleControlsConfirm()
+                    InGameSettingsTab.CORE_OPTIONS ->
+                        if (currentPerGameSupported.value && focusedIndex == 0) {
+                            currentOnTogglePerGame.value(!currentPerGameEnabled.value)
+                        } else {
+                            coreOptionKeyAt(focusedIndex)?.let { currentOnCoreOptionCycle.value(it, 1) }
+                        }
+                }
+                return InputResult.HANDLED
+            }
+
+            override fun onSecondaryAction(): InputResult {
+                if (currentTab == InGameSettingsTab.CONTROLS) {
+                    val item = controlsLayout.itemAtFocusIndex(focusedIndex, controlsVisibility)
+                    if (item !is InGameControlsItem.ControllerType) return InputResult.UNHANDLED
+                    val port = currentControlsState.value.controllerPorts
+                        .firstOrNull { it.port == item.port } ?: return InputResult.HANDLED
+                    if (port.isOverridden) {
+                        currentOnControlsAction.value(InGameControlsAction.ResetControllerType(item.port))
+                    }
+                    return InputResult.HANDLED
+                }
+                if (currentTab != InGameSettingsTab.CORE_OPTIONS) return InputResult.UNHANDLED
+                if (currentPerGameSupported.value && focusedIndex == 0) return InputResult.HANDLED
+                val offset = if (currentPerGameSupported.value) 1 else 0
+                val option = currentCoreOptions.value.getOrNull(focusedIndex - offset)
+                    ?: return InputResult.HANDLED
+                if (option.isOverridden) currentOnCoreOptionReset.value(option.key)
+                return InputResult.HANDLED
+            }
+
+            override fun onBack(): InputResult {
+                currentOnDismiss.value()
+                return InputResult.HANDLED
+            }
+
+            override fun onPrevSection(): InputResult {
+                switchTab(-1)
+                return InputResult.HANDLED
+            }
+
+            override fun onNextSection(): InputResult {
+                switchTab(1)
+                return InputResult.HANDLED
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .focusProperties { canFocus = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .focusProperties { canFocus = false }
+        ) {
+            SettingsTabHeader(
+                currentTab = currentTab,
+                isTabEnabled = { isTabEnabled(it) },
+                onTabSelect = { tab ->
+                    currentTab = tab
+                    focusedIndex = 0
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            HorizontalDivider()
+
+            val currentListState = when (currentTab) {
+                InGameSettingsTab.VIDEO -> videoListState
+                InGameSettingsTab.CONTROLS -> controlsListState
+                InGameSettingsTab.CORE_OPTIONS -> coreOptionsListState
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalEdgeFade(currentListState, fadeHeight = Dimens.spacingXl)
+                    .focusProperties { canFocus = false }
+            ) {
+                when (currentTab) {
+                    InGameSettingsTab.VIDEO -> {
+                        LibretroSettingsSection(
+                            accessor = accessor,
+                            focusedIndex = focusedIndex,
+                            platformSlug = platformSlug,
+                            canEnableBFI = canEnableBFI,
+                            listState = videoListState,
+                            enablePicker = false,
+                            inSession = true,
+                            trailingContent = { InGameHudHeader() },
+                            trailingFocusCount = InGameHudItem.entries.size,
+                            trailingItems = {
+                                items(InGameHudItem.entries, key = { it.key }) { item ->
+                                    InGameHudRow(
+                                        item = item,
+                                        state = controlsState,
+                                        isFocused = focusedIndex == videoLibretroCount + item.ordinal,
+                                        onAction = onControlsAction
+                                    )
+                                }
+                            }
+                        )
+                    }
+
+                    InGameSettingsTab.CONTROLS -> {
+                        InGameControlsSection(
+                            state = controlsState,
+                            focusedIndex = focusedIndex,
+                            visibility = controlsVisibility,
+                            onAction = { action ->
+                                when (action) {
+                                    InGameControlsAction.ShowControllerOrder -> openControllerOrder()
+                                    InGameControlsAction.ShowGripSettings -> showGripSettingsModal = true
+                                    InGameControlsAction.ShowInputMapping -> showInputMappingModal = true
+                                    InGameControlsAction.ShowHotkeys -> showHotkeysModal = true
+                                    else -> onControlsAction(action)
+                                }
+                            },
+                            listState = controlsListState
+                        )
+                    }
+
+                    InGameSettingsTab.CORE_OPTIONS -> {
+                        InGameCoreOptionsSection(
+                            options = coreOptions,
+                            focusedIndex = focusedIndex,
+                            onCycle = { onCoreOptionCycle(it, 1) },
+                            onReset = onCoreOptionReset,
+                            listState = coreOptionsListState,
+                            perGameToggleVisible = perGameSettingsSupported,
+                            perGameEnabled = perGameSettingsEnabled,
+                            onTogglePerGame = onTogglePerGameSettings
+                        )
+                    }
+                }
+            }
+
+            FooterBar(
+                hints = buildSettingsFooterHints(currentTab),
+                onHintClick = { button ->
+                    when (button) {
+                        InputButton.B -> currentOnDismiss.value()
+                        InputButton.LB_RB -> {
+                            switchTab(1)
+                        }
+                        else -> {}
+                    }
+                }
+            )
+        }
+
+        if (showInputMappingModal) {
+            val controllers by modalCallbacks.connectedControllers.collectAsState()
+            val activeController by modalCallbacks.activeController.collectAsState()
+            InputMappingModal(
+                controllers = controllers,
+                activeController = activeController,
+                onHoldActiveController = modalCallbacks.onHoldActiveController,
+                inputDispatcher = null,
+                lockedPlatformIndexFor = { controller ->
+                    modalCallbacks.lockedProfileIndexFor(controller)
+                        ?: MappingPlatforms.indexForPlatformSlug(platformSlug ?: "")
+                },
+                onGetMapping = modalCallbacks.onGetMapping,
+                onSaveMapping = modalCallbacks.onSaveMapping,
+                onApplyPreset = modalCallbacks.onApplyPreset,
+                onDismiss = { showInputMappingModal = false }
+            )
+        }
+
+        if (showGripSettingsModal) {
+            GripSettingsModal(
+                mode = controlsState.gripReserveMode,
+                reservePercent = controlsState.gripReservePercent,
+                controllers = controlsState.gripAutoControllers,
+                onCycleMode = { onControlsAction(InGameControlsAction.CycleGripReserveMode(it)) },
+                onAdjustPercent = { onControlsAction(InGameControlsAction.AdjustGripReservePercent(it)) },
+                onAddController = { id, name ->
+                    onControlsAction(InGameControlsAction.AddGripAutoController(id, name))
+                },
+                onRemoveController = { id ->
+                    onControlsAction(InGameControlsAction.RemoveGripAutoController(id))
+                },
+                onDismiss = { showGripSettingsModal = false }
+            )
+        }
+
+        if (showHotkeysModal) {
+            HotkeysModal(
+                hotkeys = modalCallbacks.hotkeys,
+                onSaveHotkey = modalCallbacks.onSaveHotkey,
+                onClearHotkey = modalCallbacks.onClearHotkey,
+                onSetHoldMs = modalCallbacks.onSetHotkeyHoldMs,
+                onDismiss = { showHotkeysModal = false },
+                coreId = modalCallbacks.coreId,
+                coreName = modalCallbacks.coreName,
+                platformSlug = modalCallbacks.platformSlug,
+                platformName = modalCallbacks.platformName,
+                coreControls = modalCallbacks.coreControls,
+                onSaveCoreControl = modalCallbacks.onSaveCoreControl,
+                onClearCoreBind = modalCallbacks.onClearCoreBind
+            )
+        }
+    }
+
+    return inputHandler
+}
+
+@Composable
+private fun buildSettingsFooterHints(tab: InGameSettingsTab): List<Pair<InputButton, String>> {
+    val tabLabel = stringResource(R.string.ingame_settings_footer_tab)
+    val backLabel = stringResource(R.string.ingame_settings_footer_back)
+    val videoAdjust = stringResource(R.string.ingame_settings_footer_video_adjust)
+    val videoSelect = stringResource(R.string.ingame_settings_footer_video_select)
+    val controlsAdjust = stringResource(R.string.ingame_settings_footer_controls_adjust)
+    val controlsSelect = stringResource(R.string.ingame_settings_footer_controls_select)
+    val coreOptionsAdjust = stringResource(R.string.ingame_settings_footer_core_options_adjust)
+    val coreOptionsSelect = stringResource(R.string.ingame_settings_footer_core_options_select)
+    return buildList {
+        add(InputButton.LB_RB to tabLabel)
+        when (tab) {
+            InGameSettingsTab.VIDEO -> {
+                add(InputButton.DPAD_HORIZONTAL to videoAdjust)
+                add(InputButton.A to videoSelect)
+            }
+            InGameSettingsTab.CONTROLS -> {
+                add(InputButton.DPAD_HORIZONTAL to controlsAdjust)
+                add(InputButton.A to controlsSelect)
+            }
+            InGameSettingsTab.CORE_OPTIONS -> {
+                add(InputButton.DPAD_HORIZONTAL to coreOptionsAdjust)
+                add(InputButton.A to coreOptionsSelect)
+            }
+        }
+        add(InputButton.B to backLabel)
+    }
+}
+
+@Composable
+private fun InGameControlsSection(
+    state: InGameControlsState,
+    focusedIndex: Int,
+    visibility: InGameControlsVisibility,
+    onAction: (InGameControlsAction) -> Unit,
+    listState: LazyListState
+) {
+    val visibleItems = remember(visibility) { controlsLayout.visibleItems(visibility) }
+    val sections = remember(visibility) { controlsLayout.buildSections(visibility) }
+
+    SectionFocusedScroll(
+        listState = listState,
+        focusedIndex = focusedIndex,
+        focusToListIndex = { controlsLayout.focusToListIndex(it, visibility) },
+        sections = sections
+    )
+
+    fun isFocused(item: InGameControlsItem): Boolean =
+        focusedIndex == controlsLayout.focusIndexOf(item, visibility)
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Dimens.spacingMd),
+        verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
+    ) {
+        items(visibleItems, key = { it.key }) { item ->
+            when (item) {
+                is InGameControlsItem.Header -> {
+                    if (item.section != "controllers") {
+                        Spacer(modifier = Modifier.height(Dimens.spacingMd))
+                    }
+                    Text(
+                        text = stringResource(item.titleRes),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(
+                            start = Dimens.spacingSm,
+                            top = Dimens.spacingXs,
+                            bottom = Dimens.spacingXs
+                        )
+                    )
+                }
+
+                InGameControlsItem.GameSpecificControls -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_game_specific_controls_title),
+                    subtitle = if (state.gameSpecificControls) {
+                        stringResource(R.string.ingame_settings_game_specific_controls_subtitle_on)
+                    } else {
+                        stringResource(R.string.ingame_settings_game_specific_controls_subtitle_off)
+                    },
+                    isEnabled = state.gameSpecificControls,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetGameSpecificControls(it)) }
+                )
+
+                InGameControlsItem.Rumble -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_rumble_title),
+                    subtitle = stringResource(R.string.ingame_settings_rumble_subtitle),
+                    isEnabled = state.rumbleEnabled,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetRumble(it)) }
+                )
+
+                InGameControlsItem.Motion -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_motion_title),
+                    subtitle = stringResource(R.string.ingame_settings_motion_subtitle),
+                    isEnabled = state.motionEnabled,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetMotion(it)) }
+                )
+
+                InGameControlsItem.SelectAsBack -> SegmentedPreference(
+                    title = stringResource(R.string.ingame_settings_select_as_back_title),
+                    subtitle = stringResource(R.string.ingame_settings_select_as_back_subtitle),
+                    options = com.nendo.argosy.data.local.entity.SelectAsBackMode.entries.map {
+                        stringResource(it.labelRes)
+                    },
+                    selectedIndex = com.nendo.argosy.data.local.entity.SelectAsBackMode.entries.indexOf(state.selectAsBack),
+                    isFocused = isFocused(item),
+                    onSelect = {
+                        onAction(InGameControlsAction.SetSelectAsBack(
+                            com.nendo.argosy.data.local.entity.SelectAsBackMode.entries[it]
+                        ))
+                    }
+                )
+
+                InGameControlsItem.ControllerOrder -> NavigationPreference(
+                    icon = Icons.Default.SortByAlpha,
+                    title = stringResource(R.string.ingame_settings_controller_order_title),
+                    subtitle = if (state.controllerOrderCount > 0) {
+                        pluralStringResource(
+                            R.plurals.ingame_settings_controller_order_assigned,
+                            state.controllerOrderCount,
+                            state.controllerOrderCount
+                        )
+                    } else {
+                        stringResource(R.string.ingame_settings_controller_order_subtitle_empty)
+                    },
+                    isFocused = isFocused(item),
+                    onClick = { onAction(InGameControlsAction.ShowControllerOrder) }
+                )
+
+                is InGameControlsItem.ControllerType -> {
+                    val portState = state.controllerPorts.firstOrNull { it.port == item.port }
+                    if (portState != null) {
+                        val focused = isFocused(item)
+                        val autoName = portState.autoIndex?.let { portState.options.getOrNull(it) }
+                        CyclePreference(
+                            title = stringResource(
+                                R.string.ingame_settings_controller_type_title,
+                                item.port + 1
+                            ),
+                            value = if (portState.followsAuto && autoName != null) {
+                                stringResource(R.string.ingame_settings_controller_type_auto, autoName)
+                            } else {
+                                portState.options.getOrElse(portState.selectedIndex) {
+                                    stringResource(R.string.ingame_settings_controller_type_default_fallback)
+                                }
+                            },
+                            isFocused = focused,
+                            subtitle = when {
+                                portState.pendingRestart ->
+                                    stringResource(R.string.ingame_settings_controller_type_pending)
+                                portState.isOverridden -> null
+                                else ->
+                                    stringResource(R.string.ingame_settings_controller_type_core_default)
+                            },
+                            isCustom = portState.isOverridden,
+                            showResetButton = portState.isOverridden && focused,
+                            onReset = { onAction(InGameControlsAction.ResetControllerType(item.port)) },
+                            onClick = { onAction(InGameControlsAction.CycleControllerType(item.port, 1)) },
+                            onPrev = { onAction(InGameControlsAction.CycleControllerType(item.port, -1)) },
+                            options = portState.options,
+                            onSelect = { index ->
+                                onAction(InGameControlsAction.SelectControllerType(item.port, index))
+                            }
+                        )
+                    }
+                }
+
+                InGameControlsItem.ControllerGrip -> NavigationPreference(
+                    icon = Icons.Default.Gamepad,
+                    title = stringResource(R.string.ingame_settings_controller_grip_title),
+                    subtitle = stringResource(R.string.ingame_settings_controller_grip_subtitle),
+                    isFocused = isFocused(item),
+                    onClick = { onAction(InGameControlsAction.ShowGripSettings) }
+                )
+
+                InGameControlsItem.InputMapping -> NavigationPreference(
+                    icon = Icons.Default.Gamepad,
+                    title = stringResource(R.string.ingame_settings_input_mapping_title),
+                    subtitle = stringResource(R.string.ingame_settings_input_mapping_subtitle),
+                    isFocused = isFocused(item),
+                    onClick = { onAction(InGameControlsAction.ShowInputMapping) }
+                )
+
+                InGameControlsItem.AnalogAsDpad -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_analog_as_dpad_title),
+                    subtitle = stringResource(R.string.ingame_settings_analog_as_dpad_subtitle),
+                    isEnabled = state.analogAsDpad,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetAnalogAsDpad(it)) }
+                )
+
+                InGameControlsItem.DpadAsAnalog -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_dpad_as_analog_title),
+                    subtitle = stringResource(R.string.ingame_settings_dpad_as_analog_subtitle),
+                    isEnabled = state.dpadAsAnalog,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetDpadAsAnalog(it)) }
+                )
+
+                InGameControlsItem.Hotkeys -> NavigationPreference(
+                    icon = Icons.Default.Keyboard,
+                    title = stringResource(R.string.ingame_settings_hotkeys_title),
+                    subtitle = stringResource(R.string.ingame_settings_hotkeys_subtitle),
+                    isFocused = isFocused(item),
+                    onClick = { onAction(InGameControlsAction.ShowHotkeys) }
+                )
+
+                InGameControlsItem.LimitHotkeysToPlayer1 -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_limit_hotkeys_title),
+                    subtitle = stringResource(R.string.ingame_settings_limit_hotkeys_subtitle),
+                    isEnabled = state.limitHotkeysToPlayer1,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetLimitHotkeys(it)) }
+                )
+
+                InGameControlsItem.ToggleFastForward -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_toggle_fast_forward_title),
+                    subtitle = stringResource(R.string.ingame_settings_toggle_fast_forward_subtitle),
+                    isEnabled = state.fastForwardMode == com.nendo.argosy.data.local.entity.FastForwardMode.TOGGLE,
+                    isFocused = isFocused(item),
+                    onToggle = { enabled ->
+                        onAction(InGameControlsAction.SetFastForwardMode(
+                            if (enabled) com.nendo.argosy.data.local.entity.FastForwardMode.TOGGLE
+                            else com.nendo.argosy.data.local.entity.FastForwardMode.HOLD
+                        ))
+                    }
+                )
+
+                InGameControlsItem.PreserveFastForwardPitch -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_preserve_pitch_title),
+                    subtitle = stringResource(R.string.ingame_settings_preserve_pitch_subtitle),
+                    isEnabled = state.fastForwardPreservePitch,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetFastForwardPreservePitch(it)) }
+                )
+
+                InGameControlsItem.TouchEnabled -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_touch_enabled_title),
+                    subtitle = stringResource(R.string.ingame_settings_touch_enabled_subtitle),
+                    isEnabled = state.touchEnabled,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetTouchEnabled(it)) }
+                )
+
+                InGameControlsItem.TouchHaptic -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_touch_haptic_title),
+                    subtitle = stringResource(R.string.ingame_settings_touch_haptic_subtitle),
+                    isEnabled = state.touchHaptic,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetTouchHaptic(it)) }
+                )
+
+                InGameControlsItem.TouchLockOrientation -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_touch_lock_orientation_title),
+                    subtitle = stringResource(R.string.ingame_settings_touch_lock_orientation_subtitle),
+                    isEnabled = state.touchLockOrientation,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetTouchLockOrientation(it)) }
+                )
+
+                InGameControlsItem.TouchGenesis6Button -> SwitchPreference(
+                    title = stringResource(R.string.ingame_settings_touch_genesis6_title),
+                    subtitle = stringResource(R.string.ingame_settings_touch_genesis6_subtitle),
+                    isEnabled = state.touchGenesis6Button,
+                    isFocused = isFocused(item),
+                    onToggle = { onAction(InGameControlsAction.SetTouchGenesis6Button(it)) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InGameHudHeader() {
+    Text(
+        text = stringResource(R.string.ingame_settings_hud_header),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(
+            start = Dimens.spacingSm,
+            top = Dimens.spacingXs,
+            bottom = Dimens.spacingXs
+        )
+    )
+}
+
+@Composable
+private fun InGameHudRow(
+    item: InGameHudItem,
+    state: InGameControlsState,
+    isFocused: Boolean,
+    onAction: (InGameControlsAction) -> Unit
+) {
+    when (item) {
+        InGameHudItem.ENABLED -> SwitchPreference(
+            title = stringResource(R.string.ingame_settings_hud_enabled_title),
+            subtitle = stringResource(R.string.ingame_settings_hud_enabled_subtitle),
+            isEnabled = state.hudEnabled,
+            isFocused = isFocused,
+            onToggle = { onAction(InGameControlsAction.SetHudEnabled(it)) }
+        )
+
+        InGameHudItem.CORNER -> SegmentedPreference(
+            title = stringResource(R.string.ingame_settings_hud_corner_title),
+            options = HudCorner.entries.map { stringResource(it.labelRes) },
+            selectedIndex = hudCornerFromStored(state.hudCorner).ordinal,
+            isFocused = isFocused,
+            onSelect = { index -> onAction(InGameControlsAction.SetHudCorner(HudCorner.entries[index])) }
+        )
+
+        InGameHudItem.BATTERY -> SwitchPreference(
+            title = stringResource(R.string.ingame_settings_hud_battery_title),
+            isEnabled = state.hudShowBattery,
+            isFocused = isFocused,
+            onToggle = { onAction(InGameControlsAction.SetHudShowBattery(it)) }
+        )
+
+        InGameHudItem.CLOCK -> SwitchPreference(
+            title = stringResource(R.string.ingame_settings_hud_clock_title),
+            isEnabled = state.hudShowClock,
+            isFocused = isFocused,
+            onToggle = { onAction(InGameControlsAction.SetHudShowClock(it)) }
+        )
+
+        InGameHudItem.PLAYTIME -> SwitchPreference(
+            title = stringResource(R.string.ingame_settings_hud_playtime_title),
+            isEnabled = state.hudShowPlaytime,
+            isFocused = isFocused,
+            onToggle = { onAction(InGameControlsAction.SetHudShowPlaytime(it)) }
+        )
+
+        InGameHudItem.FPS -> SwitchPreference(
+            title = stringResource(R.string.ingame_settings_hud_fps_title),
+            subtitle = stringResource(R.string.ingame_settings_hud_fps_subtitle),
+            isEnabled = state.hudShowFps,
+            isFocused = isFocused,
+            onToggle = { onAction(InGameControlsAction.SetHudShowFps(it)) }
+        )
+
+        InGameHudItem.LAST_SAVE -> SwitchPreference(
+            title = stringResource(R.string.ingame_settings_hud_last_save_title),
+            isEnabled = state.hudShowLastSave,
+            isFocused = isFocused,
+            onToggle = { onAction(InGameControlsAction.SetHudShowLastSave(it)) }
+        )
+    }
+}
+
+@Composable
+private fun SettingsTabHeader(
+    currentTab: InGameSettingsTab,
+    isTabEnabled: (InGameSettingsTab) -> Boolean,
+    onTabSelect: (InGameSettingsTab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .padding(horizontal = Dimens.spacingLg, vertical = Dimens.spacingSm)
+            .focusProperties { canFocus = false },
+        horizontalArrangement = Arrangement.spacedBy(Dimens.spacingLg)
+    ) {
+        InGameSettingsTab.entries.forEach { tab ->
+            val enabled = isTabEnabled(tab)
+            SettingsTabIndicator(
+                label = stringResource(tab.labelRes),
+                isSelected = tab == currentTab,
+                isEnabled = enabled,
+                onClick = { if (enabled) onTabSelect(tab) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsTabIndicator(
+    label: String,
+    isSelected: Boolean,
+    isEnabled: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.touchOnly(onClick = onClick)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = when {
+                !isEnabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                isSelected -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .width(32.dp)
+                .height(2.dp)
+                .background(
+                    if (isSelected) MaterialTheme.colorScheme.primary
+                    else Color.Transparent,
+                    RoundedCornerShape(1.dp)
+                )
+        )
+    }
+}

@@ -1,0 +1,66 @@
+package com.nendo.argosy.data.repository
+
+import com.nendo.argosy.data.local.entity.GameEntity
+import com.nendo.argosy.data.model.GameSource
+import com.nendo.argosy.data.storage.FileAccessLayer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
+
+private const val DOWNLOAD_COMPLETE_MARKER = ".download_complete"
+
+/**
+ * Single source of truth for "is this game's payload present on disk." Routes every
+ * filesystem probe through [FileAccessLayer] and forces the IO onto [Dispatchers.IO]
+ * so callers can invoke from arbitrary contexts (ViewModels, observers) without
+ * blocking the main thread. Suspend-only by design - the four call sites all need
+ * a one-shot answer rather than a hot stream.
+ */
+@Singleton
+class DownloadFileStatusRepository @Inject constructor(
+    private val fileAccessLayer: FileAccessLayer
+) {
+
+    suspend fun pathExists(localPath: String?): Boolean {
+        if (localPath.isNullOrBlank()) return false
+        return withContext(Dispatchers.IO) { fileAccessLayer.exists(localPath) }
+    }
+
+    suspend fun isDownloadComplete(localPath: String?): Boolean {
+        if (localPath.isNullOrBlank()) return false
+        return withContext(Dispatchers.IO) {
+            fileAccessLayer.exists(joinMarker(localPath, DOWNLOAD_COMPLETE_MARKER))
+        }
+    }
+
+    /**
+     * Whether a game's content is actually present, as opposed to merely known about.
+     *
+     * Steam is the trap: `source == STEAM` means the account owns it, not that it is
+     * installed. A credentials sync writes every owned title with no `localPath` and
+     * `steamLauncher = "native"`, which is the unspecified sentinel rather than a real
+     * launcher, so [GameEntity.isExternallyManaged] is the test - never a null check on
+     * `steamLauncher`. Anything asking "can the user play this right now" belongs here
+     * so the answer cannot drift between screens.
+     */
+    suspend fun isContentAvailable(game: GameEntity): Boolean = when {
+        game.source == GameSource.ANDROID_APP -> true
+        game.steamAppId != null -> isSteamInstalled(game.isExternallyManaged, game.localPath)
+        game.isExternallyManaged -> true
+        game.localPath != null -> pathExists(game.localPath)
+        else -> false
+    }
+
+    /**
+     * Whether a Steam game can be played: handed to another launcher, or carrying the completion
+     * marker under its install path. The path column alone does not answer it. A download in
+     * flight has a path and no marker, and an install removed behind the app's back keeps its
+     * path until a validation pass clears it. Every tile and every home ordering reads this.
+     */
+    suspend fun isSteamInstalled(isExternallyManaged: Boolean, localPath: String?): Boolean =
+        isExternallyManaged || isDownloadComplete(localPath)
+
+    private fun joinMarker(localPath: String, marker: String): String =
+        "${localPath.trimEnd('/')}/$marker"
+}
