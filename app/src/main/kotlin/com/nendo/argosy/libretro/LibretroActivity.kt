@@ -3616,20 +3616,23 @@ class LibretroActivity : ComponentActivity() {
             snapshot = frame,
             gameDisplayId = currentDisplayId()
         )
-        val home = Intent(Intent.ACTION_MAIN)
-            .addCategory(Intent.CATEGORY_HOME)
-            .setClassName(packageName, "com.nendo.argosy.MainActivity")
-            .addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_NO_USER_ACTION or
-                    Intent.FLAG_ACTIVITY_NO_ANIMATION
-            )
-        val started = runCatching { startActivity(home) }
-        com.nendo.argosy.util.ArcoonTrace.log("test suspend: launcher started=${started.isSuccess} ${started.exceptionOrNull()?.message ?: ""}")
-        if (started.isFailure) {
-            suspendedByHome = false
-            gameSessionManager.onBuiltInResumed(gameId)
-            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = null
+        val moved = runCatching { moveTaskToBack(true) }.getOrDefault(false)
+        com.nendo.argosy.util.ArcoonTrace.log("test suspend: movedToBack=$moved")
+        if (!moved) {
+            val home = Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_HOME)
+                .setClassName(packageName, "com.nendo.argosy.MainActivity")
+                .addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_NO_USER_ACTION or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION
+                )
+            val started = runCatching { startActivity(home) }
+            if (started.isFailure) {
+                suspendedByHome = false
+                gameSessionManager.onBuiltInResumed(gameId)
+                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = null
+            }
         }
     }
 
