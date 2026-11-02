@@ -47,10 +47,15 @@ fun CocoonLeaveVeil(modifier: Modifier = Modifier, blackOnArm: Boolean = true) {
     LaunchedEffect(generation) {
         if (generation == 0) return@LaunchedEffect
         try {
+        if (CocoonSuspendTest.freshAny()) {
+            alpha.snapTo(0f)
+            com.nendo.argosy.util.ArcoonTrace.log("veil skipped: test suspend handoff (display=${blackOnArm})")
+            return@LaunchedEffect
+        }
         if (blackOnArm) alpha.snapTo(1f)
         // Wait for the game to cover us; if it never does (launch failed, or this window stays
         // up beside the game), let go again.
-        val left = kotlinx.coroutines.withTimeoutOrNull(2_500) {
+        val left = kotlinx.coroutines.withTimeoutOrNull(300) {
             lifecycle.currentStateFlow.first { !it.isAtLeast(Lifecycle.State.RESUMED) }
         }
         if (left != null) {
