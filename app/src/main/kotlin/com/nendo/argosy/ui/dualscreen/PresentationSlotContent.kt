@@ -180,6 +180,12 @@ private fun PresentationSlotScene(
         com.nendo.argosy.DualScreenManagerHolder.instance?.gameSessionManager?.sessionState
             ?: kotlinx.coroutines.flow.MutableStateFlow(null)
     }.collectAsState()
+    var lastSuspendedSession by remember {
+        mutableStateOf<com.nendo.argosy.domain.model.multitasking.SuspendedGameSession?>(null)
+    }
+    androidx.compose.runtime.SideEffect {
+        suspendedSession?.let { lastSuspendedSession = it }
+    }
     Box(modifier = modifier) {
         if (slot !is PresentationSlot.Detail) {
             Box(
@@ -272,7 +278,20 @@ private fun PresentationSlotScene(
         }
         // Cocoon: a suspended game waits as a card over the board and the game heroes, moving to
         // the middle when that game is the one highlighted.
-        val suspended = suspendedSession
+        val resumeInProgress = com.nendo.argosy.ui.cocoon.CocoonSuspendTest.resumeInProgress.value
+        LaunchedEffect(slot, resumeInProgress) {
+            if (slot is PresentationSlot.InGame && resumeInProgress) {
+                lastSuspendedSession = null
+                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.finishResumeHandoff()
+            }
+        }
+        LaunchedEffect(resumeInProgress) {
+            if (resumeInProgress) {
+                delay(3_000)
+                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.finishResumeHandoff()
+            }
+        }
+        val suspended = suspendedSession ?: lastSuspendedSession.takeIf { resumeInProgress }
         // TEST suspend: the card (the game's picture at full size) is drawn from the very first
         // frame, before the top screen has settled on Detail; waiting for that showed a frame of
         // the launcher's background between the game and its picture.

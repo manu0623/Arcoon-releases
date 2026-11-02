@@ -81,11 +81,20 @@ object CocoonSuspendTest {
      */
     val growThen = mutableStateOf<(() -> Unit)?>(null)
 
+    val resumeInProgress = mutableStateOf(false)
+
+    fun finishResumeHandoff() {
+        handoff.value = null
+        suspendedGameId = -1L
+        growThen.value = null
+        resumeInProgress.value = false
+    }
+
     /** Length of the grow back into the game. */
-    const val GROW_MS = 300
+    const val GROW_MS = 600
 
     fun clear() {
-        handoff.value = null
+        if (!resumeInProgress.value) handoff.value = null
         suspendedGameId = -1L
         growThen.value = null
     }

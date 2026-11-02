@@ -27,6 +27,7 @@ private const val TAG = "GameSessionManager"
 private const val CLOSE_WAIT_MS = 4_000L
 private const val CLOSE_POLL_MS = 50L
 private const val VEIL_AFTER_GROW_MS = 400L
+private const val RESUME_REQUEST_TIMEOUT_MS = 5_000L
 
 /**
  * Cocoon-style game suspension for Argosy's built-in emulator.
@@ -50,11 +51,25 @@ open class GameSessionManager @Inject constructor(
     private val _processState = MutableStateFlow(ProcessState.IDLE)
     val processState: StateFlow<ProcessState> = _processState.asStateFlow()
 
+    private val _resumeRequest =
+        MutableStateFlow<com.nendo.argosy.ui.dualscreen.BuiltInResumeRequest?>(null)
+    val resumeRequest: StateFlow<com.nendo.argosy.ui.dualscreen.BuiltInResumeRequest?> =
+        _resumeRequest.asStateFlow()
+
     private var timerJob: Job? = null
+    @Volatile private var suspendedDisplayId: Int? = null
 
     /** Called by the built-in emulator when the user leaves it with Home. */
-    fun suspendBuiltIn(gameId: Long, title: String, platformName: String, snapshot: Bitmap?) {
+    fun suspendBuiltIn(
+        gameId: Long,
+        title: String,
+        platformName: String,
+        snapshot: Bitmap?,
+        gameDisplayId: Int? = null
+    ) {
         val now = System.currentTimeMillis()
+        suspendedDisplayId = gameDisplayId
+        _resumeRequest.value = null
         _sessionState.value = SuspendedGameSession(
             gameId = gameId,
             title = title,
@@ -170,8 +185,25 @@ open class GameSessionManager @Inject constructor(
     open fun resumeSession() {
         val session = _sessionState.value ?: return
         if (!session.builtIn) return
+        val resumeRequest = suspendedDisplayId?.let { displayId ->
+            com.nendo.argosy.ui.dualscreen.BuiltInResumeRequest(
+                gameId = session.gameId,
+                displayId = displayId,
+                requestedAtMillis = System.currentTimeMillis()
+            )
+        }
+        if (resumeRequest != null) {
+            _resumeRequest.value = resumeRequest
+            scope.launch {
+                delay(RESUME_REQUEST_TIMEOUT_MS)
+                _resumeRequest.update { current ->
+                    if (current == resumeRequest) null else current
+                }
+            }
+        }
         val test = com.nendo.argosy.ui.cocoon.CocoonSuspendTest
         if (test.suspendedGameId == session.gameId && test.cardShown && test.picture(session.gameId) != null) {
+            test.resumeInProgress.value = true
             // TEST: the card grows back to the game's size first, then the game comes forward.
             if (test.growThen.value == null) {
                 com.nendo.argosy.util.ArcoonTrace.log("test resume: asking the card to grow back first")
@@ -254,9 +286,14 @@ open class GameSessionManager @Inject constructor(
 
     private fun clear(session: SuspendedGameSession) {
         stopTimer()
+        _resumeRequest.update { current -> current?.takeIf { it.gameId != session.gameId } }
         session.screenshotPath?.let { path -> runCatching { File(path).delete() } }
         _sessionState.value = null
         _processState.value = ProcessState.IDLE
+    }
+
+    fun acknowledgeResumeRequest(request: com.nendo.argosy.ui.dualscreen.BuiltInResumeRequest) {
+        _resumeRequest.update { current -> if (current == request) null else current }
     }
 
     private fun builtInTask(): ActivityManager.AppTask? {

@@ -9,6 +9,9 @@ import com.nendo.argosy.data.emulator.RetroArchConfigSource
 import com.nendo.argosy.data.platform.PlatformDefinitions
 import com.nendo.argosy.data.preferences.EmulatorDisplayTarget
 import com.nendo.argosy.data.emulator.SavePathRegistry
+import com.nendo.argosy.data.emulator.InstalledEmulator
+import com.nendo.argosy.data.local.entity.PlatformEntity
+import com.nendo.argosy.data.preferences.UserPreferences
 import com.nendo.argosy.data.remote.jellyfin.JellyfinConnectionState
 import com.nendo.argosy.data.remote.romm.ConnectionState
 import com.nendo.argosy.libretro.LibretroCoreRegistry
@@ -404,140 +407,8 @@ internal fun routeLoadSettings(vm: SettingsViewModel) {
         val platforms = vm.platformRepository.observeAllPlatforms().first()
 
         val installedPackages = installedEmulators.map { it.def.packageName }.toSet()
-
-        val platformConfigs = platforms
-            .map { platform ->
-            val canonicalSlug = PlatformDefinitions.getCanonicalSlug(platform.slug)
-            val defaultConfig = vm.emulatorConfigRepo.getDefaultForPlatform(platform.id)
-            val available = installedEmulators
-                .filter { canonicalSlug in it.def.supportedPlatforms }
-                .filter { prefs.builtinLibretroEnabled || it.def.packageName != EmulatorRegistry.BUILTIN_PACKAGE }
-            val isUserConfigured = defaultConfig != null
-
-            val recommended = EmulatorRegistry.getRecommendedEmulators()[canonicalSlug] ?: emptyList()
-            val downloadable = recommended
-                .mapNotNull { EmulatorRegistry.getById(it) }
-                .filter { it.packageName !in installedPackages && it.downloadUrl != null }
-
-            val rawSelectedEmulatorDef = defaultConfig?.packageName?.let { vm.emulatorDetector.getByPackage(it) }
-            val selectedEmulatorDef = if (!prefs.builtinLibretroEnabled && rawSelectedEmulatorDef?.id == EmulatorRegistry.BUILTIN_ID) {
-                null
-            } else {
-                rawSelectedEmulatorDef
-            }
-            val adHocConfig = defaultConfig?.takeIf { cfg ->
-                val pkg = cfg.packageName
-                selectedEmulatorDef == null && pkg != null &&
-                    !EmulatorRegistry.isKnownPackage(pkg) && vm.installedAppResolver.isAppInstalled(pkg)
-            }
-            val autoResolvedEmulator = vm.emulatorDetector.getPreferredEmulator(platform.slug, prefs.builtinLibretroEnabled)?.def
-            val effectiveEmulatorDef = selectedEmulatorDef ?: if (adHocConfig != null) null else autoResolvedEmulator
-            val isRetroArch = effectiveEmulatorDef?.launchConfig is com.nendo.argosy.data.emulator.LaunchConfig.RetroArch
-            val hasCoreSelection = effectiveEmulatorDef?.launchConfig?.isCoreSelectable == true
-            val isBuiltInEmulator = effectiveEmulatorDef?.launchConfig is com.nendo.argosy.data.emulator.LaunchConfig.BuiltIn
-            val availableCores = if (hasCoreSelection) {
-                EmulatorRegistry.getSelectableCores(platform.slug, isBuiltInEmulator)
-            } else {
-                emptyList()
-            }
-
-            val storedCore = defaultConfig?.coreName
-            val defaultCore = EmulatorRegistry.getDefaultSelectableCore(platform.slug, isBuiltInEmulator)?.id
-            val selectedCore = when {
-                !hasCoreSelection -> null
-                isBuiltInEmulator -> vm.builtinCoreResolver.resolveCoreId(
-                    gameId = null,
-                    platformId = platform.id,
-                    platformSlug = platform.slug
-                )
-                storedCore != null && availableCores.any { it.id == storedCore } -> storedCore
-                else -> defaultCore ?: availableCores.firstOrNull()?.id
-            }
-
-            val emulatorId = effectiveEmulatorDef?.id
-            val emulatorPackage = effectiveEmulatorDef?.packageName
-            val savePathRequest = com.nendo.argosy.data.emulator.savepath.SavePathRequest(
-                platformSlug = platform.slug,
-                emulatorId = emulatorId,
-                emulatorPackage = emulatorPackage,
-                platformId = platform.id
-            )
-            val savePathConfig = vm.savePathAuthority.configFor(savePathRequest)
-            val showSavePath = savePathConfig != null
-            val effectiveSaveConfigId = savePathConfig?.emulatorId
-
-            val userSaveConfig = effectiveSaveConfigId?.let { vm.emulatorDelegate.getEmulatorSaveConfig(it) }
-            val retroArchSave = if (isRetroArch && emulatorId != null && savePathConfig != null) {
-                vm.retroArchPathResolver.describeSavePath(
-                    com.nendo.argosy.data.emulator.RetroArchPathResolver.Request(
-                        emulatorId = emulatorId,
-                        coreName = selectedCore,
-                        romPath = null,
-                    )
-                )
-            } else null
-            val retroArchConfigSource = retroArchSave?.source
-            val savePathResolution = if (savePathConfig != null && retroArchSave == null) {
-                vm.savePathAuthority.resolve(savePathRequest)
-            } else null
-            val isUserSavePathOverride = if (effectiveSaveConfigId == EmulatorRegistry.BUILTIN_ID) {
-                savePathResolution?.source == com.nendo.argosy.data.emulator.savepath.SavePathSource.USER_OVERRIDE
-            } else {
-                userSaveConfig?.isUserOverride == true
-            }
-            val effectiveSavePath = when {
-                savePathConfig == null -> null
-                retroArchSave != null -> when (val display = retroArchSave.path) {
-                    is com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.ContentDirectory ->
-                        vm.context.getString(R.string.settings_shell_router_content_dir_save2)
-                    is com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.Resolved -> display.path
-                    com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.Unknown -> null
-                }
-                else -> savePathResolution?.basePath
-            }
-
-            val savesBesideRom = savePathConfig != null && retroArchSave == null &&
-                vm.emulatorDelegate.savesBesideRom(savePathConfig, platform.slug)
-
-            val extensionOptions = EmulatorRegistry.getExtensionOptionsForPlatform(platform.slug)
-            val selectedExtension = vm.emulatorDelegate.getPreferredExtension(platform.id)
-
-            PlatformEmulatorConfig(
-                platform = platform,
-                selectedEmulator = defaultConfig?.displayName,
-                selectedEmulatorPackage = defaultConfig?.packageName,
-                selectedCore = selectedCore,
-                isUserConfigured = isUserConfigured,
-                availableEmulators = available,
-                downloadableEmulators = downloadable,
-                availableCores = availableCores,
-                effectiveEmulatorIsRetroArch = isRetroArch,
-                effectiveEmulatorId = emulatorId,
-                effectiveEmulatorPackage = effectiveEmulatorDef?.packageName ?: adHocConfig?.packageName,
-                effectiveEmulatorName = effectiveEmulatorDef?.displayName ?: adHocConfig?.displayName,
-                effectiveSavePath = effectiveSavePath,
-                savesBesideRom = savesBesideRom,
-                isUserSavePathOverride = isUserSavePathOverride,
-                isEvaluatedSavePath = savePathResolution?.isEvaluatedDefault == true,
-                isFallbackSavePath = savePathResolution?.isFallbackDefault == true,
-                isPreferredSavePathReadable = savePathResolution?.preferredReadable != false,
-                showSavePath = showSavePath,
-                retroArchConfigStatus = when (retroArchConfigSource) {
-                    is RetroArchConfigSource.Loaded -> RetroArchConfigStatus.LOADED
-                    is RetroArchConfigSource.Unreadable -> RetroArchConfigStatus.UNREADABLE
-                    else -> RetroArchConfigStatus.MISSING
-                },
-                retroArchConfigPath = when (retroArchConfigSource) {
-                    is RetroArchConfigSource.Loaded -> retroArchConfigSource.path
-                    is RetroArchConfigSource.Unreadable -> retroArchConfigSource.path
-                    else -> null
-                },
-                extensionOptions = extensionOptions,
-                selectedExtension = selectedExtension,
-                useFileUri = defaultConfig?.useFileUri ?: false,
-                displayTarget = EmulatorDisplayTarget.fromString(defaultConfig?.displayTarget),
-                hasSecondaryDisplay = vm.displayAffinityHelper.hasSecondaryDisplay
-            )
+        val platformConfigs = platforms.map { platform ->
+            buildPlatformEmulatorConfig(vm, platform, prefs, installedEmulators, installedPackages)
         }
 
         val connectionState = vm.romMRepository.connectionState.value
@@ -557,117 +428,7 @@ internal fun routeLoadSettings(vm: SettingsViewModel) {
         val libraryRegionOptions = vm.gameRepository.getDistinctRegions()
         val iconPacks = vm.iconPackRepository.installedPacks()
 
-        vm.displayDelegate.updateState(DisplayState(
-            themeMode = prefs.themeMode,
-            primaryColor = prefs.primaryColor,
-            secondaryColor = prefs.secondaryColor,
-            surfaceTintBleed = prefs.surfaceTintBleed,
-            surfaceBackdrop = com.nendo.argosy.ui.theme.backdrop.BackdropConfig(
-                enabled = prefs.backdropEnabled,
-                preset = prefs.backdropPreset,
-                cellSize = prefs.backdropCellSize,
-                scatter = prefs.backdropScatter,
-                scaleJitter = prefs.backdropScaleJitter,
-                strength = prefs.backdropStrength,
-                edgeStyle = prefs.backdropEdgeStyle,
-                vertexIcons = prefs.backdropVertexIcons,
-                seed = prefs.backdropSeed,
-                motion = prefs.backdropMotion,
-                motionSpeed = prefs.backdropMotionSpeed,
-                driftAngle = prefs.backdropDriftAngle
-            ),
-            displayFontName = prefs.displayFontName,
-            bodyFontName = prefs.bodyFontName,
-            displayFontScale = prefs.displayFontScale,
-            bodyFontScale = prefs.bodyFontScale,
-            gridDensity = prefs.gridDensity,
-            libraryLayout = prefs.libraryLayout,
-            libraryListStyle = prefs.libraryListStyle,
-            backgroundBlur = prefs.backgroundBlur,
-            backgroundSaturation = prefs.backgroundSaturation,
-            backgroundOpacity = prefs.backgroundOpacity,
-            useGameBackground = prefs.useGameBackground,
-            customBackgroundPath = prefs.customBackgroundPath,
-            homeBackgroundMode = prefs.homeBackgroundMode,
-            homeLayout = prefs.homeLayout,
-            presentationStyle = prefs.presentationStyle,
-            presentationBackgroundBlur = prefs.presentationBackgroundBlur,
-            box3dCapableGames = box3dCapableGames,
-            libraryBoxArt3d = prefs.libraryBoxArt3d,
-            useAccentColorFooter = prefs.useAccentColorFooter,
-            compactFooter = prefs.compactFooter,
-            hideSystemNavigationBar = prefs.hideSystemNavigationBar,
-            hideSystemStatusBar = prefs.hideSystemStatusBar,
-            quickPanelInEmulators = prefs.quickPanelInEmulators,
-            lockScreenArt = prefs.lockScreenArt,
-            homeAppAvailable = prefs.homeAppAvailable,
-            isDefaultHome = vm.displayDelegate.isDefaultHome(),
-            preLaunchRecaps = prefs.preLaunchRecapsEnabled,
-            monthlyRecap = prefs.monthlyRecapEnabled,
-            iconPack = prefs.iconPack,
-            iconPacks = iconPacks,
-            boxArtShape = prefs.boxArtShape,
-            boxArtCornerRadius = prefs.boxArtCornerRadius,
-            boxArtBorderThickness = prefs.boxArtBorderThickness,
-            boxArtBorderStyle = prefs.boxArtBorderStyle,
-            glassBorderTint = prefs.glassBorderTint,
-            boxArtGlowStrength = prefs.boxArtGlowStrength,
-            boxArtOuterEffect = prefs.boxArtOuterEffect,
-            boxArtOuterEffectThickness = prefs.boxArtOuterEffectThickness,
-            glowColorMode = prefs.glowColorMode,
-            boxArtInnerEffect = prefs.boxArtInnerEffect,
-            boxArtInnerEffectThickness = prefs.boxArtInnerEffectThickness,
-            gradientPreset = prefs.gradientPreset,
-            gradientAdvancedMode = prefs.gradientAdvancedMode,
-            systemIconPosition = prefs.systemIconPosition,
-            systemIconPadding = prefs.systemIconPadding,
-            platformIndicatorStyle = prefs.platformIndicatorStyle,
-            platformIndicatorContent = prefs.platformIndicatorContent,
-            libraryDefaultSort = prefs.libraryDefaultSort,
-            libraryDefaultSortDescending = prefs.libraryDefaultSortDescending,
-            sortInstalledFirst = prefs.sortInstalledFirst,
-            sortFavoritesFirst = prefs.sortFavoritesFirst,
-            libraryDefaultSource = prefs.libraryDefaultSource,
-            libraryDefaultPlatformId = prefs.libraryDefaultPlatformId,
-            libraryDefaultRegions = prefs.libraryDefaultRegions,
-            libraryDefaultPlayers = prefs.libraryDefaultPlayers,
-            libraryRegionOptions = libraryRegionOptions,
-            videoWallpaperEnabled = prefs.videoWallpaperEnabled,
-            videoWallpaperDelaySeconds = prefs.videoWallpaperDelaySeconds,
-            videoWallpaperMuted = prefs.videoWallpaperMuted,
-            uiScale = prefs.uiScale,
-            gripReserveMode = prefs.gripReserveMode,
-            gripReservePercent = prefs.gripReservePercent,
-            gripAutoControllers = prefs.gripAutoControllers,
-            ambientLedEnabled = prefs.ambientLedEnabled,
-            ambientLedBrightness = prefs.ambientLedBrightness,
-            ambientLedAudioBrightness = prefs.ambientLedAudioBrightness,
-            ambientLedAudioColors = prefs.ambientLedAudioColors,
-            ambientLedColorMode = prefs.ambientLedColorMode,
-            ambientLedCoverArtEnabled = prefs.ambientLedCoverArtEnabled,
-            ambientLedCustomColor = prefs.ambientLedCustomColor,
-            ambientLedCustomColorHue = prefs.ambientLedCustomColorHue,
-            ambientLedTransitionMs = prefs.ambientLedTransitionMs,
-            ambientLedScreenEnabled = prefs.ambientLedScreenEnabled,
-            ambientLedAchievementFlash = prefs.ambientLedAchievementFlash,
-            ambientLedAvailable = vm.displayDelegate.isAmbientLedAvailable(),
-            hasScreenCapturePermission = vm.displayDelegate.hasScreenCapturePermission(),
-            hasSecondaryDisplay = vm.displayAffinityHelper.hasSecondaryDisplay,
-            hasPhysicalSecondaryDisplay = vm.displayAffinityHelper.hasPhysicalSecondaryDisplay,
-            lidSleepSupported = vm.lidSleepGuard.isSupported,
-            lidSleepEnabled = prefs.lidSleepEnabled,
-            dualScreenEnabled = prefs.dualScreenEnabled,
-            dualScreenMatchSize = vm.libretroSettingsRepo.getBuiltinEmulatorSettings().first().dualScreenMatchSize,
-            dualScreenMatchSizeAvailable = vm.displayAffinityHelper.hasPhysicalSecondaryDisplay &&
-                com.nendo.argosy.libretro.KnownPanels.forModel().isNotEmpty(),
-            displayRoleOverride = prefs.displayRoleOverride,
-            gamesLaunchTarget = prefs.gamesDisplayTarget,
-            appsLaunchTarget = prefs.appsDisplayTarget,
-            installedOnlyHome = prefs.installedOnlyHome,
-            showStatusClock = prefs.showStatusClock,
-            showStatusBattery = prefs.showStatusBattery,
-            showStatusNetwork = prefs.showStatusNetwork
-        ))
+        updateDisplaySettings(vm, prefs, box3dCapableGames, libraryRegionOptions, iconPacks)
         routeRefreshLaunchTargets(vm)
 
         val detectionResult = vm.controlsDelegate.detectActiveController()
@@ -751,6 +512,7 @@ internal fun routeLoadSettings(vm: SettingsViewModel) {
                     st.copy(platformDetail = st.platformDetail.copy(platformIndex = reanchored))
                 }
             }
+
         }
 
         vm.serverDelegate.updateState(ServerState(
@@ -989,4 +751,253 @@ internal fun routeLoadSettings(vm: SettingsViewModel) {
         vm.permissionsDelegate.refreshPermissions()
         vm.biosDelegate.init(vm.viewModelScope)
     }
+}
+
+private suspend fun buildPlatformEmulatorConfig(
+    vm: SettingsViewModel,
+    platform: PlatformEntity,
+    prefs: UserPreferences,
+    installedEmulators: List<InstalledEmulator>,
+    installedPackages: Set<String>
+): PlatformEmulatorConfig {
+    val canonicalSlug = PlatformDefinitions.getCanonicalSlug(platform.slug)
+    val defaultConfig = vm.emulatorConfigRepo.getDefaultForPlatform(platform.id)
+    val available = installedEmulators
+        .filter { canonicalSlug in it.def.supportedPlatforms }
+        .filter { prefs.builtinLibretroEnabled || it.def.packageName != EmulatorRegistry.BUILTIN_PACKAGE }
+    val recommended = EmulatorRegistry.getRecommendedEmulators()[canonicalSlug] ?: emptyList()
+    val downloadable = recommended
+        .mapNotNull { EmulatorRegistry.getById(it) }
+        .filter { it.packageName !in installedPackages && it.downloadUrl != null }
+    val rawSelectedEmulatorDef = defaultConfig?.packageName?.let { vm.emulatorDetector.getByPackage(it) }
+    val selectedEmulatorDef = if (
+        !prefs.builtinLibretroEnabled && rawSelectedEmulatorDef?.id == EmulatorRegistry.BUILTIN_ID
+    ) null else rawSelectedEmulatorDef
+    val adHocConfig = defaultConfig?.takeIf { cfg ->
+        val pkg = cfg.packageName
+        selectedEmulatorDef == null && pkg != null &&
+            !EmulatorRegistry.isKnownPackage(pkg) && vm.installedAppResolver.isAppInstalled(pkg)
+    }
+    val autoResolvedEmulator = vm.emulatorDetector.getPreferredEmulator(
+        platform.slug,
+        prefs.builtinLibretroEnabled
+    )?.def
+    val effectiveEmulatorDef = selectedEmulatorDef ?: if (adHocConfig != null) null else autoResolvedEmulator
+    val isRetroArch = effectiveEmulatorDef?.launchConfig is com.nendo.argosy.data.emulator.LaunchConfig.RetroArch
+    val hasCoreSelection = effectiveEmulatorDef?.launchConfig?.isCoreSelectable == true
+    val isBuiltInEmulator = effectiveEmulatorDef?.launchConfig is com.nendo.argosy.data.emulator.LaunchConfig.BuiltIn
+    val availableCores = if (hasCoreSelection) {
+        EmulatorRegistry.getSelectableCores(platform.slug, isBuiltInEmulator)
+    } else {
+        emptyList()
+    }
+    val storedCore = defaultConfig?.coreName
+    val defaultCore = EmulatorRegistry.getDefaultSelectableCore(platform.slug, isBuiltInEmulator)?.id
+    val selectedCore = when {
+        !hasCoreSelection -> null
+        isBuiltInEmulator -> vm.builtinCoreResolver.resolveCoreId(
+            gameId = null,
+            platformId = platform.id,
+            platformSlug = platform.slug
+        )
+        storedCore != null && availableCores.any { it.id == storedCore } -> storedCore
+        else -> defaultCore ?: availableCores.firstOrNull()?.id
+    }
+    val emulatorId = effectiveEmulatorDef?.id
+    val savePathRequest = com.nendo.argosy.data.emulator.savepath.SavePathRequest(
+        platformSlug = platform.slug,
+        emulatorId = emulatorId,
+        emulatorPackage = effectiveEmulatorDef?.packageName,
+        platformId = platform.id
+    )
+    val savePathConfig = vm.savePathAuthority.configFor(savePathRequest)
+    val effectiveSaveConfigId = savePathConfig?.emulatorId
+    val userSaveConfig = effectiveSaveConfigId?.let { vm.emulatorDelegate.getEmulatorSaveConfig(it) }
+    val retroArchSave = if (isRetroArch && emulatorId != null && savePathConfig != null) {
+        vm.retroArchPathResolver.describeSavePath(
+            com.nendo.argosy.data.emulator.RetroArchPathResolver.Request(
+                emulatorId = emulatorId,
+                coreName = selectedCore,
+                romPath = null
+            )
+        )
+    } else null
+    val retroArchConfigSource = retroArchSave?.source
+    val savePathResolution = if (savePathConfig != null && retroArchSave == null) {
+        vm.savePathAuthority.resolve(savePathRequest)
+    } else null
+    val isUserSavePathOverride = if (effectiveSaveConfigId == EmulatorRegistry.BUILTIN_ID) {
+        savePathResolution?.source == com.nendo.argosy.data.emulator.savepath.SavePathSource.USER_OVERRIDE
+    } else {
+        userSaveConfig?.isUserOverride == true
+    }
+    val effectiveSavePath = when {
+        savePathConfig == null -> null
+        retroArchSave != null -> when (val display = retroArchSave.path) {
+            is com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.ContentDirectory ->
+                vm.context.getString(R.string.settings_shell_router_content_dir_save2)
+            is com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.Resolved -> display.path
+            com.nendo.argosy.data.emulator.RetroArchPathResolver.DisplayPath.Unknown -> null
+        }
+        else -> savePathResolution?.basePath
+    }
+    val savesBesideRom = savePathConfig != null && retroArchSave == null &&
+        vm.emulatorDelegate.savesBesideRom(savePathConfig, platform.slug)
+
+    return PlatformEmulatorConfig(
+        platform = platform,
+        selectedEmulator = defaultConfig?.displayName,
+        selectedEmulatorPackage = defaultConfig?.packageName,
+        selectedCore = selectedCore,
+        isUserConfigured = defaultConfig != null,
+        availableEmulators = available,
+        downloadableEmulators = downloadable,
+        availableCores = availableCores,
+        effectiveEmulatorIsRetroArch = isRetroArch,
+        effectiveEmulatorId = emulatorId,
+        effectiveEmulatorPackage = effectiveEmulatorDef?.packageName ?: adHocConfig?.packageName,
+        effectiveEmulatorName = effectiveEmulatorDef?.displayName ?: adHocConfig?.displayName,
+        effectiveSavePath = effectiveSavePath,
+        savesBesideRom = savesBesideRom,
+        isUserSavePathOverride = isUserSavePathOverride,
+        isEvaluatedSavePath = savePathResolution?.isEvaluatedDefault == true,
+        isFallbackSavePath = savePathResolution?.isFallbackDefault == true,
+        isPreferredSavePathReadable = savePathResolution?.preferredReadable != false,
+        showSavePath = savePathConfig != null,
+        retroArchConfigStatus = when (retroArchConfigSource) {
+            is RetroArchConfigSource.Loaded -> RetroArchConfigStatus.LOADED
+            is RetroArchConfigSource.Unreadable -> RetroArchConfigStatus.UNREADABLE
+            else -> RetroArchConfigStatus.MISSING
+        },
+        retroArchConfigPath = when (retroArchConfigSource) {
+            is RetroArchConfigSource.Loaded -> retroArchConfigSource.path
+            is RetroArchConfigSource.Unreadable -> retroArchConfigSource.path
+            else -> null
+        },
+        extensionOptions = EmulatorRegistry.getExtensionOptionsForPlatform(platform.slug),
+        selectedExtension = vm.emulatorDelegate.getPreferredExtension(platform.id),
+        useFileUri = defaultConfig?.useFileUri ?: false,
+        displayTarget = EmulatorDisplayTarget.fromString(defaultConfig?.displayTarget),
+        hasSecondaryDisplay = vm.displayAffinityHelper.hasSecondaryDisplay
+    )
+}
+
+private suspend fun updateDisplaySettings(
+    vm: SettingsViewModel,
+    prefs: UserPreferences,
+    box3dCapableGames: Int,
+    libraryRegionOptions: List<String>,
+    iconPacks: List<com.nendo.argosy.data.model.IconPack>
+) {
+    vm.displayDelegate.updateState(DisplayState(
+        themeMode = prefs.themeMode,
+        primaryColor = prefs.primaryColor,
+        secondaryColor = prefs.secondaryColor,
+        surfaceTintBleed = prefs.surfaceTintBleed,
+        surfaceBackdrop = com.nendo.argosy.ui.theme.backdrop.BackdropConfig(
+            enabled = prefs.backdropEnabled,
+            preset = prefs.backdropPreset,
+            cellSize = prefs.backdropCellSize,
+            scatter = prefs.backdropScatter,
+            scaleJitter = prefs.backdropScaleJitter,
+            strength = prefs.backdropStrength,
+            edgeStyle = prefs.backdropEdgeStyle,
+            vertexIcons = prefs.backdropVertexIcons,
+            seed = prefs.backdropSeed,
+            motion = prefs.backdropMotion,
+            motionSpeed = prefs.backdropMotionSpeed,
+            driftAngle = prefs.backdropDriftAngle
+        ),
+        displayFontName = prefs.displayFontName,
+        bodyFontName = prefs.bodyFontName,
+        displayFontScale = prefs.displayFontScale,
+        bodyFontScale = prefs.bodyFontScale,
+        gridDensity = prefs.gridDensity,
+        libraryLayout = prefs.libraryLayout,
+        libraryListStyle = prefs.libraryListStyle,
+        backgroundBlur = prefs.backgroundBlur,
+        backgroundSaturation = prefs.backgroundSaturation,
+        backgroundOpacity = prefs.backgroundOpacity,
+        useGameBackground = prefs.useGameBackground,
+        customBackgroundPath = prefs.customBackgroundPath,
+        homeBackgroundMode = prefs.homeBackgroundMode,
+        homeLayout = prefs.homeLayout,
+        presentationStyle = prefs.presentationStyle,
+        presentationBackgroundBlur = prefs.presentationBackgroundBlur,
+        box3dCapableGames = box3dCapableGames,
+        libraryBoxArt3d = prefs.libraryBoxArt3d,
+        useAccentColorFooter = prefs.useAccentColorFooter,
+        compactFooter = prefs.compactFooter,
+        hideSystemNavigationBar = prefs.hideSystemNavigationBar,
+        hideSystemStatusBar = prefs.hideSystemStatusBar,
+        quickPanelInEmulators = prefs.quickPanelInEmulators,
+        lockScreenArt = prefs.lockScreenArt,
+        homeAppAvailable = prefs.homeAppAvailable,
+        isDefaultHome = vm.displayDelegate.isDefaultHome(),
+        preLaunchRecaps = prefs.preLaunchRecapsEnabled,
+        monthlyRecap = prefs.monthlyRecapEnabled,
+        iconPack = prefs.iconPack,
+        iconPacks = iconPacks,
+        boxArtShape = prefs.boxArtShape,
+        boxArtCornerRadius = prefs.boxArtCornerRadius,
+        boxArtBorderThickness = prefs.boxArtBorderThickness,
+        boxArtBorderStyle = prefs.boxArtBorderStyle,
+        glassBorderTint = prefs.glassBorderTint,
+        boxArtGlowStrength = prefs.boxArtGlowStrength,
+        boxArtOuterEffect = prefs.boxArtOuterEffect,
+        boxArtOuterEffectThickness = prefs.boxArtOuterEffectThickness,
+        glowColorMode = prefs.glowColorMode,
+        boxArtInnerEffect = prefs.boxArtInnerEffect,
+        boxArtInnerEffectThickness = prefs.boxArtInnerEffectThickness,
+        gradientPreset = prefs.gradientPreset,
+        gradientAdvancedMode = prefs.gradientAdvancedMode,
+        systemIconPosition = prefs.systemIconPosition,
+        systemIconPadding = prefs.systemIconPadding,
+        platformIndicatorStyle = prefs.platformIndicatorStyle,
+        platformIndicatorContent = prefs.platformIndicatorContent,
+        libraryDefaultSort = prefs.libraryDefaultSort,
+        libraryDefaultSortDescending = prefs.libraryDefaultSortDescending,
+        sortInstalledFirst = prefs.sortInstalledFirst,
+        sortFavoritesFirst = prefs.sortFavoritesFirst,
+        libraryDefaultSource = prefs.libraryDefaultSource,
+        libraryDefaultPlatformId = prefs.libraryDefaultPlatformId,
+        libraryDefaultRegions = prefs.libraryDefaultRegions,
+        libraryDefaultPlayers = prefs.libraryDefaultPlayers,
+        libraryRegionOptions = libraryRegionOptions,
+        videoWallpaperEnabled = prefs.videoWallpaperEnabled,
+        videoWallpaperDelaySeconds = prefs.videoWallpaperDelaySeconds,
+        videoWallpaperMuted = prefs.videoWallpaperMuted,
+        uiScale = prefs.uiScale,
+        gripReserveMode = prefs.gripReserveMode,
+        gripReservePercent = prefs.gripReservePercent,
+        gripAutoControllers = prefs.gripAutoControllers,
+        ambientLedEnabled = prefs.ambientLedEnabled,
+        ambientLedBrightness = prefs.ambientLedBrightness,
+        ambientLedAudioBrightness = prefs.ambientLedAudioBrightness,
+        ambientLedAudioColors = prefs.ambientLedAudioColors,
+        ambientLedColorMode = prefs.ambientLedColorMode,
+        ambientLedCoverArtEnabled = prefs.ambientLedCoverArtEnabled,
+        ambientLedCustomColor = prefs.ambientLedCustomColor,
+        ambientLedCustomColorHue = prefs.ambientLedCustomColorHue,
+        ambientLedTransitionMs = prefs.ambientLedTransitionMs,
+        ambientLedScreenEnabled = prefs.ambientLedScreenEnabled,
+        ambientLedAchievementFlash = prefs.ambientLedAchievementFlash,
+        ambientLedAvailable = vm.displayDelegate.isAmbientLedAvailable(),
+        hasScreenCapturePermission = vm.displayDelegate.hasScreenCapturePermission(),
+        hasSecondaryDisplay = vm.displayAffinityHelper.hasSecondaryDisplay,
+        hasPhysicalSecondaryDisplay = vm.displayAffinityHelper.hasPhysicalSecondaryDisplay,
+        lidSleepSupported = vm.lidSleepGuard.isSupported,
+        lidSleepEnabled = prefs.lidSleepEnabled,
+        dualScreenEnabled = prefs.dualScreenEnabled,
+        dualScreenMatchSize = vm.libretroSettingsRepo.getBuiltinEmulatorSettings().first().dualScreenMatchSize,
+        dualScreenMatchSizeAvailable = vm.displayAffinityHelper.hasPhysicalSecondaryDisplay &&
+            com.nendo.argosy.libretro.KnownPanels.forModel().isNotEmpty(),
+        displayRoleOverride = prefs.displayRoleOverride,
+        gamesLaunchTarget = prefs.gamesDisplayTarget,
+        appsLaunchTarget = prefs.appsDisplayTarget,
+        installedOnlyHome = prefs.installedOnlyHome,
+        showStatusClock = prefs.showStatusClock,
+        showStatusBattery = prefs.showStatusBattery,
+        showStatusNetwork = prefs.showStatusNetwork
+    ))
 }

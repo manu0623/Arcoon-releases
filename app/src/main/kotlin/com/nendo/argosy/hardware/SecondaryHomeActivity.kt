@@ -217,8 +217,12 @@ class SecondaryHomeActivity :
     private fun CompanionRoleContent() {
         val gameActive by dsm.gameOnScreen.collectAsState()
         val gameDisplay by dsm.emulatorDisplay.collectAsState()
+        val resumeRequest by dsm.builtInResumeRequest.collectAsState()
         val hereDisplayId = androidx.core.content.ContextCompat.getDisplayOrDefault(this).displayId
         val showsDashboard = gameActive && dsm.primaryShowsDashboard(hereDisplayId, gameDisplay)
+        val resumeTargetsDashboard = resumeRequest?.let {
+            dsm.primaryWillShowDashboard(hereDisplayId, it.displayId)
+        } == true
         val rolesSwapped by dsm.isRolesSwapped.collectAsState()
         val launcherShown = !rolesSwapped && !showsDashboard
         androidx.compose.runtime.LaunchedEffect(launcherShown, showsDashboard) {
@@ -227,11 +231,19 @@ class SecondaryHomeActivity :
             )
         }
         val handoffMs = com.nendo.argosy.ui.dualscreen.companionHandoffMs(
-            showsDashboard = showsDashboard,
+            showsDashboard = showsDashboard || resumeTargetsDashboard,
             reduced = com.nendo.argosy.ui.theme.LocalMotionTier.current ==
                 com.nendo.argosy.ui.theme.MotionTier.Reduced,
             veilMs = com.nendo.argosy.ui.theme.generated.ComponentDefaults.LaunchOverlay.veilMs
         )
+        androidx.compose.runtime.LaunchedEffect(showsDashboard, resumeRequest) {
+            if (showsDashboard) {
+                resumeRequest?.let {
+                    kotlinx.coroutines.delay(handoffMs.toLong())
+                    dsm.acknowledgeBuiltInResumeRequest(it)
+                }
+            }
+        }
         // A screen swap slides instead of cross-fading (the fade under the slide made it flicker).
         val swapping = com.nendo.argosy.ui.cocoon.cocoonSwapRecent()
         com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = launcherShown) {
@@ -240,18 +252,27 @@ class SecondaryHomeActivity :
              * threw away where you were: after a suspend it was rebuilt from the main menu and
              * then jumped to the last game, which showed as a reload on the lower screen.
              */
-            val launcherAlpha by androidx.compose.animation.core.animateFloatAsState(
-                targetValue = if (launcherShown) 1f else 0f,
-                animationSpec = if (launcherShown || swapping) androidx.compose.animation.core.snap()
-                else androidx.compose.animation.core.tween(handoffMs),
-                label = "companion-launcher-alpha"
+             val launcherAlpha by androidx.compose.animation.core.animateFloatAsState(
+                 targetValue = if (launcherShown) 1f else 0f,
+                 animationSpec = if (launcherShown || swapping) androidx.compose.animation.core.snap()
+                 else androidx.compose.animation.core.tween(handoffMs),
+                 label = "companion-launcher-alpha"
+             )
+            val blackHoldAlpha by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (showsDashboard || resumeTargetsDashboard) 1f else 0f,
+                animationSpec = if (resumeTargetsDashboard) {
+                    androidx.compose.animation.core.tween(handoffMs)
+                } else {
+                    androidx.compose.animation.core.snap()
+                },
+                label = "companion-resume-black-hold"
             )
             androidx.compose.foundation.layout.Box(
                 modifier = androidx.compose.ui.Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = launcherAlpha }
                     .then(
-                        if (launcherShown) androidx.compose.ui.Modifier
+                        if (launcherShown && !resumeTargetsDashboard) androidx.compose.ui.Modifier
                         else androidx.compose.ui.Modifier.pointerInput(Unit) {
                             awaitPointerEventScope {
                                 while (true) {
@@ -270,9 +291,24 @@ class SecondaryHomeActivity :
                     )
                 }
             }
+            if (blackHoldAlpha > 0f) {
+                androidx.compose.foundation.layout.Box(
+                    modifier = androidx.compose.ui.Modifier
+                        .fillMaxSize()
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = blackHoldAlpha))
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                        .changes.forEach { it.consume() }
+                                }
+                            }
+                        }
+                )
+            }
             androidx.compose.animation.AnimatedVisibility(
                 visible = !launcherShown,
-                enter = if (swapping) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(
+                enter = if (swapping || showsDashboard) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(
                     androidx.compose.animation.core.tween(handoffMs)
                 ),
                 exit = if (swapping || rolesSwapped) androidx.compose.animation.ExitTransition.None
@@ -317,13 +353,6 @@ class SecondaryHomeActivity :
                 arrivalMs =
                     com.nendo.argosy.ui.theme.generated.ComponentDefaults.LaunchOverlay.arrivalMs
             )
-            if (showsDashboard) {
-                androidx.compose.foundation.layout.Box(
-                    modifier = androidx.compose.ui.Modifier
-                        .fillMaxSize()
-                        .background(androidx.compose.ui.graphics.Color.Black)
-                )
-            }
             androidx.compose.animation.AnimatedVisibility(
                 visible = rendered != null,
                 enter = androidx.compose.animation.fadeIn(
