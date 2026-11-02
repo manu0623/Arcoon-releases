@@ -86,6 +86,7 @@ object CocoonOptimizer {
         "com.nendo.argosy.ui.screens.library.LibraryViewModel",
         "com.nendo.argosy.ui.screens.settings.SettingsScreenKt",
         "com.nendo.argosy.ui.screens.settings.SettingsViewModel",
+        "com.nendo.argosy.ui.screens.settings.SettingsInitRouterKt",
         "com.nendo.argosy.ui.screens.gamedetail.GameDetailScreenKt",
         "com.nendo.argosy.ui.screens.gamedetail.GameDetailViewModel",
         "com.nendo.argosy.ui.screens.apps.AppsScreenKt",

@@ -3597,6 +3597,7 @@ class LibretroActivity : ComponentActivity() {
         com.nendo.argosy.util.ArcoonTrace.log("test suspend: button pressed")
         com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(-1L)
         suspendedByHome = true
+        com.nendo.argosy.ui.cocoon.CocoonSuspendTest.resumeInProgress.value = false
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.suspendedGameId = gameId
         val frame = captureFrameOrNull()
         if (frame != null) {
@@ -3612,7 +3613,8 @@ class LibretroActivity : ComponentActivity() {
             gameId = gameId,
             title = gameName,
             platformName = platformSlug,
-            snapshot = frame
+            snapshot = frame,
+            gameDisplayId = currentDisplayId()
         )
         val home = Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
@@ -3778,7 +3780,8 @@ class LibretroActivity : ComponentActivity() {
                 gameId = gameId,
                 title = gameName,
                 platformName = platformSlug,
-                snapshot = captureFrameOrNull()
+                snapshot = captureFrameOrNull(),
+                gameDisplayId = currentDisplayId()
             )
             // Android slides the game away on Home and an app cannot stop that, so the game goes
             // black the instant Home is pressed (its last frame is already saved for the card):

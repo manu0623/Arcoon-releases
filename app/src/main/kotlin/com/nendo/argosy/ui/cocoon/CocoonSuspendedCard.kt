@@ -59,13 +59,12 @@ fun CocoonSuspendedCard(
     // settled on this game, instead of heading for the corner and turning back.
     val landing = CocoonSuspendTest.picture(session.gameId)
         ?.let { System.currentTimeMillis() - it.at < 900 } == true
+    val resumeInProgress = CocoonSuspendTest.resumeInProgress.value
     val p by animateFloatAsState(
-        targetValue = if (centered || landing) 1f else 0f,
+        targetValue = if (centered || landing || resumeInProgress) 1f else 0f,
         animationSpec = tween(300, easing = FastOutSlowInEasing),
         label = "cocoon-suspended-card"
     )
-    // Just suspended: the game's last frame still fills the screen, then settles into the card,
-    // so leaving a game reads as one motion rather than a cut to black.
     val arrive = androidx.compose.runtime.remember(session.gameId, session.startTimeMillis) {
         androidx.compose.animation.core.Animatable(
             if (System.currentTimeMillis() - session.startTimeMillis < 2_500) 0f else 1f
@@ -81,22 +80,17 @@ fun CocoonSuspendedCard(
         if (counted) CocoonSuspendTest.cardAppeared()
         onDispose { if (counted) CocoonSuspendTest.cardGone() }
     }
-    // TEST resume: grow back to the game's exact size, then bring the game forward over it.
     val grow = CocoonSuspendTest.growThen.value
-    androidx.compose.runtime.LaunchedEffect(grow) {
-        val go = grow ?: return@LaunchedEffect
+    androidx.compose.runtime.LaunchedEffect(resumeInProgress, grow) {
+        if (!resumeInProgress) return@LaunchedEffect
         com.nendo.argosy.util.ArcoonTrace.log("test resume: card growing back to the game")
         arrive.animateTo(0f, tween(CocoonSuspendTest.GROW_MS, easing = FastOutSlowInEasing))
-        go()
-        CocoonSuspendTest.growThen.value = null
-        // if the game never came forward, settle back into the card rather than stay full size
-        kotlinx.coroutines.delay(1_500)
-        arrive.animateTo(1f, tween(340, easing = FastOutSlowInEasing))
+        grow?.invoke()
     }
-    androidx.compose.runtime.LaunchedEffect(arrive) {
+    androidx.compose.runtime.LaunchedEffect(arrive, handoff, resumeInProgress) {
+        if (resumeInProgress) return@LaunchedEffect
         if (arrivingFromGame) {
             if (arrive.value < 1f) {
-                // Wait for the game window to vanish off the identical picture, then shrink.
                 kotlinx.coroutines.delay(CocoonSuspendTest.GAME_HOLD_MS + 60)
                 com.nendo.argosy.util.ArcoonTrace.log("test suspend: picture shrinking into the card")
             }

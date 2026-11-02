@@ -39,6 +39,22 @@ class CompanionSlotGateTest {
     }
 
     @Test
+    fun `resume only targets the dashboard on the game's showcase display`() {
+        assertEquals(
+            true,
+            primaryWillShowDashboard(primaryDisplayId = 4, gameDisplayId = 0, showcaseDisplayId = 0)
+        )
+        assertEquals(
+            false,
+            primaryWillShowDashboard(primaryDisplayId = 4, gameDisplayId = 4, showcaseDisplayId = 0)
+        )
+        assertEquals(
+            false,
+            primaryWillShowDashboard(primaryDisplayId = 4, gameDisplayId = null, showcaseDisplayId = 0)
+        )
+    }
+
+    @Test
     fun `the dashboard fades in over the hold for the arrival duration`() {
         assertEquals(400, dashboardArrivalMs(showsDashboard = true, reduced = false, arrivalMs = 400))
     }

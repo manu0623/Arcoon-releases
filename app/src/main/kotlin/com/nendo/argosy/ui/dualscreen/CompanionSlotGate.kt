@@ -1,5 +1,11 @@
 package com.nendo.argosy.ui.dualscreen
 
+data class BuiltInResumeRequest(
+    val gameId: Long,
+    val displayId: Int,
+    val requestedAtMillis: Long
+)
+
 /**
  * The slot the companion renders, or null to hold black: while [showsDashboard], any slot but
  * [PresentationSlot.InGame] is held back.
@@ -13,6 +19,15 @@ fun companionSlotToRender(showsDashboard: Boolean, slot: PresentationSlot): Pres
  */
 fun dashboardArrivalMs(showsDashboard: Boolean, reduced: Boolean, arrivalMs: Int): Int =
     if (showsDashboard && !reduced) arrivalMs else 0
+
+fun primaryWillShowDashboard(
+    primaryDisplayId: Int?,
+    gameDisplayId: Int?,
+    showcaseDisplayId: Int?
+): Boolean {
+    if (gameDisplayId == null || gameDisplayId == primaryDisplayId) return false
+    return showcaseDisplayId == null || gameDisplayId == showcaseDisplayId
+}
 
 /**
  * How long the companion's launcher dissolves into the black hold when a game goes active:

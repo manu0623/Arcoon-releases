@@ -1556,10 +1556,25 @@ class DualScreenManager(
     ): Boolean {
         // a game left suspended with Home isn't on screen: the launcher takes both screens back
         if (!gameOnScreen.value) return false
-        val gameDisplay = gameDisplayId ?: return false
-        if (gameDisplay == primaryDisplayId) return false
-        val showcase = showcaseDisplayId() ?: return true
-        return gameDisplay == showcase
+        return com.nendo.argosy.ui.dualscreen.primaryWillShowDashboard(
+            primaryDisplayId,
+            gameDisplayId,
+            showcaseDisplayId()
+        )
+    }
+
+    fun primaryWillShowDashboard(primaryDisplayId: Int?, gameDisplayId: Int?): Boolean =
+        com.nendo.argosy.ui.dualscreen.primaryWillShowDashboard(
+            primaryDisplayId,
+            gameDisplayId,
+            showcaseDisplayId()
+        )
+
+    val builtInResumeRequest: StateFlow<com.nendo.argosy.ui.dualscreen.BuiltInResumeRequest?> =
+        gameSessionManager?.resumeRequest ?: kotlinx.coroutines.flow.MutableStateFlow(null)
+
+    fun acknowledgeBuiltInResumeRequest(request: com.nendo.argosy.ui.dualscreen.BuiltInResumeRequest) {
+        gameSessionManager?.acknowledgeResumeRequest(request)
     }
 
     /**
