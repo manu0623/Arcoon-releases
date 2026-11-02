@@ -213,7 +213,50 @@ sealed interface CocoonDockTarget {
 fun cocoonDockTarget(slot: Int, apps: List<String>): CocoonDockTarget = when (slot) {
     0 -> CocoonDockTarget.AllApps
     COCOON_DOCK_SIZE - 1 -> CocoonDockTarget.Pods
-    else -> apps.getOrNull(slot - 1)?.let { CocoonDockTarget.App(it) } ?: CocoonDockTarget.AddApp
+    else -> CocoonDockSlots.arrange(apps).getOrNull(slot - 1)?.let { CocoonDockTarget.App(it) } ?: CocoonDockTarget.AddApp
+}
+
+/**
+ * Which dock slot each pinned app sits in. The pinned apps are one list shared with Argosy, with
+ * no gaps, so a new app always went straight after the last one whatever slot was picked; this
+ * remembers the slot itself. Apps with no remembered slot fill the first free ones.
+ */
+object CocoonDockSlots {
+    private var prefs: android.content.SharedPreferences? = null
+    private val slots = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    fun attach(context: android.content.Context) {
+        if (prefs != null) return
+        val p = context.applicationContext.getSharedPreferences("cocoon_dock_slots", android.content.Context.MODE_PRIVATE)
+        prefs = p
+        p.all.forEach { (pkg, value) -> (value as? Int)?.let { slots[pkg] = it } }
+    }
+
+    /** Puts [packageName] in app slot [appSlot] (0-based, after All apps). */
+    fun place(packageName: String, appSlot: Int) {
+        if (appSlot !in 0 until COCOON_DOCK_SLOTS) return
+        slots.entries.removeAll { it.value == appSlot && it.key != packageName }
+        slots[packageName] = appSlot
+        prefs?.edit()?.apply {
+            clear()
+            slots.forEach { (pkg, slot) -> putInt(pkg, slot) }
+        }?.apply()
+    }
+
+    /** The pinned apps laid out by slot; null where a slot is empty. */
+    fun arrange(apps: List<String>): List<String?> {
+        val out = arrayOfNulls<String>(COCOON_DOCK_SLOTS)
+        val rest = mutableListOf<String>()
+        apps.forEach { pkg ->
+            val slot = slots[pkg]
+            if (slot != null && slot in out.indices && out[slot] == null) out[slot] = pkg else rest += pkg
+        }
+        rest.forEach { pkg ->
+            val free = out.indexOfFirst { it == null }
+            if (free >= 0) out[free] = pkg
+        }
+        return out.toList()
+    }
 }
 
 /** The board is three rows tall and grows to the right, like Cocoon's. */

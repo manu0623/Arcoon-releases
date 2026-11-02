@@ -55,8 +55,12 @@ fun CocoonSuspendedCard(
     centered: Boolean,
     modifier: Modifier = Modifier
 ) {
+    // TEST suspend: aim for the middle from the first frame, before the top screen has
+    // settled on this game, instead of heading for the corner and turning back.
+    val landing = CocoonSuspendTest.picture(session.gameId)
+        ?.let { System.currentTimeMillis() - it.at < 900 } == true
     val p by animateFloatAsState(
-        targetValue = if (centered) 1f else 0f,
+        targetValue = if (centered || landing) 1f else 0f,
         animationSpec = tween(300, easing = FastOutSlowInEasing),
         label = "cocoon-suspended-card"
     )
@@ -67,7 +71,38 @@ fun CocoonSuspendedCard(
             if (System.currentTimeMillis() - session.startTimeMillis < 2_500) 0f else 1f
         )
     }
+    // TEST suspend button: the game's own last frame, handed over at the game's exact size.
+    val arrivingFromGame = androidx.compose.runtime.remember(session.gameId, session.startTimeMillis) {
+        CocoonSuspendTest.fresh(session.gameId) != null
+    }
+    val handoff = CocoonSuspendTest.picture(session.gameId)
+    androidx.compose.runtime.DisposableEffect(session.gameId, handoff != null) {
+        val counted = handoff != null
+        if (counted) CocoonSuspendTest.cardAppeared()
+        onDispose { if (counted) CocoonSuspendTest.cardGone() }
+    }
+    // TEST resume: grow back to the game's exact size, then bring the game forward over it.
+    val grow = CocoonSuspendTest.growThen.value
+    androidx.compose.runtime.LaunchedEffect(grow) {
+        val go = grow ?: return@LaunchedEffect
+        com.nendo.argosy.util.ArcoonTrace.log("test resume: card growing back to the game")
+        arrive.animateTo(0f, tween(CocoonSuspendTest.GROW_MS, easing = FastOutSlowInEasing))
+        go()
+        CocoonSuspendTest.growThen.value = null
+        // if the game never came forward, settle back into the card rather than stay full size
+        kotlinx.coroutines.delay(1_500)
+        arrive.animateTo(1f, tween(340, easing = FastOutSlowInEasing))
+    }
     androidx.compose.runtime.LaunchedEffect(arrive) {
+        if (arrivingFromGame) {
+            if (arrive.value < 1f) {
+                // Wait for the game window to vanish off the identical picture, then shrink.
+                kotlinx.coroutines.delay(CocoonSuspendTest.GAME_HOLD_MS + 60)
+                com.nendo.argosy.util.ArcoonTrace.log("test suspend: picture shrinking into the card")
+            }
+            arrive.animateTo(1f, tween(440, easing = FastOutSlowInEasing))
+            return@LaunchedEffect
+        }
         // Wait out the black hold that hides Android's slide, then shrink into place.
         val age = System.currentTimeMillis() - session.startTimeMillis
         if (arrive.value < 1f) {
@@ -90,22 +125,54 @@ fun CocoonSuspendedCard(
         val centerX = (w - centerW) / 2
         val centerY = (h - centerH) / 2
         val a = arrive.value
-        val cardW = lerp(w, lerp(cornerW, centerW, p), a)
-        val cardH = lerp(h, lerp(cornerH, centerH, p), a)
+        // Where the card starts: the whole screen, or for the test handoff the game's picture
+        // fitted to the screen exactly as the game drew it (black bars around it).
+        val fitWide = handoff != null && handoff.aspect > w / h
+        val startW = when {
+            handoff == null -> w
+            fitWide -> w
+            else -> h * handoff.aspect
+        }
+        val startH = when {
+            handoff == null -> h
+            fitWide -> w / handoff.aspect
+            else -> h
+        }
+        val startX = (w - startW) / 2
+        val startY = (h - startH) / 2
+        if (handoff != null && a < 1f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = 1f - a }
+                    .background(Color.Black)
+            )
+        }
+        val cardW = lerp(startW, lerp(cornerW, centerW, p), a)
+        val cardH = lerp(startH, lerp(cornerH, centerH, p), a)
         val radius = lerp(0.dp, lerp(14.dp, 20.dp, p), a)
         val shape = RoundedCornerShape(radius)
 
         Box(
             modifier = Modifier
-                .absoluteOffset(x = lerp(0.dp, lerp(cornerX, centerX, p), a), y = lerp(0.dp, lerp(cornerY, centerY, p), a))
+                .absoluteOffset(x = lerp(startX, lerp(cornerX, centerX, p), a), y = lerp(startY, lerp(cornerY, centerY, p), a))
                 .size(width = cardW, height = cardH)
                 .shadow(14.dp, shape)
                 .clip(shape)
-                .background(Color(0xFF1C1C1F))
+                .background(if (handoff != null && a < 1f) Color.Black else Color(0xFF1C1C1F))
                 .border(1.dp, Color.White.copy(alpha = 0.08f), shape)
                 .padding(lerp(0.dp, lerp(6.dp, 0.dp, p), a))
         ) {
-            if (image != null) {
+            if (handoff != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = handoff.picture,
+                    contentDescription = session.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(lerp(0.dp, lerp(10.dp, 20.dp, p), a)))
+                )
+            } else if (image != null) {
                 AsyncImage(
                     model = com.nendo.argosy.ui.common.rememberFileImageModel(image),
                     contentDescription = session.title,

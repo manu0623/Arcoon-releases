@@ -53,7 +53,6 @@ internal sealed class ThemeItem(val key: String, val section: String) {
 
     data object CocoonThemes : ThemeItem("cocoonThemes", "identity")
     data object CocoonPersonal : ThemeItem("cocoonPersonal", "identity")
-    data object CocoonJingles : ThemeItem("cocoonJingles", "identity")
     data object Backdrop : ThemeItem("backdrop", "identity")
     data object Fonts : ThemeItem("fonts", "identity")
     data object IconPack : ThemeItem("iconPack", "identity")
@@ -70,7 +69,7 @@ internal sealed class ThemeItem(val key: String, val section: String) {
                 AppearanceHeader,
                 Mode, AccentColor, AccentFooter, SecondaryColor, TintBleed,
                 IdentitySpacer, IdentityHeader,
-                CocoonThemes, CocoonPersonal, CocoonJingles, Backdrop, Fonts, IconPack
+                CocoonThemes, CocoonPersonal, Backdrop, Fonts, IconPack
             )
     }
 }
@@ -209,14 +208,6 @@ fun ThemeSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
                 subtitle = stringResource(R.string.cocoon_personal_subtitle),
                 isFocused = isFocused(item),
                 onClick = { openFrom(item) { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true } }
-            )
-
-            ThemeItem.CocoonJingles -> NavigationPreference(
-                icon = Icons.Outlined.MusicNote,
-                title = stringResource(R.string.cocoon_jingles),
-                subtitle = stringResource(R.string.cocoon_jingles_subtitle),
-                isFocused = isFocused(item),
-                onClick = { openFrom(item) { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true } }
             )
 
             ThemeItem.Backdrop -> NavigationPreference(

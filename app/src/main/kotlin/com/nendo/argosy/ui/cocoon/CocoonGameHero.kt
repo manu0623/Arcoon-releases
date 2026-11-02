@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui.cocoon
 
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -21,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SportsEsports
@@ -121,6 +123,16 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
             kotlinx.coroutines.delay(110)
             logoIn.animateTo(1f, tween(340, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
         }
+        val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "cocoon-logo-float")
+        val floatOffset by infiniteTransition.animateFloat(
+            initialValue = -5f,
+            targetValue = 5f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = tween(2800, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+            ),
+            label = "cocoon-logo-y"
+        )
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val w = maxWidth
             val h = maxHeight
@@ -142,7 +154,7 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
                             val s = 0.94f + 0.06f * logoIn.value
                             scaleX = s
                             scaleY = s
-                            translationY = (1f - logoIn.value) * 14.dp.toPx()
+                            translationY = (1f - logoIn.value) * 14.dp.toPx() + floatOffset.dp.toPx()
                         }
                         .then(if (detail.logoUrl == null) Modifier.clip(RoundedCornerShape(16.dp)) else Modifier)
                 )
@@ -200,6 +212,33 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
                                     .clip(RoundedCornerShape(10.dp))
                             )
                         }
+                    }
+                }
+            }
+
+            val stats = detail.stats
+            if (stats != null && stats.achievementCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 20.dp, bottom = 18.dp)
+                        .background(CocoonSurface.Chip, RoundedCornerShape(50))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.EmojiEvents,
+                            contentDescription = null,
+                            tint = CocoonSurface.TextPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${stats.earnedAchievementCount}/${stats.achievementCount}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = CocoonSurface.TextPrimary
+                        )
                     }
                 }
             }

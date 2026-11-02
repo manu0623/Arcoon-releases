@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -46,6 +48,7 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.nendo.argosy.R
 import com.nendo.argosy.ui.components.ActionPreference
+import com.nendo.argosy.ui.components.NavigationPreference
 import com.nendo.argosy.ui.components.animateScrollToItemCentered
 import com.nendo.argosy.ui.primitives.ActionButton
 import com.nendo.argosy.ui.screens.settings.components.SectionPaneLayout
@@ -81,6 +84,7 @@ internal sealed class SocialItem(
     class SectionSpacer(key: String, section: String, visibleWhen: (SocialLayoutState) -> Boolean = { it.isConnected })
         : SocialItem(key, section, visibleWhen)
 
+    data object NotLinkedCard : SocialItem("notLinkedCard", "signin", visibleWhen = { !it.isConnected })
     data object AccountInfo : SocialItem("accountInfo", "account")
     data object EditAvatar : SocialItem("editAvatar", "account")
     data object UseDoodleAvatar : SocialItem(
@@ -93,9 +97,11 @@ internal sealed class SocialItem(
     data object NotifyFriendPlaying : SocialItem("notifyFriendPlaying", "notifications")
     data object SuppressInGame : SocialItem("suppressInGame", "notifications")
     data object QuayPassEnabled : SocialItem("quayPassEnabled", "quaypass")
+    data object CocoonJingles : SocialItem("cocoonJingles", "jingles", visibleWhen = { true })
     data object Unlink : SocialItem("unlink", "unlink")
 
     companion object {
+        private val NotLinkedCardItem = NotLinkedCard
         private val AccountHeader = Header("accountHeader", "account", R.string.settings_social_section_account)
         private val PrivacyHeader = Header("privacyHeader", "privacy", R.string.settings_social_section_privacy)
         private val NotificationsHeader =
@@ -103,14 +109,18 @@ internal sealed class SocialItem(
         private val NotificationsSpacer = SectionSpacer("notificationsSpacer", "notifications")
         private val QuayPassSpacer = SectionSpacer("quayPassSpacer", "quaypass")
         private val QuayPassHeader = Header("quayPassHeader", "quaypass", R.string.settings_social_section_quaypass)
+        private val JinglesSpacer = SectionSpacer("jinglesSpacer", "jingles", visibleWhen = { true })
+        private val JinglesHeader = Header("jinglesHeader", "jingles", R.string.cocoon_jingles, visibleWhen = { true })
         private val UnlinkSpacer = SectionSpacer("unlinkSpacer", "unlink")
 
         val ALL: List<SocialItem>
             get() = listOf(
+                NotLinkedCardItem,
                 AccountHeader, AccountInfo, EditAvatar, UseDoodleAvatar,
                 PrivacyHeader, OnlineStatus, ShowNowPlaying,
                 NotificationsSpacer, NotificationsHeader, NotifyFriendOnline, NotifyFriendPlaying, SuppressInGame,
                 QuayPassSpacer, QuayPassHeader, QuayPassEnabled,
+                JinglesSpacer, JinglesHeader, CocoonJingles,
                 UnlinkSpacer, Unlink
             )
     }
@@ -127,6 +137,7 @@ private val socialLayout = SettingsLayout<SocialItem, SocialLayoutState>(
             "privacy" -> R.string.settings_social_section_privacy
             "notifications" -> R.string.settings_social_section_notifications
             "quaypass" -> R.string.settings_social_section_quaypass
+            "jingles" -> R.string.cocoon_jingles
             else -> null
         }
     }
@@ -136,12 +147,12 @@ internal fun socialSections(hasAvatarDoodle: Boolean = false) =
     socialLayout.buildSections(SocialLayoutState(isConnected = true, hasAvatarDoodle = hasAvatarDoodle))
 
 internal fun socialMaxFocusIndex(social: SocialState): Int {
-    return when (social.authStatus) {
-        SocialAuthStatus.CONNECTED -> socialLayout.maxFocusIndex(
-            SocialLayoutState(isConnected = true, hasAvatarDoodle = social.avatarDoodle != null)
+    return socialLayout.maxFocusIndex(
+        SocialLayoutState(
+            isConnected = social.authStatus == SocialAuthStatus.CONNECTED,
+            hasAvatarDoodle = social.avatarDoodle != null
         )
-        else -> 0
-    }
+    )
 }
 
 internal fun socialItemAtFocusIndex(focusIndex: Int, state: SocialLayoutState): SocialItem? =
@@ -164,30 +175,50 @@ fun SocialSection(
     fun isFocused(item: SocialItem): Boolean =
         uiState.focusedIndex == socialLayout.focusIndexOf(item, layoutState)
 
-    if (social.authStatus == SocialAuthStatus.CONNECTED) {
-        val context = LocalContext.current
-        val visibleItems = remember(layoutState) { socialLayout.visibleItems(layoutState) }
-        val sections = remember(layoutState, context) { socialLayout.buildSections(layoutState, context) }
+    val context = LocalContext.current
+    val visibleItems = remember(layoutState) { socialLayout.visibleItems(layoutState) }
+    val sections = remember(layoutState, context) { socialLayout.buildSections(layoutState, context) }
 
-        SectionPaneLayout(
-            items = visibleItems,
-            sections = sections,
-            focusedIndex = uiState.focusedIndex,
-            focusToListIndex = { socialLayout.focusToListIndex(it, layoutState) },
-            itemKey = { it.key },
-            isNavItem = { it is SocialItem.SectionSpacer },
-            isHeader = { it is SocialItem.Header },
-            onSectionTap = { viewModel.setFocusIndex(it.focusStartIndex) },
-            modifier = Modifier.fillMaxSize().padding(horizontal = Dimens.spacingMd),
-            verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
-        ) { item ->
-                    when (item) {
-                        is SocialItem.Header -> SectionHeader(stringResource(item.titleRes))
+    SectionPaneLayout(
+        items = visibleItems,
+        sections = sections,
+        focusedIndex = uiState.focusedIndex,
+        focusToListIndex = { socialLayout.focusToListIndex(it, layoutState) },
+        itemKey = { it.key },
+        isNavItem = { it is SocialItem.SectionSpacer },
+        isHeader = { it is SocialItem.Header },
+        onSectionTap = { viewModel.setFocusIndex(it.focusStartIndex) },
+        modifier = Modifier.fillMaxSize().padding(horizontal = Dimens.spacingMd),
+        verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
+    ) { item ->
+        when (item) {
+            is SocialItem.Header -> SectionHeader(stringResource(item.titleRes))
 
-                        is SocialItem.SectionSpacer -> Spacer(modifier = Modifier.height(Dimens.spacingLg))
+            is SocialItem.SectionSpacer -> Spacer(modifier = Modifier.height(Dimens.spacingLg))
 
-                        SocialItem.AccountInfo -> AccountInfoCard(
-                            username = social.username ?: "",
+            SocialItem.NotLinkedCard -> {
+                when (social.authStatus) {
+                    SocialAuthStatus.NOT_LINKED -> NotLinkedContent(
+                        isFocused = isFocused(item),
+                        onStartAuth = { viewModel.startSocialAuth() }
+                    )
+                    SocialAuthStatus.CONNECTING -> ConnectingContent()
+                    SocialAuthStatus.AWAITING_AUTH -> AwaitingAuthContent(
+                        qrUrl = social.qrUrl,
+                        loginCode = social.loginCode,
+                        isFocused = isFocused(item),
+                        onCancel = { viewModel.cancelSocialAuth() }
+                    )
+                    SocialAuthStatus.ERROR -> ErrorContent(
+                        message = social.errorMessage ?: stringResource(R.string.settings_social_error_generic),
+                        isFocused = isFocused(item),
+                        onRetry = { viewModel.startSocialAuth() }
+                    )
+                    else -> {}
+                }
+            }
+            SocialItem.AccountInfo -> AccountInfoCard(
+                username = social.username ?: "",
                             displayName = social.displayName,
                             avatarColor = social.avatarColor,
                             avatarDoodle = social.avatarDoodle.takeIf { social.avatarUseDoodle },
@@ -299,6 +330,14 @@ fun SocialSection(
                             }
                         )
 
+                        SocialItem.CocoonJingles -> NavigationPreference(
+                            icon = Icons.Outlined.MusicNote,
+                            title = stringResource(R.string.cocoon_jingles),
+                            subtitle = stringResource(R.string.cocoon_jingles_subtitle),
+                            isFocused = isFocused(item),
+                            onClick = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true }
+                        )
+
                         SocialItem.Unlink -> ActionPreference(
                             title = stringResource(R.string.settings_social_unlink_title),
                             subtitle = stringResource(R.string.settings_social_unlink_subtitle),
@@ -307,57 +346,6 @@ fun SocialSection(
                             onClick = { viewModel.logoutSocial() }
                         )
                     }
-        }
-    } else {
-        val listState = rememberLazyListState()
-
-        LaunchedEffect(uiState.focusedIndex) {
-            if (uiState.focusedIndex == 0) {
-                listState.animateScrollToItemCentered(0)
-            }
-        }
-
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().padding(horizontal = Dimens.spacingMd),
-            contentPadding = PaddingValues(top = Dimens.spacingMd, bottom = Dimens.spacingXxl),
-            verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
-        ) {
-            when (social.authStatus) {
-                SocialAuthStatus.NOT_LINKED -> {
-                    item {
-                        NotLinkedContent(
-                            isFocused = uiState.focusedIndex == 0,
-                            onStartAuth = { viewModel.startSocialAuth() }
-                        )
-                    }
-                }
-                SocialAuthStatus.CONNECTING -> {
-                    item { ConnectingContent() }
-                }
-                SocialAuthStatus.AWAITING_AUTH -> {
-                    item {
-                        AwaitingAuthContent(
-                            qrUrl = social.qrUrl,
-                            loginCode = social.loginCode,
-                            isFocused = uiState.focusedIndex == 0,
-                            onCancel = { viewModel.cancelSocialAuth() }
-                        )
-                    }
-                }
-                SocialAuthStatus.ERROR -> {
-                    item {
-                        ErrorContent(
-                            message = social.errorMessage
-                                ?: stringResource(R.string.settings_social_error_generic),
-                            isFocused = uiState.focusedIndex == 0,
-                            onRetry = { viewModel.startSocialAuth() }
-                        )
-                    }
-                }
-                else -> {}
-            }
-        }
     }
 }
 

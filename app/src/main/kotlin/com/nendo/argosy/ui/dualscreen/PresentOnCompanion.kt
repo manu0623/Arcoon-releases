@@ -22,6 +22,28 @@ fun PresentOnCompanion(owner: SlotOwner, slot: PresentationSlot) {
      * (or to the old one) left the top screen showing nothing for the highlighted folder.
      */
     val manager = DualScreenManagerHolder.instanceFlow.collectAsState().value ?: return
-    LaunchedEffect(manager, owner, slot) { manager.presentSlot(owner, slot) }
-    DisposableEffect(manager, owner) { onDispose { manager.releaseSlot(owner) } }
+    /*
+     * Each screen that publishes has its own token. When the same screen is rebuilt (a board moved
+     * to the other window, or recreated) the new one publishes before the old one leaves, and the
+     * old one's release used to wipe the new slot, leaving the top screen empty until the cursor
+     * moved. A leaving screen now releases only a slot it published itself.
+     */
+    val token = androidx.compose.runtime.remember { Any() }
+    LaunchedEffect(manager, owner, slot) {
+        SlotPublishers.latest[owner] = token
+        manager.presentSlot(owner, slot)
+    }
+    DisposableEffect(manager, owner) {
+        onDispose {
+            if (SlotPublishers.latest[owner] === token) {
+                SlotPublishers.latest.remove(owner)
+                manager.releaseSlot(owner)
+            }
+        }
+    }
+}
+
+/** Which on-screen publisher last presented each slot owner. */
+private object SlotPublishers {
+    val latest = java.util.concurrent.ConcurrentHashMap<SlotOwner, Any>()
 }

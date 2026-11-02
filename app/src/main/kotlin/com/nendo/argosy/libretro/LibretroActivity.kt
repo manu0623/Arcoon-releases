@@ -57,6 +57,9 @@ import com.nendo.argosy.ui.input.LocalSwapStartSelect
 import com.nendo.argosy.ui.input.LocalXYIconsSwapped
 import com.nendo.argosy.ui.input.buttonGlyphSwaps
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import com.nendo.argosy.BuildConfig
 import com.nendo.argosy.R
 import com.nendo.argosy.data.cheats.CheatsRepository
@@ -163,6 +166,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
@@ -446,6 +450,11 @@ class LibretroActivity : ComponentActivity() {
         isGamepadConnectedState = com.nendo.argosy.core.input.ControllerDetector.isAnyGamepadConnected()
         registerGamepadDetection()
         registerOrientationListener()
+        lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.requests.collect { suspendFromTestButton() }
+            }
+        }
 
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -1070,6 +1079,9 @@ class LibretroActivity : ComponentActivity() {
                         if (gameLoadFailed) return@collect
                         coreLoadedSuccessfully = true
                         Log.i(TAG, "[Startup] GL surface created - render pipeline ready")
+                        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.available.value = canSuspend() && dualScreenOutput == null
+                        }
                         videoSettings.applyFrame(videoSettings.currentFrame)
                         videoSettings.applyAspectRatio()
                         videoSettings.applyOverscanCrop()
@@ -3507,9 +3519,17 @@ class LibretroActivity : ComponentActivity() {
             leaveVeil = null
         }
         if (suspendedByHome) {
+            showArrivalPictureIfTest()
             // Back from a suspend: the game is the active session again on both screens.
             suspendedByHome = false
             gameSessionManager.onBuiltInResumed(gameId)
+            /*
+             * Suspending forgot which screen the game is on. Without it the lower screen stayed
+             * on the launcher instead of switching to the game's panel after a resume.
+             */
+            com.nendo.argosy.DualScreenManagerHolder.instance?.let { manager ->
+                if (manager.emulatorDisplayId == null) manager.setEmulatorDisplay(currentDisplayId())
+            }
             com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
                 gameId,
                 isHardcore = hardcoreMode,
@@ -3522,6 +3542,93 @@ class LibretroActivity : ComponentActivity() {
         setUpSecondScreen()
         showSecondScreen()
         startRollingSave()
+        com.nendo.argosy.ui.cocoon.CocoonSuspendTest.available.value = canSuspend() && dualScreenOutput == null
+    }
+
+    /**
+     * TEST: suspend from Arcoon's own button. The same steps as Home, but Arcoon starts the
+     * launcher itself with no system animation (Android ignored a custom one and slid anyway), so
+     * the game cuts straight to the launcher already showing its last frame at the same size.
+     */
+    private var arrivalPicture: android.view.View? = null
+
+    /**
+     * TEST resume: the card has just grown to the game's size on the launcher. Until the game
+     * draws its first real frame, its window shows that same picture, so the hand-back has no
+     * black gap.
+     */
+    private fun showArrivalPictureIfTest() {
+        val test = com.nendo.argosy.ui.cocoon.CocoonSuspendTest
+        val picture = test.picture(gameId)
+        if (test.suspendedGameId != gameId || picture == null) {
+            test.clear()
+            return
+        }
+        if (arrivalPicture == null) {
+            val view = android.widget.ImageView(this).apply {
+                setBackgroundColor(android.graphics.Color.BLACK)
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                setImageBitmap(picture.picture.asAndroidBitmap())
+            }
+            (window.decorView as? android.view.ViewGroup)?.addView(
+                view,
+                android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+            arrivalPicture = view
+            com.nendo.argosy.util.ArcoonTrace.log("test resume: game shows its picture until the first frame")
+        }
+        lifecycleScope.launch {
+            withTimeoutOrNull(700) {
+                retroView.getGLRetroEvents().first { it is GLRetroView.GLRetroEvents.FrameRendered }
+            }
+            kotlinx.coroutines.delay(48)
+            arrivalPicture?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+            arrivalPicture = null
+            test.clear()
+            com.nendo.argosy.util.ArcoonTrace.log("test resume: picture handed back to the game")
+        }
+    }
+
+    private fun suspendFromTestButton() {
+        if (!canSuspend() || dualScreenOutput != null || suspendedByHome) return
+        com.nendo.argosy.util.ArcoonTrace.log("test suspend: button pressed")
+        com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(-1L)
+        suspendedByHome = true
+        com.nendo.argosy.ui.cocoon.CocoonSuspendTest.suspendedGameId = gameId
+        val frame = captureFrameOrNull()
+        if (frame != null) {
+            val copy = frame.copy(frame.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
+            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = com.nendo.argosy.ui.cocoon.CocoonSuspendTest.Handoff(
+                gameId = gameId,
+                picture = copy.asImageBitmap(),
+                aspect = copy.width.toFloat() / copy.height.coerceAtLeast(1),
+                at = System.currentTimeMillis()
+            )
+        }
+        gameSessionManager.suspendBuiltIn(
+            gameId = gameId,
+            title = gameName,
+            platformName = platformSlug,
+            snapshot = frame
+        )
+        val home = Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_HOME)
+            .setClassName(packageName, "com.nendo.argosy.MainActivity")
+            .addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_NO_USER_ACTION or
+                    Intent.FLAG_ACTIVITY_NO_ANIMATION
+            )
+        val started = runCatching { startActivity(home) }
+        com.nendo.argosy.util.ArcoonTrace.log("test suspend: launcher started=${started.isSuccess} ${started.exceptionOrNull()?.message ?: ""}")
+        if (started.isFailure) {
+            suspendedByHome = false
+            gameSessionManager.onBuiltInResumed(gameId)
+            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = null
+        }
     }
 
     /**
@@ -3731,6 +3838,7 @@ class LibretroActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        com.nendo.argosy.ui.cocoon.CocoonSuspendTest.available.value = false
         val pauseStartedAt = android.os.SystemClock.uptimeMillis()
         try {
             pauseAndSave()

@@ -33,6 +33,7 @@ object CocoonVeil {
     @Volatile var returnedAt = 0L
     fun arm() {
         armedAt = System.currentTimeMillis(); generation.intValue++
+        CocoonSuspendTest.lastGameShownAt = armedAt
         com.nendo.argosy.util.ArcoonTrace.log("veil armed")
     }
     fun onLauncherReturned() { returnedAt = System.currentTimeMillis() }
@@ -58,6 +59,7 @@ fun CocoonLeaveVeil(modifier: Modifier = Modifier, blackOnArm: Boolean = true) {
             val since = CocoonVeil.armedAt
             val sessions = com.nendo.argosy.DualScreenManagerHolder.instance?.gameSessionManager
             while (true) {
+                if (CocoonSuspendTest.freshAny()) break
                 val suspended = (sessions?.lastSuspendedAt ?: 0L) > since
                 if (suspended || CocoonVeil.returnedAt > since) break
                 // This window is in front again (the game closed, or Home): whatever the reason,
@@ -65,6 +67,11 @@ fun CocoonLeaveVeil(modifier: Modifier = Modifier, blackOnArm: Boolean = true) {
                 // black when a game closed on it, since the focus signal came from the other screen.
                 if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) break
                 kotlinx.coroutines.delay(40)
+            }
+            if (CocoonSuspendTest.freshAny()) {
+                alpha.snapTo(0f)
+                com.nendo.argosy.util.ArcoonTrace.log("veil skipped: test suspend handoff (display=${blackOnArm})")
+                return@LaunchedEffect
             }
             // Hold black while Android's slide runs, then fade in.
             kotlinx.coroutines.delay(com.nendo.argosy.ui.dualscreen.COCOON_LEAVE_HOLD_MS)

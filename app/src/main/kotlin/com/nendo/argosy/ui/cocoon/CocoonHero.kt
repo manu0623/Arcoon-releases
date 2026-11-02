@@ -47,7 +47,7 @@ fun CocoonHeroScene(slot: PresentationSlot.CocoonHero) {
                     (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200, delayMillis = 40)) +
                         androidx.compose.animation.scaleIn(
                             androidx.compose.animation.core.tween(240, easing = com.nendo.argosy.ui.theme.Motion.argosyEase),
-                            initialScale = 1.12f
+                            initialScale = 0.94f
                         )) togetherWith androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))
                 },
                 contentAlignment = Alignment.Center,
