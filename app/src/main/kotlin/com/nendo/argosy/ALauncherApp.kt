@@ -49,6 +49,15 @@ private const val FOREGROUND_STEAM_REFRESH_INTERVAL_MS = 60 * 60 * 1000L
 @HiltAndroidApp
 class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
 
+    companion object {
+        lateinit var instance: ArgosyApp
+            private set
+    }
+
+    init {
+        instance = this
+    }
+
     private val appScope = SafeCoroutineScope(Dispatchers.IO, "ArgosyApp")
 
     @Inject

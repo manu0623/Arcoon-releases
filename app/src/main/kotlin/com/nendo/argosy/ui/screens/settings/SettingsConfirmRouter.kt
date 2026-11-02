@@ -808,10 +808,6 @@ private fun routeThemeConfirm(vm: SettingsViewModel, state: SettingsUiState): In
         ThemeItem.Mode -> return InputResult.handled(SoundType.SILENT)
         ThemeItem.TintBleed -> vm.cycleSurfaceTintBleed()
         ThemeItem.AccentFooter -> vm.setUseAccentColorFooter(!state.display.useAccentColorFooter)
-        ThemeItem.CocoonJingles -> {
-            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
-            return InputResult.handled(SoundType.OPEN_MODAL)
-        }
         ThemeItem.CocoonPersonal -> {
             com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
             return InputResult.handled(SoundType.OPEN_MODAL)

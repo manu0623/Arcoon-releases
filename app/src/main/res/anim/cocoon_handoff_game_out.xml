@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TEST suspend: the game holds still while the launcher draws the same picture underneath, then vanishes. -->
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:zAdjustment="top"
+    android:fromAlpha="1.0" android:toAlpha="0.0"
+    android:startOffset="140"
+    android:duration="40" />

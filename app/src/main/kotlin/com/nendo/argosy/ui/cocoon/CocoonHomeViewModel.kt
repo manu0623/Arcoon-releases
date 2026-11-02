@@ -72,7 +72,27 @@ class CocoonHomeViewModel @Inject constructor(
     private val _events = kotlinx.coroutines.flow.MutableSharedFlow<CocoonHomeEvent>(extraBufferCapacity = 4)
     val events: kotlinx.coroutines.flow.SharedFlow<CocoonHomeEvent> = _events
 
-    private val _state = MutableStateFlow(CocoonHomeState())
+    private val _state = MutableStateFlow(
+        CocoonBoardCache.tiles.let { cached ->
+            if (cached.isEmpty()) CocoonHomeState()
+            else CocoonHomeState(
+                tiles = cached,
+                focusedIndex = cached.indexOfFirst { it.key == CocoonHomeStore.lastFocusKey }.coerceAtLeast(0),
+                isLoading = false
+            )
+        }
+    )
+
+    /*
+     * The board's tiles come from four places that finish loading at different moments. Showing
+     * each stage as it arrived made the folders jump around two or three times whenever the board
+     * was rebuilt; now the board waits until all four have arrived (or a short time passes).
+     */
+    private var platformsLoaded = false
+    private var collectionsLoaded = false
+    private var homeItemsLoaded = false
+    private var loadWaitOver = false
+    private val allLoaded: Boolean get() = loadWaitOver || (platformsLoaded && collectionsLoaded && homeItemsLoaded)
     val state: StateFlow<CocoonHomeState> = _state.asStateFlow()
 
     /** The board order the user set with Edit Grid, as tile keys; new tiles go at the end. */
@@ -254,6 +274,7 @@ class CocoonHomeViewModel @Inject constructor(
     private fun rebuildHomeTiles(after: (() -> Unit)? = null) {
         viewModelScope.launch {
             homeTiles = buildHomeTiles()
+            homeItemsLoaded = true
             publish()
             after?.invoke()
         }
@@ -398,6 +419,7 @@ class CocoonHomeViewModel @Inject constructor(
 
     init {
         CocoonHomeStore.load(context)
+        CocoonDockSlots.attach(context)
         rebuildHomeTiles()
         refreshWidgets()
         // The board replaces Argosy's home, so it also takes over the home's start-up duty of
@@ -424,10 +446,16 @@ class CocoonHomeViewModel @Inject constructor(
                             colorIndex = CocoonFolderPalette.indexFor(platform.slug),
                         )
                     }
+                platformsLoaded = true
                 publish()
             }
         }
         refreshCollections()
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(BOARD_LOAD_WAIT_MS)
+            loadWaitOver = true
+            publish()
+        }
         viewModelScope.launch {
             // The dock is the same app list Argosy's home dock uses, owned by the dual-screen manager.
             com.nendo.argosy.DualScreenManagerHolder.instanceFlow.collectLatest { manager ->
@@ -444,7 +472,7 @@ class CocoonHomeViewModel @Inject constructor(
     }
 
     fun launchDockApp(index: Int) {
-        val packageName = _state.value.dockApps.getOrNull(index) ?: return
+        val packageName = CocoonDockSlots.arrange(_state.value.dockApps).getOrNull(index) ?: return
         launchPackage(packageName)
     }
 
@@ -523,6 +551,10 @@ class CocoonHomeViewModel @Inject constructor(
         }
         val replacing = state.addAppReplacing
         val before = state.dockApps
+        // the slot the cursor was on when the picker opened: the new app goes exactly there
+        if (state.inDock && state.dockIndex in 1..COCOON_DOCK_SLOTS) {
+            CocoonDockSlots.place(picked, state.dockIndex - 1)
+        }
         closeAddApp()
         viewModelScope.launch {
             runCatching {
@@ -758,11 +790,13 @@ class CocoonHomeViewModel @Inject constructor(
                         colorIndex = CocoonFolderPalette.indexFor("collection-${collection.name}"),
                     )
                 }
+            collectionsLoaded = true
             publish()
         }
     }
 
     private fun publish() {
+        if (!allLoaded) return
         val natural = (platformTiles + collectionTiles + builtInTiles() + homeTiles).map { applyLook(it) }
         // Home folders: on Home, everything not inside one; inside one, just its members.
         val grouped = allGroupMembers()
@@ -779,7 +813,11 @@ class CocoonHomeViewModel @Inject constructor(
         ordered += byKey.values
         while (ordered.lastOrNull()?.target is CocoonTileTarget.Gap) ordered.removeAt(ordered.lastIndex)
         val tiles: List<CocoonTile> = layout(ordered)
-        if (_state.value.tiles == tiles) return
+        if (current == null) CocoonBoardCache.tiles = tiles
+        if (_state.value.tiles == tiles) {
+            if (_state.value.isLoading) _state.update { it.copy(isLoading = false) }
+            return
+        }
         _state.update { current ->
             // Until you move, the cursor isn't "yours" yet: folders arrive in stages at start-up
             // (Android Games first), so it goes to the first folder, or back to the one you
@@ -1277,4 +1315,15 @@ class CocoonHomeViewModel @Inject constructor(
             return InputResult.handled(com.nendo.argosy.core.input.SoundType.SELECT)
         }
     }
+}
+
+/** Longest the board waits for all its tile sources before showing what it has. */
+private const val BOARD_LOAD_WAIT_MS = 700L
+
+/**
+ * The last finished Home board, kept for the life of the app. A board rebuilt (coming back from
+ * Settings, a screen swap) starts from it straight away instead of from an empty grid.
+ */
+object CocoonBoardCache {
+    @Volatile var tiles: List<CocoonTile> = emptyList()
 }

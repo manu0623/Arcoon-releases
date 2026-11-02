@@ -1,5 +1,8 @@
 package com.nendo.argosy.ui.components
 
+import android.content.Intent
+import android.provider.Settings
+import com.nendo.argosy.ArgosyApp
 import com.nendo.argosy.DualScreenManagerHolder
 import com.nendo.argosy.core.input.SoundType
 import com.nendo.argosy.data.preferences.ControlsPreferences
@@ -553,7 +556,13 @@ class QuickSettingsController(
                 InputResult.HANDLED
             }
             CocoonQuickToggle.SETTINGS -> {
-                val launcher = systemPanelLauncher ?: return InputResult.handled(SoundType.BOUNDARY)
+                val launcher = systemPanelLauncher ?: { _ ->
+                    runCatching {
+                        val context = ArgosyApp.instance.applicationContext
+                        val intent = Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(intent)
+                    }
+                }
                 launcher(toggle)
                 InputResult.HANDLED
             }

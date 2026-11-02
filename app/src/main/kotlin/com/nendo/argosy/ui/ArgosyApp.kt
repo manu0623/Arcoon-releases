@@ -2,6 +2,7 @@ package com.nendo.argosy.ui
 
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -150,6 +151,10 @@ fun ArgosyApp(
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    val routeDisplay = androidx.compose.ui.platform.LocalView.current.display?.displayId
+    LaunchedEffect(currentRoute) {
+        com.nendo.argosy.util.ArcoonTrace.log("launcher on display $routeDisplay now on route: $currentRoute")
+    }
 
     val uiState by viewModel.uiState.collectAsState()
     val drawerUiState by viewModel.drawerUiState.collectAsState()
@@ -936,6 +941,11 @@ fun ArgosyApp(
 
     LaunchedEffect(inputLifecycle) {
         viewModel.gamepadInputHandler.eventFlow().flowWithLifecycle(inputLifecycle).collect { input ->            val result = inputDispatcher.dispatch(input)
+            if (isQuickSettingsOpen && !result.handled) {
+                com.nendo.argosy.util.ArcoonTrace.log(
+                    "quick settings did not take ${input.event} (drawer=${inputDispatcher.hasActiveModal()} overlay=${inputDispatcher.hasCapturingOverlay()})"
+                )
+            }
             val event = input.event
             val isBumper = event == GamepadEvent.PrevSection || event == GamepadEvent.NextSection
             if (!isBumper || inputDispatcher.hasActiveModal()) viewModel.hideNavBar()
@@ -1273,7 +1283,19 @@ fun ArgosyApp(
                                 drawerState.targetValue == androidx.compose.material3.DrawerValue.Open
                         }
                     }
-                    Box(modifier = Modifier.graphicsLayer { alpha = if (drawerShown || isDrawerOpen) 1f else 0f }) {
+                    val drawerOpenAnimProgress by animateFloatAsState(
+                        targetValue = if (isDrawerOpen || drawerState.isOpen) 1f else 0f,
+                        animationSpec = tween(280, easing = com.nendo.argosy.ui.theme.Motion.argosyEase),
+                        label = "drawer-open-anim"
+                    )
+                    Box(
+                        modifier = Modifier.graphicsLayer {
+                            alpha = (if (drawerShown || isDrawerOpen) 1f else 0f) * drawerOpenAnimProgress.coerceIn(0.1f, 1f)
+                            val scale = 0.95f + 0.05f * drawerOpenAnimProgress
+                            scaleX = scale
+                            scaleY = scale
+                        }
+                    ) {
                     MainDrawer(
                         items = viewModel.drawerItems,
                         currentRoute = currentRoute,

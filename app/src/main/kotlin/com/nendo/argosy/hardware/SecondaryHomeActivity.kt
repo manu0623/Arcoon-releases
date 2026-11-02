@@ -12,6 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.focus.focusRequester
@@ -199,11 +201,16 @@ class SecondaryHomeActivity :
                                 com.nendo.argosy.ui.theme.LocalMotionTier provides com.nendo.argosy.ui.cocoon.cocoonMotionTier()
                             ) { CompanionRoleContent() }
                             com.nendo.argosy.ui.cocoon.CocoonLeaveVeil(blackOnArm = false)
+                            com.nendo.argosy.ui.cocoon.CocoonSuspendTestButton()
                         }
                     }
                 }
             }
         }
+    }
+
+    private companion object {
+        const val SUSPEND_PANEL_FADE_MS = 220
     }
 
     @androidx.compose.runtime.Composable
@@ -228,12 +235,32 @@ class SecondaryHomeActivity :
         // A screen swap slides instead of cross-fading (the fade under the slide made it flicker).
         val swapping = com.nendo.argosy.ui.cocoon.cocoonSwapRecent()
         com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = launcherShown) {
-            androidx.compose.animation.AnimatedVisibility(
-                visible = launcherShown,
-                enter = androidx.compose.animation.EnterTransition.None,
-                exit = if (swapping) androidx.compose.animation.ExitTransition.None else androidx.compose.animation.fadeOut(
-                    androidx.compose.animation.core.tween(handoffMs)
-                )
+            /*
+             * The launcher stays alive while the game panel covers it, only hidden. Removing it
+             * threw away where you were: after a suspend it was rebuilt from the main menu and
+             * then jumped to the last game, which showed as a reload on the lower screen.
+             */
+            val launcherAlpha by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (launcherShown) 1f else 0f,
+                animationSpec = if (launcherShown || swapping) androidx.compose.animation.core.snap()
+                else androidx.compose.animation.core.tween(handoffMs),
+                label = "companion-launcher-alpha"
+            )
+            androidx.compose.foundation.layout.Box(
+                modifier = androidx.compose.ui.Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = launcherAlpha }
+                    .then(
+                        if (launcherShown) androidx.compose.ui.Modifier
+                        else androidx.compose.ui.Modifier.pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                        .changes.forEach { it.consume() }
+                                }
+                            }
+                        }
+                    )
             ) {
                 // One sliding Cocoon cursor for the whole lower screen, as on the top screen. Without
                 // it every item drew its own corners, which lists cut off at their edges.
@@ -248,9 +275,15 @@ class SecondaryHomeActivity :
                 enter = if (swapping) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(
                     androidx.compose.animation.core.tween(handoffMs)
                 ),
-                exit = androidx.compose.animation.ExitTransition.None
+                exit = if (swapping || rolesSwapped) androidx.compose.animation.ExitTransition.None
+                else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(SUSPEND_PANEL_FADE_MS))
             ) {
-                CompanionPresentation(showsDashboard)
+                /*
+                 * While the game panel leaves (game suspended, launcher coming back) it keeps
+                 * showing the game panel as it fades. Switching it to the top screen's content
+                 * for that moment flashed a small copy of the top screen on the lower one.
+                 */
+                CompanionPresentation(showsDashboard || launcherShown)
             }
         }
         // The optimization intro's top-screen half, when this window is the showcase screen.

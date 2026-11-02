@@ -256,7 +256,9 @@ fun CocoonHomeScreen(
                         onTap = { slot ->
                             viewModel.focusDock(slot)
                             when (cocoonDockTarget(slot, state.dockApps)) {
-                                CocoonDockTarget.AllApps, CocoonDockTarget.AddApp -> onOpenAndroidGames()
+                                CocoonDockTarget.AllApps -> onOpenAndroidGames()
+                                // an empty slot: pick an app to go in this very slot
+                                CocoonDockTarget.AddApp -> viewModel.openAddApp(replacing = null)
                                 CocoonDockTarget.Pods -> com.nendo.argosy.ui.cocoon.CocoonPods.open()
                                 is CocoonDockTarget.App -> viewModel.launchDockApp(slot - 1)
                             }
@@ -608,13 +610,42 @@ private fun CocoonBoard(
                 }
                 val tile = raw?.takeIf { it.target !is CocoonTileTarget.Gap }
                 if (tile == null) {
-                    // Cocoon's empty space: nothing drawn, but the cursor can rest here.
+                    // Cocoon's empty space: nothing drawn, but the cursor can rest here. While the
+                    // cursor is on it, a soft "+" shows that something can be put here (A or Y).
+                    val emptyFocused = !state.inDock && index == state.focusedIndex && !state.editingGrid
+                    val plus by androidx.compose.animation.core.animateFloatAsState(
+                        targetValue = if (emptyFocused) 1f else 0f,
+                        animationSpec = androidx.compose.animation.core.tween(160),
+                        label = "cocoon-empty-plus"
+                    )
                     Box(
                         modifier = Modifier
                             .size(tileSize)
                             .cocoonBrackets(focused = !state.inDock && index == state.focusedIndex, outset = 1.dp)
-                            .clickableNoFocus { onTapEmpty(index) }
-                    )
+                            .clickableNoFocus { onTapEmpty(index) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (plus > 0.01f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(tileSize * 0.08f)
+                                    .graphicsLayer { alpha = plus; scaleX = 0.9f + 0.1f * plus; scaleY = 0.9f + 0.1f * plus }
+                                    .background(
+                                        androidx.compose.ui.graphics.Color.White.copy(alpha = 0.07f),
+                                        androidx.compose.foundation.shape.RoundedCornerShape(tileSize * 0.22f)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = androidx.compose.material.icons.Icons.Outlined.Add,
+                                    contentDescription = null,
+                                    tint = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.75f),
+                                    modifier = Modifier.size(tileSize * 0.38f)
+                                )
+                            }
+                        }
+                    }
                     return@items
                 }
                 val lifted = state.editingGrid && index == state.focusedIndex
@@ -740,8 +771,13 @@ fun CocoonDock(
                     packageName = target.packageName,
                     modifier = slotModifier.cocoonDockIconClip()
                 )
-                // Cocoon leaves an empty slot blank; the cursor can still land on it.
-                CocoonDockTarget.AddApp -> Box(modifier = slotModifier)
+                CocoonDockTarget.AddApp -> Box(modifier = slotModifier, contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "+",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = CocoonSurface.TextSecondary.copy(alpha = 0.7f)
+                    )
+                }
             }
         }
     }

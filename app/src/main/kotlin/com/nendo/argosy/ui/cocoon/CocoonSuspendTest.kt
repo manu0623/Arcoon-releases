@@ -1,0 +1,118 @@
+package com.nendo.argosy.ui.cocoon
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.unit.dp
+import com.nendo.argosy.ui.util.clickableNoFocus
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+
+/**
+ * TEST: suspending a game from a button Arcoon owns, instead of Android's Home press.
+ *
+ * Because Arcoon starts the switch itself, it can ask for no system animation at all: the game
+ * cuts straight to the launcher, which already shows the game's last frame at the same size, and
+ * that picture then shrinks into the suspended card. Android's sideways slide never plays, so no
+ * black cover is needed. The Home button keeps its current behaviour.
+ */
+object CocoonSuspendTest {
+    /** True while a one-screen built-in game is in front and can be suspended. */
+    val available = MutableStateFlow(false)
+
+    /** A press of the test button; the game screen answers it. */
+    val requests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** The picture handed from the game to the launcher, for one suspend. */
+    class Handoff(val gameId: Long, val picture: ImageBitmap, val aspect: Float, val at: Long)
+
+    val handoff = mutableStateOf<Handoff?>(null)
+
+    /**
+     * When a game last started or resumed. A handoff from before that is over: a quick resume
+     * used to still count as "just suspended", so the launcher skipped its black cover and a
+     * later Home press showed Android's slide.
+     */
+    @Volatile var lastGameShownAt: Long = 0L
+
+    /** A handoff only counts for the moment right after the press, and only until the game is back. */
+    fun fresh(gameId: Long): Handoff? =
+        handoff.value?.takeIf { it.gameId == gameId && isFresh(it) }
+
+    fun freshAny(): Boolean = handoff.value?.let { isFresh(it) } == true
+
+    private fun isFresh(h: Handoff): Boolean =
+        System.currentTimeMillis() - h.at < HANDOFF_FRESH_MS && h.at > lastGameShownAt
+
+    /** The handed-over picture for as long as that game stays suspended, fresh or not. */
+    fun picture(gameId: Long): Handoff? = handoff.value?.takeIf { it.gameId == gameId }
+
+    /** The game suspended with the test button; only it gets the grow-back on resume. */
+    @Volatile var suspendedGameId: Long = -1L
+
+    /**
+     * How many suspended cards are on screen. A count, not a flag: a second copy of the card
+     * (drawn for a moment on the lower screen) used to switch the flag off as it went away while
+     * the real card was still up, so the grow-back was skipped.
+     */
+    private val cardsShown = java.util.concurrent.atomic.AtomicInteger(0)
+    val cardShown: Boolean get() = cardsShown.get() > 0
+    fun cardAppeared() { cardsShown.incrementAndGet() }
+    fun cardGone() { cardsShown.updateAndGet { (it - 1).coerceAtLeast(0) } }
+
+    /**
+     * Resume asked for: the card grows back to the game's size, then runs this to bring the game
+     * to the front. Null when no grow is pending.
+     */
+    val growThen = mutableStateOf<(() -> Unit)?>(null)
+
+    /** Length of the grow back into the game. */
+    const val GROW_MS = 300
+
+    fun clear() {
+        handoff.value = null
+        suspendedGameId = -1L
+        growThen.value = null
+    }
+
+    const val HANDOFF_FRESH_MS = 2_500L
+
+    /** A moment for the launcher's first frame (the picture at full size) to settle before shrinking. */
+    const val GAME_HOLD_MS = 40L
+}
+
+/** TEST: the round suspend button in the lower screen's corner while a game runs. */
+@Composable
+fun CocoonSuspendTestButton(modifier: Modifier = Modifier) {
+    val available by CocoonSuspendTest.available.collectAsState()
+    if (!available) return
+    Box(modifier = modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(18.dp)
+                .size(56.dp)
+                .shadow(10.dp, CircleShape)
+                .background(Color(0xFFF2A33A), CircleShape)
+                .clickableNoFocus { CocoonSuspendTest.requests.tryEmit(Unit) },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Pause, contentDescription = "Suspend (test)", tint = Color.Black, modifier = Modifier.size(28.dp))
+        }
+    }
+}

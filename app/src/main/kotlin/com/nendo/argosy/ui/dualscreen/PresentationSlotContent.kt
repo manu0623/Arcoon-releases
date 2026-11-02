@@ -260,7 +260,8 @@ private fun PresentationSlotScene(
         // Black from the very first frame (not one frame later), or the slide shows through.
         val leaveStart = suspendedSession?.startTimeMillis
         val leaveFade = remember(leaveStart) {
-            val fresh = leaveStart != null && System.currentTimeMillis() - leaveStart < 1_500
+            val fresh = leaveStart != null && System.currentTimeMillis() - leaveStart < 1_500 &&
+                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.fresh(suspendedSession?.gameId ?: -1L) == null
             androidx.compose.animation.core.Animatable(if (fresh) 1f else 0f)
         }
         LaunchedEffect(leaveFade) {
@@ -272,7 +273,14 @@ private fun PresentationSlotScene(
         // Cocoon: a suspended game waits as a card over the board and the game heroes, moving to
         // the middle when that game is the one highlighted.
         val suspended = suspendedSession
-        if (suspended != null && (slot is PresentationSlot.Detail || slot is PresentationSlot.CocoonHero)) {
+        // TEST suspend: the card (the game's picture at full size) is drawn from the very first
+        // frame, before the top screen has settled on Detail; waiting for that showed a frame of
+        // the launcher's background between the game and its picture.
+        val handingOver = suspended != null &&
+            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.picture(suspended.gameId) != null &&
+            (com.nendo.argosy.ui.cocoon.CocoonSuspendTest.fresh(suspended.gameId) != null ||
+                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.growThen.value != null)
+        if (suspended != null && (slot is PresentationSlot.Detail || slot is PresentationSlot.CocoonHero || handingOver)) {
             com.nendo.argosy.ui.cocoon.CocoonSuspendedCard(
                 session = suspended,
                 centered = slot is PresentationSlot.Detail && slot.detail.gameId == suspended.gameId,

@@ -26,6 +26,7 @@ import javax.inject.Singleton
 private const val TAG = "GameSessionManager"
 private const val CLOSE_WAIT_MS = 4_000L
 private const val CLOSE_POLL_MS = 50L
+private const val VEIL_AFTER_GROW_MS = 400L
 
 /**
  * Cocoon-style game suspension for Argosy's built-in emulator.
@@ -169,6 +170,27 @@ open class GameSessionManager @Inject constructor(
     open fun resumeSession() {
         val session = _sessionState.value ?: return
         if (!session.builtIn) return
+        val test = com.nendo.argosy.ui.cocoon.CocoonSuspendTest
+        if (test.suspendedGameId == session.gameId && test.cardShown && test.picture(session.gameId) != null) {
+            // TEST: the card grows back to the game's size first, then the game comes forward.
+            if (test.growThen.value == null) {
+                com.nendo.argosy.util.ArcoonTrace.log("test resume: asking the card to grow back first")
+                val once = java.util.concurrent.atomic.AtomicBoolean(false)
+                test.growThen.value = {
+                    if (once.compareAndSet(false, true)) bringBuiltInToFront(session, armVeilAfter = true)
+                }
+            }
+            return
+        }
+        if (test.suspendedGameId == session.gameId) {
+            com.nendo.argosy.util.ArcoonTrace.log(
+                "test resume: no grow (card shown=${test.cardShown}, picture=${test.picture(session.gameId) != null})"
+            )
+        }
+        bringBuiltInToFront(session, armVeilAfter = false)
+    }
+
+    private fun bringBuiltInToFront(session: SuspendedGameSession, armVeilAfter: Boolean) {
         val task = builtInTask()
         if (task == null) {
             Logger.warn(TAG, "Suspended game task is gone; clearing '${session.title}'")
@@ -181,7 +203,9 @@ open class GameSessionManager @Inject constructor(
         // Brought back the way a launch brings a game up: a start with NO_ANIMATION, here into
         // the game's own task, so the paused activity is reordered to the front (onNewIntent with
         // no action, which the game ignores) instead of the system sliding its task in.
-        com.nendo.argosy.ui.cocoon.CocoonVeil.arm()
+        // After the test grow the launcher must not go black while still in view, so the veil
+        // (which hides a later Home slide) is armed once the game already covers it.
+        if (!armVeilAfter) com.nendo.argosy.ui.cocoon.CocoonVeil.arm()
         val moved = runCatching {
             val intent = android.content.Intent(context, LibretroActivity::class.java).addFlags(
                 android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
@@ -193,6 +217,12 @@ open class GameSessionManager @Inject constructor(
         if (!moved) {
             runCatching { task.moveToFront() }
                 .onFailure { Logger.error(TAG, "Could not bring '${session.title}' to the front", it) }
+        }
+        if (armVeilAfter) {
+            scope.launch(Dispatchers.Main) {
+                delay(VEIL_AFTER_GROW_MS)
+                com.nendo.argosy.ui.cocoon.CocoonVeil.arm()
+            }
         }
     }
 

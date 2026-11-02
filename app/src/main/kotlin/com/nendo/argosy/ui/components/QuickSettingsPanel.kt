@@ -45,12 +45,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -118,8 +122,14 @@ fun QuickSettingsPanel(
             latchedSide.value = null
         }
     }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(isVisible) {
+        if (isVisible) {
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().focusRequester(focusRequester).focusable(),
         contentAlignment = if (fromLeft) Alignment.CenterStart else Alignment.CenterEnd
     ) {
         val scrim = if (theme.isDark) {
@@ -148,8 +158,14 @@ fun QuickSettingsPanel(
         AnimatedVisibility(
             visible = isVisible,
             enter = slideInHorizontally(tween(phase, easing = Motion.argosyEase)) { if (fromLeft) -it else it },
-            exit = slideOutHorizontally(tween(phase, delayMillis = phase, easing = Motion.argosyEase)) { if (fromLeft) -it else it }
+            exit = slideOutHorizontally(tween(phase, easing = Motion.argosyEase)) { if (fromLeft) -it else it }
         ) {
+            /*
+             * The panel draws its own selection cursor, so it slides away with the panel. It used
+             * to be drawn by the window behind, which left a second set of brackets hanging where
+             * the panel had been while the board drew its own.
+             */
+            com.nendo.argosy.ui.primitives.CocoonCursorHost(covers = true) {
             Row(
                 modifier = Modifier
                     .fillMaxHeight()
@@ -198,6 +214,7 @@ fun QuickSettingsPanel(
                 }
                 // Cocoon has no side rail: the other pages are reached with L1/R1, shown as small
                 // icons in the header.
+            }
             }
         }
     }

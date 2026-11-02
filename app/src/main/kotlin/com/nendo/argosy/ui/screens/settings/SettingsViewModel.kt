@@ -2392,6 +2392,28 @@ class SettingsViewModel @Inject constructor(
     }
 
     internal fun handleSocialConfirm(state: SettingsUiState): InputResult {
+        val layoutState = com.nendo.argosy.ui.screens.settings.sections.SocialLayoutState(
+            isConnected = state.social.authStatus == SocialAuthStatus.CONNECTED,
+            hasAvatarDoodle = state.social.avatarDoodle != null
+        )
+        val focusedItem = com.nendo.argosy.ui.screens.settings.sections.socialItemAtFocusIndex(state.focusedIndex, layoutState)
+        if (focusedItem is com.nendo.argosy.ui.screens.settings.sections.SocialItem.NotLinkedCard) {
+            return when (state.social.authStatus) {
+                SocialAuthStatus.NOT_LINKED, SocialAuthStatus.ERROR -> {
+                    startSocialAuth()
+                    InputResult.HANDLED
+                }
+                SocialAuthStatus.AWAITING_AUTH -> {
+                    cancelSocialAuth()
+                    InputResult.HANDLED
+                }
+                else -> InputResult.HANDLED
+            }
+        }
+        if (focusedItem is com.nendo.argosy.ui.screens.settings.sections.SocialItem.CocoonJingles) {
+            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
+            return InputResult.handled(SoundType.OPEN_MODAL)
+        }
         return when (state.social.authStatus) {
             SocialAuthStatus.NOT_LINKED -> {
                 startSocialAuth()
@@ -2439,6 +2461,10 @@ class SettingsViewModel @Inject constructor(
                         if (state.social.quayPassEnabled) setQuayPassEnabled(false)
                         else requestEnableQuayPass()
                         InputResult.handled(SoundType.TOGGLE)
+                    }
+                    is com.nendo.argosy.ui.screens.settings.sections.SocialItem.CocoonJingles -> {
+                        com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
+                        InputResult.handled(SoundType.OPEN_MODAL)
                     }
                     is com.nendo.argosy.ui.screens.settings.sections.SocialItem.Unlink -> {
                         logoutSocial()
