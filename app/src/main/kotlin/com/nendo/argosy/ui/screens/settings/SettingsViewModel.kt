@@ -2027,7 +2027,13 @@ class SettingsViewModel @Inject constructor(
     fun openLogFolderPicker() = routeOpenLogFolderPicker(this)
     fun setFileLoggingPath(path: String) = routeSetFileLoggingPath(this, path)
     fun toggleFileLogging(enabled: Boolean) = routeToggleFileLogging(this, enabled)
-    fun setFileLogLevel(level: LogLevel) = routeSetFileLogLevel(this, level)    fun setSaveDebugLoggingEnabled(enabled: Boolean) = routeSetSaveDebugLoggingEnabled(this, enabled)
+    fun setFileLogLevel(level: LogLevel) = routeSetFileLogLevel(this, level)
+    fun setSaveDebugLoggingEnabled(enabled: Boolean) = routeSetSaveDebugLoggingEnabled(this, enabled)
+    fun setEmbeddedMediaExtractionEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setEmbeddedMediaExtractionEnabled(enabled)
+        }
+    }
 
     fun setPlatformEmulator(platformId: Long, platformSlug: String, emulator: InstalledEmulator?) =
         routeSetPlatformEmulator(this, platformId, platformSlug, emulator)
