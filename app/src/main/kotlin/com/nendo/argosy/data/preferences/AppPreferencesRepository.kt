@@ -38,7 +38,8 @@ data class AppPreferences(
     val preLaunchRecapsEnabled: Boolean = true,
     val monthlyRecapEnabled: Boolean = true,
     val lastMonthlyRecapShown: YearMonth? = null,
-    val preLaunchRecapBaseline: Instant? = null
+    val preLaunchRecapBaseline: Instant? = null,
+    val embeddedMediaExtractionEnabled: Boolean = true
 )
 
 @Singleton
@@ -72,6 +73,7 @@ class AppPreferencesRepository @Inject constructor(
         val MONTHLY_RECAP_ENABLED = booleanPreferencesKey("monthly_recap_enabled")
         val LAST_MONTHLY_RECAP_SHOWN = stringPreferencesKey("last_monthly_recap_shown")
         val PRE_LAUNCH_RECAP_BASELINE = stringPreferencesKey("pre_launch_recap_baseline")
+        val EMBEDDED_MEDIA_EXTRACTION_ENABLED = booleanPreferencesKey("embedded_media_extraction_enabled")
     }
 
     val preferences: Flow<AppPreferences> = dataStore.data.map { prefs ->
@@ -117,9 +119,14 @@ class AppPreferencesRepository @Inject constructor(
             lastMonthlyRecapShown = prefs[Keys.LAST_MONTHLY_RECAP_SHOWN]
                 ?.let { runCatching { YearMonth.parse(it) }.getOrNull() },
             preLaunchRecapBaseline = prefs[Keys.PRE_LAUNCH_RECAP_BASELINE]
-                ?.let { runCatching { Instant.parse(it) }.getOrNull() }
+                ?.let { runCatching { Instant.parse(it) }.getOrNull() },
+            embeddedMediaExtractionEnabled = prefs[Keys.EMBEDDED_MEDIA_EXTRACTION_ENABLED] ?: true
         )
     }.flowOn(Dispatchers.Default)
+
+    suspend fun setEmbeddedMediaExtractionEnabled(enabled: Boolean) {
+        dataStore.edit { it[Keys.EMBEDDED_MEDIA_EXTRACTION_ENABLED] = enabled }
+    }
 
     suspend fun setFirstRunComplete() {
         dataStore.edit { it[Keys.FIRST_RUN_COMPLETE] = true }
