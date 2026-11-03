@@ -96,6 +96,7 @@ data class ArgosyUiState(
 internal const val DRAWER_ACCOUNT_ROW_INDEX = 0
 internal const val DRAWER_NAV_ITEM_OFFSET = 1
 internal const val ACCOUNTS_SECTION_NAME = "ACCOUNTS"
+internal const val DRAWER_RESUME_GAME_ROUTE = "drawer:resume-game"
 
 data class DrawerState(
     val rommConnected: Boolean = false,
@@ -465,6 +466,12 @@ class ArgosyViewModel @Inject constructor(
 
     fun setDrawerOpen(open: Boolean) {
         _isDrawerOpen.value = open
+        if (open) {
+            val items = drawerItems
+            if (items.isNotEmpty() && items.first().route == DRAWER_RESUME_GAME_ROUTE) {
+                _navFocusIndex.value = DRAWER_NAV_ITEM_OFFSET
+            }
+        }
     }
 
     fun closeDrawer() {
@@ -482,15 +489,22 @@ class ArgosyViewModel @Inject constructor(
      * at index 0. Every nav item therefore sits at `drawerItems index + 1`, and this is the only
      * place that offset is defined.
      */
-    private val drawerNavLastIndex: Int get() = drawerItems.size
-
-    fun initDrawerFocus(currentRoute: String?, parentRoute: String? = null) {
-        var index = drawerItems.indexOfFirst { NavRing.routeMatches(it.route, currentRoute) }
+    fun initDrawerFocus(
+        currentRoute: String?,
+        parentRoute: String? = null,
+        items: List<DrawerItem> = drawerItems,
+        preferFirstItem: Boolean = false
+    ) {
+        if (preferFirstItem && items.isNotEmpty()) {
+            _navFocusIndex.value = DRAWER_NAV_ITEM_OFFSET
+            return
+        }
+        var index = items.indexOfFirst { NavRing.routeMatches(it.route, currentRoute) }
         if (index < 0 && parentRoute != null) {
-            index = drawerItems.indexOfFirst { NavRing.routeMatches(it.route, parentRoute) }
+            index = items.indexOfFirst { NavRing.routeMatches(it.route, parentRoute) }
         }
         if (index < 0) {
-            index = drawerItems.indexOfFirst { it.route == Screen.Home.route }
+            index = items.indexOfFirst { it.route == Screen.Home.route }
         }
         _navFocusIndex.value = if (index >= 0) index + DRAWER_NAV_ITEM_OFFSET else 0
     }
@@ -508,9 +522,14 @@ class ArgosyViewModel @Inject constructor(
     }
 
     fun createDrawerInputHandler(
+        items: () -> List<DrawerItem>,
         onNavigate: (String) -> Unit,
-        onDismiss: () -> Unit
+        onDismiss: () -> Unit,
+        onResumeGame: () -> Unit,
+        onRequestQuitGame: () -> Unit
     ): InputHandler = object : InputHandler {
+        private val drawerNavLastIndex: Int get() = items().size
+
         override fun onUp(): InputResult =
             moveWrappedFocus(_navFocusIndex, -1, drawerNavLastIndex, uiState.value.menuWrapMode)
 
@@ -524,9 +543,24 @@ class ArgosyViewModel @Inject constructor(
                 return InputResult.HANDLED
             }
             val itemIndex = currentIndex - DRAWER_NAV_ITEM_OFFSET
-            if (itemIndex in drawerItems.indices) {
-                Log.d("ArgosyViewModel", "Navigating to drawer item: ${drawerItems[itemIndex].route}")
-                onNavigate(drawerItems[itemIndex].route)
+            val currentItems = items()
+            if (itemIndex in currentItems.indices) {
+                val item = currentItems[itemIndex]
+                if (item.route == DRAWER_RESUME_GAME_ROUTE) {
+                    onResumeGame()
+                } else {
+                    Log.d("ArgosyViewModel", "Navigating to drawer item: ${item.route}")
+                    onNavigate(item.route)
+                }
+            }
+            return InputResult.HANDLED
+        }
+
+        override fun onContextMenu(): InputResult {
+            val itemIndex = _navFocusIndex.value - DRAWER_NAV_ITEM_OFFSET
+            if (items().getOrNull(itemIndex)?.route == DRAWER_RESUME_GAME_ROUTE) {
+                onRequestQuitGame()
+                return InputResult.handled(SoundType.OPEN_MODAL)
             }
             return InputResult.HANDLED
         }

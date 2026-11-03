@@ -424,6 +424,11 @@
 
     <!-- Declining button of the shared confirm modal. Verb. -->
     <string name="ui_confirm_modal_cancel">Cancel</string>
+    <string name="ui_drawer_resume_game">Resume game</string>
+    <string name="ui_drawer_resume_quit_hint">Quit game</string>
+    <string name="ui_drawer_resume_quit_title">Quit suspended game?</string>
+    <string name="ui_drawer_resume_quit_message">Quit %1$s? Its suspended game session will end.</string>
+    <string name="ui_drawer_resume_quit_confirm">Quit game</string>
     <string name="ui_pushed_apk_title">Install %1$s?</string>
     <string name="ui_pushed_apk_message">%1$s sent this app to this device.\n\nPackage: %2$s\nSigner: %3$s</string>
     <string name="ui_pushed_apk_unknown_server">Your RomM server</string>
@@ -1542,6 +1547,7 @@
     <string name="ui_launch_overlay_wait_core_sized">Still downloading the emulator core &#183; %1$s</string>
     <!-- Line under the game title when the emulator setup runs long. -->
     <string name="ui_launch_overlay_wait_prepare">Still preparing the emulator</string>
+    <string name="ui_resume_handoff_resuming">Resuming game…</string>
     <!-- Shown when the RomM server did not answer; the game still starts. "RomM" is a product name; leave it untranslated. -->
     <string name="ui_launch_overlay_failed_connect">RomM didn\'t answer. Starting with the save on this device.</string>
     <!-- Shown when the RomM server is reachable but did not answer within the pre-launch budget; the game still starts. "RomM" is a product name; leave it untranslated. -->

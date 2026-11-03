@@ -439,6 +439,10 @@ class LibretroActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(android.app.Activity.OVERRIDE_TRANSITION_OPEN, 0, 0)
+            overrideActivityTransition(android.app.Activity.OVERRIDE_TRANSITION_CLOSE, 0, 0)
+        }
         Log.d(TAG, "onCreate: savedInstanceState=${savedInstanceState != null}")
         allowContentIntoDisplayCutout()
         installImmersiveMode()
@@ -3616,23 +3620,34 @@ class LibretroActivity : ComponentActivity() {
             snapshot = frame,
             gameDisplayId = currentDisplayId()
         )
-        val moved = runCatching { moveTaskToBack(true) }.getOrDefault(false)
-        com.nendo.argosy.util.ArcoonTrace.log("test suspend: movedToBack=$moved")
-        if (!moved) {
-            val home = Intent(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_HOME)
-                .setClassName(packageName, "com.nendo.argosy.MainActivity")
-                .addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_NO_USER_ACTION or
-                        Intent.FLAG_ACTIVITY_NO_ANIMATION
-                )
-            val started = runCatching { startActivity(home) }
-            if (started.isFailure) {
-                suspendedByHome = false
-                gameSessionManager.onBuiltInResumed(gameId)
-                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = null
-            }
+        val displayId = currentDisplayId()
+        val launcher = if (displayId == android.view.Display.DEFAULT_DISPLAY) {
+            com.nendo.argosy.ArgosyActivity::class.java
+        } else {
+            com.nendo.argosy.hardware.SecondaryHomeActivity::class.java
+        }
+        val intent = Intent(this, launcher).addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_NO_ANIMATION
+        )
+        val options = android.app.ActivityOptions.makeCustomAnimation(this, 0, 0)
+            .setLaunchDisplayId(displayId)
+            .toBundle()
+        val started = runCatching { startActivity(intent, options) }
+        if (started.isFailure) {
+            suspendedByHome = false
+            gameSessionManager.onBuiltInResumed(gameId)
+            com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
+                gameId,
+                isHardcore = hardcoreMode,
+                channelName = playSessionTracker.activeSession.value?.channelName
+            )
+            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = null
+            com.nendo.argosy.util.ArcoonTrace.log(
+                "test suspend: launcher handoff failed (${started.exceptionOrNull()?.message})"
+            )
         }
     }
 
@@ -3800,21 +3815,6 @@ class LibretroActivity : ComponentActivity() {
                 )
                 leaveVeil = veil
             }
-            // Home is the system's transition, but while this activity is still pausing it may
-            // name the animation: the game shrinks into its card over a still launcher, in place
-            // of the sideways slide.
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                overrideActivityTransition(
-                    android.app.Activity.OVERRIDE_TRANSITION_CLOSE,
-                    com.nendo.argosy.R.anim.cocoon_hold,
-                    com.nendo.argosy.R.anim.cocoon_game_zoom_out
-                )
-            }
-            @Suppress("DEPRECATION")
-            overridePendingTransition(
-                com.nendo.argosy.R.anim.cocoon_hold,
-                com.nendo.argosy.R.anim.cocoon_game_zoom_out
-            )
         } else {
             finish()
         }

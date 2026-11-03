@@ -30,7 +30,7 @@ fun primaryWillShowDashboard(
 }
 
 /**
- * How long the companion's launcher dissolves into the black hold when a game goes active:
+ * How long the companion's launcher dissolves into the black hold during a game handoff:
  * [veilMs], or zero under reduced motion or when no game dashboard is taking over.
  */
 fun companionHandoffMs(showsDashboard: Boolean, reduced: Boolean, veilMs: Int): Int =

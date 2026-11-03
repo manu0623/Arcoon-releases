@@ -186,6 +186,28 @@ fun ArgosyApp(
     val context = LocalContext.current
     val activity = context as? com.nendo.argosy.ArgosyActivity
     val dsm = remember { com.nendo.argosy.DualScreenManagerHolder.instance }
+    val suspendedGameSession by dsm?.gameSessionManager?.sessionState?.collectAsState()
+        ?: remember {
+            mutableStateOf<com.nendo.argosy.domain.model.multitasking.SuspendedGameSession?>(null)
+        }
+    val hasBuiltInSuspendedGame = suspendedGameSession?.builtIn == true
+    val baseDrawerItems = viewModel.drawerItems
+    val drawerItems = remember(baseDrawerItems, hasBuiltInSuspendedGame) {
+        if (hasBuiltInSuspendedGame) {
+            listOf(DrawerItem(DRAWER_RESUME_GAME_ROUTE, R.string.ui_drawer_resume_game)) + baseDrawerItems
+        } else {
+            baseDrawerItems
+        }
+    }
+    var quitSuspendedGameId by remember { mutableStateOf<Long?>(null) }
+    val requestQuitSuspendedGame = rememberUpdatedState {
+        suspendedGameSession?.takeIf { it.builtIn }?.gameId?.let { quitSuspendedGameId = it }
+    }
+    LaunchedEffect(suspendedGameSession?.gameId) {
+        if (quitSuspendedGameId != suspendedGameSession?.gameId) {
+            quitSuspendedGameId = null
+        }
+    }
 
     val companionActive by dsm?.isCompanionActive?.collectAsState()
         ?: remember { mutableStateOf(false) }
@@ -213,7 +235,7 @@ fun ArgosyApp(
     }
     LaunchedEffect(uiState.isFirstRun, isOnWizard) {
         dsm?.recordWizardState(uiState.isFirstRun || isOnWizard)
-        if (wasOnWizard && !isOnWizard) {
+        if (wasOnWizard && !isOnWizard && !uiState.isFirstRun) {
             viewModel.triggerPostWizardSync()
         }
         wasOnWizard = isOnWizard
@@ -225,16 +247,19 @@ fun ArgosyApp(
     }
 
     val carriedRoute = remember { dsm?.primaryRoute?.value }
+    val carriedStack = remember(carriedRoute) {
+        carriedRoute?.let(RouteRestore::restoreStack).orEmpty()
+    }
     LaunchedEffect(Unit) {
-        val stack = carriedRoute?.let(RouteRestore::restoreStack).orEmpty()
+        val stack = carriedStack
         if (stack.isEmpty()) return@LaunchedEffect
         val entry = withTimeoutOrNull(NAV_READY_TIMEOUT_MS) {
             navController.currentBackStackEntryFlow.first()
         } ?: return@LaunchedEffect
-        if (entry.destination.route != Screen.Home.route || navController.previousBackStackEntry != null) {
+        if (entry.destination.route != stack.first() || navController.previousBackStackEntry != null) {
             return@LaunchedEffect
         }
-        stack.forEach { navController.navigate(it) }
+        stack.drop(1).forEach { navController.navigate(it) }
     }
 
     LaunchedEffect(navBackStackEntry) {
@@ -406,10 +431,10 @@ fun ArgosyApp(
         }
     }
 
-    val startDestination = remember(uiState.isLoading) {
+    val startDestination = remember(uiState.isLoading, carriedStack) {
         when {
             uiState.isFirstRun -> Screen.FirstRun.route
-            else -> Screen.Home.route
+            else -> carriedStack.firstOrNull() ?: Screen.Home.route
         }
     }
 
@@ -426,8 +451,20 @@ fun ArgosyApp(
         }
     }
 
-    val drawerInputHandler = remember {
+    val resumeSuspendedGame: () -> Unit = remember(dsm, inputDispatcher, viewModel, scope, drawerState) {
+        {
+            inputDispatcher.unsubscribeDrawer()
+            viewModel.setDrawerOpen(false)
+            scope.launch { drawerState.close() }
+            dsm?.gameSessionManager?.resumeSession()
+            Unit
+        }
+    }
+
+    val currentDrawerItems = rememberUpdatedState(drawerItems)
+    val drawerInputHandler = remember(viewModel, resumeSuspendedGame) {
         viewModel.createDrawerInputHandler(
+            items = { currentDrawerItems.value },
             onNavigate = { route ->
                 inputDispatcher.unsubscribeDrawer()
                 viewModel.setDrawerOpen(false)
@@ -437,18 +474,25 @@ fun ArgosyApp(
             onDismiss = {
                 inputDispatcher.unsubscribeDrawer()
                 viewModel.setDrawerOpen(false)
-            }
+            },
+            onResumeGame = resumeSuspendedGame,
+            onRequestQuitGame = { requestQuitSuspendedGame.value() }
         )
     }
 
-    val openDrawer = remember(drawerInputHandler) {
+    val openDrawer = remember(drawerInputHandler, hasBuiltInSuspendedGame) {
         wizardGuard@{
             if (uiState.isFirstRun) return@wizardGuard
             viewModel.hideNavBar()
             inputDispatcher.subscribeDrawer(drawerInputHandler)
             viewModel.setDrawerOpen(true)
             val parentRoute = navController.previousBackStackEntry?.destination?.route
-            viewModel.initDrawerFocus(currentRoute, parentRoute)
+            viewModel.initDrawerFocus(
+                currentRoute = currentRoute,
+                parentRoute = parentRoute,
+                items = drawerItems,
+                preferFirstItem = hasBuiltInSuspendedGame
+            )
             viewModel.onDrawerOpened()
             viewModel.soundManager.play(SoundType.OPEN_MODAL)
         }
@@ -1032,7 +1076,10 @@ fun ArgosyApp(
                         if (isQuickSettingsOpen) closeQuickSettings()
                         if (quickMenuState.isVisible) closeQuickMenu()
                         val homeRoute = Screen.Home.route
-                        if (currentRoute != homeRoute) {
+                        val sessions = dsm?.gameSessionManager
+                        val cameFromGame = sessions?.sessionState?.value != null ||
+                            isEmulatorRunning || sessions?.recentlySuspended() == true
+                        if (!cameFromGame && currentRoute != homeRoute) {
                             navController.navigate(homeRoute) {
                                 popUpTo(homeRoute) { inclusive = true }
                                 launchSingleTop = true
@@ -1097,7 +1144,8 @@ fun ArgosyApp(
             // Home pressed inside a game leaves the launcher where the game was started (its
             // folder, with the game focused), as in Cocoon; it is not a trip back to the board.
             val sessions = com.nendo.argosy.DualScreenManagerHolder.instance?.gameSessionManager
-            val cameFromGame = sessions?.recentlySuspended() == true
+            val activeSession = sessions?.sessionState?.value != null || isEmulatorRunning
+            val cameFromGame = activeSession || sessions?.recentlySuspended() == true
             // A suspended game keeps its session open, but the launcher is in front: Home works.
             val gameInFront = isEmulatorRunning && sessions?.sessionState?.value == null
             if (gameInFront || cameFromGame) {
@@ -1297,7 +1345,7 @@ fun ArgosyApp(
                         }
                     ) {
                     MainDrawer(
-                        items = viewModel.drawerItems,
+                        items = drawerItems,
                         currentRoute = currentRoute,
                         drawerState = drawerUiState,
                         isOpen = isDrawerOpen,
@@ -1307,6 +1355,7 @@ fun ArgosyApp(
                             scope.launch { drawerState.close() }
                             navigateFromDrawer(route)
                         },
+                        onResumeGame = resumeSuspendedGame,
                         modifier = Modifier.onSizeChanged { drawerWidthPx = it.width.toFloat() }
                     )
                     }
@@ -1413,6 +1462,34 @@ fun ArgosyApp(
             com.nendo.argosy.ui.components.recap.MonthlyRecapOverlay()
 
             com.nendo.argosy.ui.components.LaunchOverlay()
+
+            val suspendedSessionToQuit = suspendedGameSession?.takeIf { it.builtIn }
+            com.nendo.argosy.ui.primitives.ArgosyConfirmModalHost(
+                visible = quitSuspendedGameId != null &&
+                    quitSuspendedGameId == suspendedSessionToQuit?.gameId,
+                title = stringResource(R.string.ui_drawer_resume_quit_title),
+                message = stringResource(
+                    R.string.ui_drawer_resume_quit_message,
+                    suspendedSessionToQuit?.title.orEmpty()
+                ),
+                confirmLabel = stringResource(R.string.ui_drawer_resume_quit_confirm),
+                destructive = true,
+                onConfirm = {
+                    val targetGameId = suspendedSessionToQuit?.gameId
+                    val currentSession = dsm?.gameSessionManager?.sessionState?.value
+                    if (targetGameId != null &&
+                        currentSession?.gameId == targetGameId &&
+                        currentSession.builtIn
+                    ) {
+                        dsm?.gameSessionManager?.closeSession()
+                    }
+                    quitSuspendedGameId = null
+                    inputDispatcher.unsubscribeDrawer()
+                    viewModel.setDrawerOpen(false)
+                    scope.launch { drawerState.close() }
+                },
+                onDismiss = { quitSuspendedGameId = null }
+            )
 
             val mutedNotificationKeys = if (currentRoute == Screen.SyncMonitor.route) {
                 com.nendo.argosy.domain.usecase.sync.SyncNotificationKeys.ALL

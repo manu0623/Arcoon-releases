@@ -37,6 +37,7 @@ import com.nendo.argosy.DualScreenManagerHolder
 import com.nendo.argosy.core.game.AchievementUi
 import com.nendo.argosy.data.preferences.SessionStateStore
 import com.nendo.argosy.data.repository.AppsRepository
+import com.nendo.argosy.domain.model.multitasking.SuspendedGameSession
 import com.nendo.argosy.ui.dualscreen.CompanionDetail
 import com.nendo.argosy.ui.dualscreen.onDisplay
 import com.nendo.argosy.ui.dualscreen.CompanionDetailScreen
@@ -97,6 +98,7 @@ class SecondaryHomeActivity :
     private var companionAchievements by mutableStateOf<List<AchievementUi>>(emptyList())
     private var companionSessionTimer: CompanionSessionTimer? = null
     private var homeRestoreSettled = false
+    private var isResumeHandoffVisible by mutableStateOf(false)
 
     private var confirmHoldJob: kotlinx.coroutines.Job? = null
     private var confirmHoldFired = false
@@ -218,20 +220,46 @@ class SecondaryHomeActivity :
         val gameActive by dsm.gameOnScreen.collectAsState()
         val gameDisplay by dsm.emulatorDisplay.collectAsState()
         val resumeRequest by dsm.builtInResumeRequest.collectAsState()
+        val suspendedSession = dsm.gameSessionManager?.sessionState?.collectAsState()?.value
+        var lastSuspendedSession by remember { mutableStateOf<SuspendedGameSession?>(null) }
+        androidx.compose.runtime.LaunchedEffect(suspendedSession, resumeRequest) {
+            when {
+                suspendedSession != null -> lastSuspendedSession = suspendedSession
+                resumeRequest == null -> lastSuspendedSession = null
+            }
+        }
+        val resumeSession = lastSuspendedSession?.takeIf {
+            it.gameId == resumeRequest?.gameId
+        }
         val hereDisplayId = androidx.core.content.ContextCompat.getDisplayOrDefault(this).displayId
         val showsDashboard = gameActive && dsm.primaryShowsDashboard(hereDisplayId, gameDisplay)
         val resumeTargetsDashboard = resumeRequest?.let {
             dsm.primaryWillShowDashboard(hereDisplayId, it.displayId)
         } == true
+        val dashboardTransitionActive = showsDashboard
         val rolesSwapped by dsm.isRolesSwapped.collectAsState()
-        val launcherShown = !rolesSwapped && !showsDashboard
-        androidx.compose.runtime.LaunchedEffect(launcherShown, showsDashboard) {
+        val launcherShown = !rolesSwapped && !dashboardTransitionActive
+        val resumeScreenShown = resumeTargetsDashboard &&
+            !showsDashboard &&
+            resumeSession != null
+        val resumeScreenAlpha by androidx.compose.animation.core.animateFloatAsState(
+            targetValue = if (resumeScreenShown) 1f else 0f,
+            animationSpec = androidx.compose.animation.core.tween(
+                com.nendo.argosy.ui.components.launchOverlayFadeMs()
+            ),
+            label = "companion-resume-screen-alpha"
+        )
+        androidx.compose.runtime.SideEffect {
+            isResumeHandoffVisible = resumeScreenShown
+        }
+        androidx.compose.runtime.LaunchedEffect(launcherShown, dashboardTransitionActive) {
             com.nendo.argosy.util.ArcoonTrace.log(
-                "companion window (display $hereDisplayId) shows ${if (launcherShown) "launcher" else if (showsDashboard) "game dashboard" else "presentation"}"
+                "companion window (display $hereDisplayId) shows " +
+                    "${if (launcherShown) "launcher" else if (dashboardTransitionActive) "game dashboard" else "presentation"}"
             )
         }
         val handoffMs = com.nendo.argosy.ui.dualscreen.companionHandoffMs(
-            showsDashboard = showsDashboard || resumeTargetsDashboard,
+            showsDashboard = showsDashboard,
             reduced = com.nendo.argosy.ui.theme.LocalMotionTier.current ==
                 com.nendo.argosy.ui.theme.MotionTier.Reduced,
             veilMs = com.nendo.argosy.ui.theme.generated.ComponentDefaults.LaunchOverlay.veilMs
@@ -246,25 +274,22 @@ class SecondaryHomeActivity :
         }
         // A screen swap slides instead of cross-fading (the fade under the slide made it flicker).
         val swapping = com.nendo.argosy.ui.cocoon.cocoonSwapRecent()
-        com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = launcherShown) {
+        com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = rolesSwapped) {
             /*
              * The launcher stays alive while the game panel covers it, only hidden. Removing it
              * threw away where you were: after a suspend it was rebuilt from the main menu and
              * then jumped to the last game, which showed as a reload on the lower screen.
              */
-             val launcherAlpha by androidx.compose.animation.core.animateFloatAsState(
-                 targetValue = if (launcherShown) 1f else 0f,
-                 animationSpec = if (launcherShown || swapping) androidx.compose.animation.core.snap()
-                 else androidx.compose.animation.core.tween(handoffMs),
-                 label = "companion-launcher-alpha"
-             )
+            val launcherAlpha by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (launcherShown) 1f else 0f,
+                animationSpec = androidx.compose.animation.core.tween(
+                    if (launcherShown) SUSPEND_PANEL_FADE_MS else handoffMs
+                ),
+                label = "companion-launcher-alpha"
+            )
             val blackHoldAlpha by androidx.compose.animation.core.animateFloatAsState(
-                targetValue = if (showsDashboard || resumeTargetsDashboard) 1f else 0f,
-                animationSpec = if (resumeTargetsDashboard) {
-                    androidx.compose.animation.core.tween(handoffMs)
-                } else {
-                    androidx.compose.animation.core.snap()
-                },
+                targetValue = if (dashboardTransitionActive) 1f else 0f,
+                animationSpec = androidx.compose.animation.core.snap(),
                 label = "companion-resume-black-hold"
             )
             androidx.compose.foundation.layout.Box(
@@ -308,10 +333,10 @@ class SecondaryHomeActivity :
             }
             androidx.compose.animation.AnimatedVisibility(
                 visible = !launcherShown,
-                enter = if (swapping || showsDashboard) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(
+                enter = if (swapping || dashboardTransitionActive) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(
                     androidx.compose.animation.core.tween(handoffMs)
                 ),
-                exit = if (swapping || rolesSwapped) androidx.compose.animation.ExitTransition.None
+                exit = if (rolesSwapped) androidx.compose.animation.ExitTransition.None
                 else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(SUSPEND_PANEL_FADE_MS))
             ) {
                 /*
@@ -319,7 +344,35 @@ class SecondaryHomeActivity :
                  * showing the game panel as it fades. Switching it to the top screen's content
                  * for that moment flashed a small copy of the top screen on the lower one.
                  */
-                CompanionPresentation(showsDashboard || launcherShown)
+                CompanionPresentation(dashboardTransitionActive || launcherShown)
+            }
+            if (resumeScreenShown) {
+                resumeSession.let { session ->
+                    androidx.compose.foundation.layout.Box(
+                        modifier = androidx.compose.ui.Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black)
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                            .changes.forEach { it.consume() }
+                                    }
+                                }
+                            }
+                    ) {
+                        androidx.compose.foundation.layout.Box(
+                            modifier = androidx.compose.ui.Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = resumeScreenAlpha }
+                        ) {
+                            com.nendo.argosy.ui.components.ResumeHandoffScreen(
+                                gameId = session.gameId,
+                                gameTitle = session.title
+                            )
+                        }
+                    }
+                }
             }
         }
         // The optimization intro's top-screen half, when this window is the showcase screen.
@@ -522,6 +575,7 @@ class SecondaryHomeActivity :
             return true
         }
         if (::dsm.isInitialized && !dsm.claimInput(event)) return true
+        if (isResumeHandoffVisible) return true
         if (::dsm.isInitialized && event.action == android.view.KeyEvent.ACTION_DOWN) {
             dsm.ambientAudioManager.resumeFromSuspend()
         }
@@ -555,6 +609,7 @@ class SecondaryHomeActivity :
             android.util.Log.d("SecondaryHome", "Joystick motion already handled by the primary display, dropped")
             return true
         }
+        if (isJoystick && isResumeHandoffVisible) return true
         if (yieldsKeysToMediaPlayer()) {
             val forward = dsm.mediaPlayerMotionDispatcher
             if (forward != null && forward(event)) {

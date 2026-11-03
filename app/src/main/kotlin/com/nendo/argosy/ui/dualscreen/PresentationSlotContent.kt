@@ -292,6 +292,13 @@ private fun PresentationSlotScene(
             }
         }
         val suspended = suspendedSession ?: lastSuspendedSession.takeIf { resumeInProgress }
+        if (resumeInProgress && suspended != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color.Black)
+            )
+        }
         // TEST suspend: the card (the game's picture at full size) is drawn from the very first
         // frame, before the top screen has settled on Detail; waiting for that showed a frame of
         // the launcher's background between the game and its picture.

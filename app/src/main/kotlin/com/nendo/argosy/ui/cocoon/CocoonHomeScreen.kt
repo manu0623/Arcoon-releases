@@ -123,18 +123,19 @@ fun CocoonHomeScreen(
     val hasPresentation by (
         manager?.hasPresentationScreen ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }
         ).collectAsState()
+    var returningFromFolder by remember { androidx.compose.runtime.mutableStateOf(CocoonFolderZoom.returning) }
 
     // Folder open: the board zooms into the folder and fades as the folder screen comes in; coming
     // back it zooms out of the same folder (the reverse).
     val folderZoom = remember {
         androidx.compose.animation.core.Animatable(if (CocoonFolderZoom.returning) 1f else 0f)
     }
-    LaunchedEffect(Unit) {
-        if (CocoonFolderZoom.returning) {
-            CocoonFolderZoom.returning = false
-            CocoonFolderZoom.opening = false
-            folderZoom.animateTo(0f, androidx.compose.animation.core.tween(240, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
-        }
+    LaunchedEffect(returningFromFolder) {
+        if (!returningFromFolder) return@LaunchedEffect
+        CocoonFolderZoom.returning = false
+        CocoonFolderZoom.opening = false
+        folderZoom.animateTo(0f, androidx.compose.animation.core.tween(240, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
+        returningFromFolder = false
     }
     CocoonFolderZoom.progress = folderZoom
     val zoomScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -196,6 +197,7 @@ fun CocoonHomeScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_HOME)
                 viewModel.refreshCollections()
+                if (CocoonFolderZoom.returning) returningFromFolder = true
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -290,6 +292,7 @@ fun CocoonHomeScreen(
                         viewModel.setFocus(index)
                         open(tile)
                     },
+                    animateReturnJourney = returningFromFolder,
                     onTapEmpty = { index -> viewModel.setFocus(index) },
                     modifier = Modifier.fillMaxWidth().weight(if (!hasPresentation) 1f - CocoonHomeStore.heroShare else 1f)
                 )
@@ -528,10 +531,12 @@ fun CocoonHomeScreen(
 private fun CocoonBoard(
     state: CocoonHomeState,
     onTap: (Int, CocoonTile) -> Unit,
+    animateReturnJourney: Boolean,
     modifier: Modifier = Modifier,
     onTapEmpty: (Int) -> Unit = {},
 ) {
     val gridState = rememberLazyGridState()
+    val appearedKeys = remember(animateReturnJourney) { mutableSetOf<String>() }
     BoxWithConstraints(modifier = modifier) {
         // Measured from Cocoon on the Thor's 1240x1080 lower panel: ~95dp tiles on a ~120dp pitch,
         // three rows, five columns in view with a sixth clipped at the edge.
@@ -562,10 +567,8 @@ private fun CocoonBoard(
         // arriving and the corners arriving land together and the cursor holds still.
         val density = androidx.compose.ui.platform.LocalDensity.current
         val pitchPx = with(density) { (tileSize + gap).toPx() }
-        // When Home first appears (or comes back from a folder) the board jumps straight to the
-        // cursor; it only glides for moves you make.
         val shownAt = androidx.compose.runtime.remember { android.os.SystemClock.uptimeMillis() }
-        LaunchedEffect(state.focusedIndex, visibleColumns, state.slotCount) {
+        LaunchedEffect(state.focusedIndex, visibleColumns, state.slotCount, animateReturnJourney) {
             if (state.tiles.isEmpty() || state.inDock) return@LaunchedEffect
             val settling = android.os.SystemClock.uptimeMillis() - shownAt < 1_500
             val column = state.focusedIndex / COCOON_BOARD_ROWS
@@ -576,7 +579,7 @@ private fun CocoonBoard(
                 gridState.firstVisibleItemScrollOffset
             val delta = targetFirst * pitchPx - currentPx
             if (kotlin.math.abs(delta) < 1f) return@LaunchedEffect
-            if (settling) {
+            if (settling && !animateReturnJourney) {
                 gridState.scrollBy(delta)
                 return@LaunchedEffect
             }
@@ -650,9 +653,33 @@ private fun CocoonBoard(
                 }
                 val lifted = state.editingGrid && index == state.focusedIndex
                 val isFocusedTile = !state.inDock && index == state.focusedIndex
+                val arrival = remember(tile.key) {
+                    androidx.compose.animation.core.Animatable(
+                        if (animateReturnJourney && appearedKeys.add(tile.key)) 0f else 1f
+                    )
+                }
+                LaunchedEffect(tile.key, arrival) {
+                    if (arrival.value < 1f) {
+                        val columnsAway = kotlin.math.abs(index / COCOON_BOARD_ROWS - state.focusedIndex / COCOON_BOARD_ROWS)
+                        kotlinx.coroutines.delay((columnsAway * 28L).coerceAtMost(140L))
+                        arrival.animateTo(
+                            1f,
+                            androidx.compose.animation.core.tween(
+                                240,
+                                easing = com.nendo.argosy.ui.theme.Motion.argosyEase
+                            )
+                        )
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .size(tileSize)
+                        .graphicsLayer {
+                            alpha = arrival.value
+                            translationX = tileSize.toPx() * 0.18f * (1f - arrival.value)
+                            scaleX = 0.96f + 0.04f * arrival.value
+                            scaleY = 0.96f + 0.04f * arrival.value
+                        }
                         .then(
                             if (isFocusedTile) Modifier
                                 .onGloballyPositioned { CocoonFolderZoom.tile = it.boundsInRoot() }
@@ -772,11 +799,13 @@ fun CocoonDock(
                     modifier = slotModifier.cocoonDockIconClip()
                 )
                 CocoonDockTarget.AddApp -> Box(modifier = slotModifier, contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "+",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = CocoonSurface.TextSecondary.copy(alpha = 0.7f)
-                    )
+                    if (focusedIndex == slot) {
+                        Text(
+                            text = "+",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = CocoonSurface.TextSecondary.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
         }

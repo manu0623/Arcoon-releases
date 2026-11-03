@@ -186,6 +186,11 @@
     <string name="ui_state_slot_row_tag_local">[本地]</string>
 
     <string name="ui_confirm_modal_cancel">取消</string>
+    <string name="ui_drawer_resume_game">继续游戏</string>
+    <string name="ui_drawer_resume_quit_hint">退出游戏</string>
+    <string name="ui_drawer_resume_quit_title">退出已暂停的游戏？</string>
+    <string name="ui_drawer_resume_quit_message">要退出 %1$s 吗？这会结束游戏会话。</string>
+    <string name="ui_drawer_resume_quit_confirm">退出游戏</string>
     <string name="ui_pushed_apk_title">安装%1$s？</string>
     <string name="ui_pushed_apk_message">%1$s 将此应用发送到了本设备。\n\n包名：%2$s\n签名：%3$s</string>
     <string name="ui_pushed_apk_unknown_server">你的 RomM 服务器</string>
@@ -672,6 +677,7 @@
     <string name="ui_launch_overlay_wait_core">仍在下载模拟器核心</string>
     <string name="ui_launch_overlay_wait_core_sized">仍在下载模拟器核心 &#183; %1$s</string>
     <string name="ui_launch_overlay_wait_prepare">仍在准备模拟器</string>
+    <string name="ui_resume_handoff_resuming">正在恢复游戏…</string>
     <string name="ui_launch_overlay_failed_connect">RomM 未响应。将使用此设备上的存档启动。</string>
     <string name="ui_launch_overlay_failed_timeout">RomM 响应超时。将使用此设备上的存档启动。</string>
     <string name="ui_launch_overlay_failed_download">无法下载存档。将使用此设备上的存档启动。</string>

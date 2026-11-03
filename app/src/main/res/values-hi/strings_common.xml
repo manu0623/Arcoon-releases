@@ -193,6 +193,11 @@
     <!-- Shared modals and controls (ui/components, ui/primitives) -->
 
     <string name="ui_confirm_modal_cancel">रद्द करें</string>
+    <string name="ui_drawer_resume_game">गेम फिर से शुरू करें</string>
+    <string name="ui_drawer_resume_quit_hint">गेम छोड़ें</string>
+    <string name="ui_drawer_resume_quit_title">रुके हुए गेम को छोड़ें?</string>
+    <string name="ui_drawer_resume_quit_message">%1$s छोड़ें? इससे गेम सत्र समाप्त हो जाएगा।</string>
+    <string name="ui_drawer_resume_quit_confirm">गेम छोड़ें</string>
     <string name="ui_pushed_apk_title">%1$s इंस्टॉल करें?</string>
     <string name="ui_pushed_apk_message">%1$s ने यह ऐप इस डिवाइस पर भेजा है।\n\nपैकेज: %2$s\nहस्ताक्षर: %3$s</string>
     <string name="ui_pushed_apk_unknown_server">आपका RomM सर्वर</string>
@@ -702,6 +707,7 @@
     <string name="ui_launch_overlay_wait_core">एमुलेटर कोर अभी भी डाउनलोड हो रहा है</string>
     <string name="ui_launch_overlay_wait_core_sized">एमुलेटर कोर अभी भी डाउनलोड हो रहा है &#183; %1$s</string>
     <string name="ui_launch_overlay_wait_prepare">एमुलेटर अभी भी तैयार हो रहा है</string>
+    <string name="ui_resume_handoff_resuming">गेम फिर से शुरू हो रहा है…</string>
     <string name="ui_launch_overlay_failed_connect">RomM ने जवाब नहीं दिया। इस डिवाइस की सेव के साथ शुरू हो रहा है।</string>
     <string name="ui_launch_overlay_failed_timeout">RomM ने जवाब देने में बहुत देर लगाई। इस डिवाइस की सेव के साथ शुरू हो रहा है।</string>
     <string name="ui_launch_overlay_failed_download">आपकी सेव डाउनलोड नहीं हो सकी। इस डिवाइस की सेव के साथ शुरू हो रहा है।</string>
