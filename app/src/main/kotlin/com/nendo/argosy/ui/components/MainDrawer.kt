@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.FeaturedPlayList
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
 import com.nendo.argosy.ui.quaypass.QuayPassIcons
@@ -52,6 +53,7 @@ import com.nendo.argosy.data.social.SocialUser
 import com.nendo.argosy.ui.ACCOUNTS_SECTION_NAME
 import com.nendo.argosy.ui.DRAWER_ACCOUNT_ROW_INDEX
 import com.nendo.argosy.ui.DRAWER_NAV_ITEM_OFFSET
+import com.nendo.argosy.ui.DRAWER_RESUME_GAME_ROUTE
 import com.nendo.argosy.ui.DrawerItem
 import com.nendo.argosy.ui.DrawerState
 import com.nendo.argosy.ui.components.friends.SocialAvatar
@@ -66,6 +68,7 @@ fun MainDrawer(
     drawerState: DrawerState,
     isOpen: Boolean,
     onNavigate: (String) -> Unit,
+    onResumeGame: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Cocoon's left sheet: a near-black panel with rounded right corners.
@@ -102,13 +105,20 @@ fun MainDrawer(
                 badgeFor = drawerState::badgeCountFor,
                 isRommConnected = drawerState.rommConnected,
                 onNavigate = onNavigate,
+                onResumeGame = onResumeGame,
                 modifier = Modifier.weight(1f)
             )
         }
     }
 
     if (isOpen) {
-        FooterHints(hints = emptyList())
+        val focusedItem = items.getOrNull(drawerState.navFocusIndex - DRAWER_NAV_ITEM_OFFSET)
+        val hints = if (focusedItem?.route == DRAWER_RESUME_GAME_ROUTE) {
+            listOf(InputButton.Y to stringResource(R.string.ui_drawer_resume_quit_hint))
+        } else {
+            emptyList()
+        }
+        FooterHints(hints = hints)
     }
 }
 
@@ -120,6 +130,7 @@ private fun NavigationContent(
     badgeFor: (String) -> Int?,
     isRommConnected: Boolean,
     onNavigate: (String) -> Unit,
+    onResumeGame: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -143,10 +154,15 @@ private fun NavigationContent(
                     icon = getIconForRoute(item.route),
                     label = stringResource(item.labelRes),
                     isFocused = index == focusedIndex,
-                    isSelected = com.nendo.argosy.ui.navigation.NavRing.routeMatches(item.route, currentRoute),
+                    isSelected = item.route == DRAWER_RESUME_GAME_ROUTE ||
+                        com.nendo.argosy.ui.navigation.NavRing.routeMatches(item.route, currentRoute),
                     onClick = {
-                        android.util.Log.d("MainDrawer", "Menu item clicked: ${item.route}")
-                        onNavigate(item.route)
+                        if (item.route == DRAWER_RESUME_GAME_ROUTE) {
+                            onResumeGame()
+                        } else {
+                            android.util.Log.d("MainDrawer", "Menu item clicked: ${item.route}")
+                            onNavigate(item.route)
+                        }
                     },
                     modifier = Modifier.padding(end = Dimens.spacingMd),
                     trailing = { badge?.let { DrawerBadge(it) } }
@@ -320,6 +336,7 @@ private fun DrawerBadge(count: Int) {
 }
 
 internal fun getIconForRoute(route: String): ImageVector = when (route) {
+    DRAWER_RESUME_GAME_ROUTE -> Icons.Filled.PlayArrow
     Screen.Home.route -> Icons.Filled.FeaturedPlayList
     Screen.Social.route -> Icons.Default.Groups
     Screen.Library.route -> Icons.Default.VideoLibrary

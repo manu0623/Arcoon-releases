@@ -771,6 +771,7 @@ class CocoonHomeViewModel @Inject constructor(
     }
 
     fun refreshCollections() {
+        if (CocoonSuspendTest.resumeInProgress.value) return
         refreshWidgets()
         // a game's Y menu may have added it to Home meanwhile
         rebuildHomeTiles()
@@ -796,7 +797,7 @@ class CocoonHomeViewModel @Inject constructor(
     }
 
     private fun publish() {
-        if (!allLoaded) return
+        if (!allLoaded || CocoonSuspendTest.resumeInProgress.value) return
         val natural = (platformTiles + collectionTiles + builtInTiles() + homeTiles).map { applyLook(it) }
         // Home folders: on Home, everything not inside one; inside one, just its members.
         val grouped = allGroupMembers()

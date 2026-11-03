@@ -3,6 +3,7 @@ package com.nendo.argosy.ui.components
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -160,6 +161,32 @@ fun LaunchOverlayMirror(modifier: Modifier = Modifier) {
         },
         modifier = modifier
     )
+}
+
+@Composable
+fun ResumeHandoffScreen(gameId: Long, gameTitle: String, modifier: Modifier = Modifier) {
+    val progress = remember(gameId, gameTitle) {
+        LaunchProgress(
+            gameTitle = gameTitle,
+            step = LaunchStep.Starting,
+            gameId = gameId,
+            stepStartedAtMs = SystemClock.elapsedRealtime()
+        )
+    }
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black)
+            .clickableNoFocus { },
+        contentAlignment = Alignment.Center
+    ) {
+        CalmLaunchContent(
+            progress = progress,
+            onCancel = {},
+            handoffStatusRes = R.string.ui_resume_handoff_resuming,
+            showCancel = false
+        )
+    }
 }
 
 /**

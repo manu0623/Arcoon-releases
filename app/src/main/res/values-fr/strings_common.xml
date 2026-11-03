@@ -205,6 +205,11 @@
     <!-- Shared modals and controls (ui/components, ui/primitives) -->
 
     <string name="ui_confirm_modal_cancel">Annuler</string>
+    <string name="ui_drawer_resume_game">Reprendre le jeu</string>
+    <string name="ui_drawer_resume_quit_hint">Quitter le jeu</string>
+    <string name="ui_drawer_resume_quit_title">Quitter le jeu suspendu ?</string>
+    <string name="ui_drawer_resume_quit_message">Quitter %1$s ? La session de jeu prendra fin.</string>
+    <string name="ui_drawer_resume_quit_confirm">Quitter le jeu</string>
     <string name="ui_pushed_apk_title">Installer %1$s ?</string>
     <string name="ui_pushed_apk_message">%1$s a envoyé cette app sur cet appareil.\n\nPaquet : %2$s\nSignature : %3$s</string>
     <string name="ui_pushed_apk_unknown_server">Votre serveur RomM</string>
@@ -727,6 +732,7 @@
     <string name="ui_launch_overlay_wait_core">Téléchargement du cœur de l\'émulateur en cours</string>
     <string name="ui_launch_overlay_wait_core_sized">Téléchargement du cœur de l\'émulateur en cours &#183; %1$s</string>
     <string name="ui_launch_overlay_wait_prepare">Préparation de l\'émulateur en cours</string>
+    <string name="ui_resume_handoff_resuming">Reprise du jeu…</string>
     <string name="ui_launch_overlay_failed_connect">RomM n\'a pas répondu. Démarrage avec la sauvegarde de cet appareil.</string>
     <string name="ui_launch_overlay_failed_timeout">RomM a mis trop de temps à répondre. Démarrage avec la sauvegarde de cet appareil.</string>
     <string name="ui_launch_overlay_failed_download">Votre sauvegarde n\'a pas pu être téléchargée. Démarrage avec la sauvegarde de cet appareil.</string>

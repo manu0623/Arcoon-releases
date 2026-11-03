@@ -194,6 +194,11 @@
     <!-- Shared modals and controls (ui/components, ui/primitives) -->
 
     <string name="ui_confirm_modal_cancel">Cancelar</string>
+    <string name="ui_drawer_resume_game">Reanudar juego</string>
+    <string name="ui_drawer_resume_quit_hint">Salir del juego</string>
+    <string name="ui_drawer_resume_quit_title">¿Salir del juego suspendido?</string>
+    <string name="ui_drawer_resume_quit_message">¿Salir de %1$s? Se cerrará la sesión del juego.</string>
+    <string name="ui_drawer_resume_quit_confirm">Salir del juego</string>
     <string name="ui_pushed_apk_title">¿Instalar %1$s?</string>
     <string name="ui_pushed_apk_message">%1$s envió esta app a este dispositivo.\n\nPaquete: %2$s\nFirma: %3$s</string>
     <string name="ui_pushed_apk_unknown_server">Tu servidor RomM</string>
@@ -716,6 +721,7 @@
     <string name="ui_launch_overlay_wait_core">Aún se está descargando el núcleo del emulador</string>
     <string name="ui_launch_overlay_wait_core_sized">Aún se está descargando el núcleo del emulador &#183; %1$s</string>
     <string name="ui_launch_overlay_wait_prepare">Aún se está preparando el emulador</string>
+    <string name="ui_resume_handoff_resuming">Reanudando el juego…</string>
     <string name="ui_launch_overlay_failed_connect">RomM no respondió. Se inicia con la partida guardada de este dispositivo.</string>
     <string name="ui_launch_overlay_failed_timeout">RomM tardó demasiado en responder. Se inicia con la partida guardada de este dispositivo.</string>
     <string name="ui_launch_overlay_failed_download">No se pudo descargar tu partida guardada. Se inicia con la partida guardada de este dispositivo.</string>

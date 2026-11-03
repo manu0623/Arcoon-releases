@@ -740,9 +740,16 @@ fun LibraryScreen(
                     val dockApps by (com.nendo.argosy.DualScreenManagerHolder.instance?.homeAppsFlow
                         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<String>()) }).collectAsState()
                     val dockContext = androidx.compose.ui.platform.LocalContext.current
+                    val z = com.nendo.argosy.ui.cocoon.CocoonFolderZoom.progress?.value ?: 1f
                     Column(
                         modifier = Modifier
                             .onSizeChanged { folderTopPx = it.height }
+                            .graphicsLayer {
+                                val s = androidx.compose.ui.util.lerp(0.92f, 1f, z)
+                                scaleX = s
+                                scaleY = s
+                                alpha = z.coerceIn(0f, 1f)
+                            }
                             .background(com.nendo.argosy.ui.theme.CocoonSurface.Background)
                     ) {
                     com.nendo.argosy.ui.cocoon.CocoonDock(

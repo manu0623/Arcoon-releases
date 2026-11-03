@@ -3,6 +3,7 @@ package com.nendo.argosy.ui.components.launch
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.os.SystemClock
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -64,15 +65,15 @@ import kotlinx.coroutines.delay
 private val Defaults = ComponentDefaults.LaunchOverlay
 
 /**
- * The quiet launch column: cover art, title and Cancel at equal spacing. The status block fades
- * in once [LaunchOverlayState] says the step has outlasted its patience or a failure needs
- * showing. Cancel's slot is always held, empty once the launch cannot be cancelled.
+ * The quiet launch column: cover art, title and an optional status and Cancel action.
  */
 @Composable
 fun CalmLaunchContent(
     progress: LaunchProgress,
     onCancel: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    @StringRes handoffStatusRes: Int? = null,
+    showCancel: Boolean = true
 ) {
     val reducedMotion = LocalMotionTier.current == MotionTier.Reduced
     var nowMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
@@ -86,6 +87,15 @@ fun CalmLaunchContent(
         statusFadeDelayMs = Defaults.statusFadeDelayMs,
         sweepMs = ComponentDefaults.ProgressBar.sweepMs
     )
+    val shownUi = handoffStatusRes?.let {
+        ui.copy(
+            line = it,
+            lineIsFailure = false,
+            bar = CalmLaunchBar.INDETERMINATE,
+            cancellable = false,
+            revealAtMs = null
+        )
+    } ?: ui
     LaunchedEffect(progress.stepStartedAtMs, progress.step.phase) {
         nowMs = SystemClock.elapsedRealtime()
         val revealAtMs = ui.revealAtMs ?: return@LaunchedEffect
@@ -93,7 +103,7 @@ fun CalmLaunchContent(
         if (waitMs > 0) delay(waitMs)
         nowMs = SystemClock.elapsedRealtime()
     }
-    val ticking = ui.bar == CalmLaunchBar.DETERMINATE
+    val ticking = shownUi.bar == CalmLaunchBar.DETERMINATE
     LaunchedEffect(ticking) {
         while (ticking) {
             delay(Defaults.etaTickMs.toLong())
@@ -110,11 +120,11 @@ fun CalmLaunchContent(
     val title = progress.gameTitle
     val hasLead = hasArt || title != null
     val gap = Dimens.spacingLg
-    val enter = reflowEnter(ui)
-    val exit = reflowExit(ui)
+    val enter = reflowEnter(shownUi)
+    val exit = reflowExit(shownUi)
     val cancelAlpha by animateFloatAsState(
-        targetValue = if (ui.cancellable) 1f else 0f,
-        animationSpec = tween(durationMillis = ui.statusFadeMs, easing = Motion.argosyEase),
+        targetValue = if (showCancel && shownUi.cancellable) 1f else 0f,
+        animationSpec = tween(durationMillis = shownUi.statusFadeMs, easing = Motion.argosyEase),
         label = "launchCancelFade"
     )
 
@@ -153,8 +163,8 @@ fun CalmLaunchContent(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            val statusShown = ui.line != null || ui.bar != CalmLaunchBar.NONE
-            val status = rememberLastShown(ui, statusShown)
+            val statusShown = shownUi.line != null || shownUi.bar != CalmLaunchBar.NONE
+            val status = rememberLastShown(shownUi, statusShown)
             AnimatedVisibility(visible = statusShown, enter = enter, exit = exit) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (hasLead) Spacer(Modifier.height(gap))
@@ -162,12 +172,14 @@ fun CalmLaunchContent(
                     if (!hasLead) Spacer(Modifier.height(gap))
                 }
             }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.alpha(cancelAlpha)
-            ) {
-                if (hasLead) Spacer(Modifier.height(gap))
-                LaunchCancelButton(onClick = { if (ui.cancellable) onCancel() })
+            if (showCancel) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.alpha(cancelAlpha)
+                ) {
+                    if (hasLead) Spacer(Modifier.height(gap))
+                    LaunchCancelButton(onClick = { if (shownUi.cancellable) onCancel() })
+                }
             }
         }
     }

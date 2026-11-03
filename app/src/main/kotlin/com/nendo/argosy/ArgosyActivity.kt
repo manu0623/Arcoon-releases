@@ -394,6 +394,7 @@ class ArgosyActivity : ComponentActivity() {
                     }
                     val companionHoldsPrimary =
                         dualScreenManager.companionHoldsPrimary.collectAsState()
+                    val rolesSwapped = dualScreenManager.isRolesSwapped.collectAsState()
                     val gameActive = dualScreenManager.gameOnScreen.collectAsState()
                     val gameDisplay = dualScreenManager.emulatorDisplay.collectAsState()
                     val showsPresentation = rendersPresentation(
@@ -409,7 +410,7 @@ class ArgosyActivity : ComponentActivity() {
                             "main window (display ${window.decorView.display?.displayId}) shows ${if (showsPresentation) "presentation" else "launcher"}"
                         )
                     }
-                    com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = showsPresentation) {
+                    com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = rolesSwapped.value) {
                     if (showsPresentation) {
                         val slot by dualScreenManager.presentationSlot.collectAsState()
                         androidx.compose.runtime.LaunchedEffect(slot::class) {

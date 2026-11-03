@@ -193,6 +193,11 @@
     <!-- Shared modals and controls (ui/components, ui/primitives) -->
 
     <string name="ui_confirm_modal_cancel">Abbrechen</string>
+    <string name="ui_drawer_resume_game">Spiel fortsetzen</string>
+    <string name="ui_drawer_resume_quit_hint">Spiel beenden</string>
+    <string name="ui_drawer_resume_quit_title">Pausiertes Spiel beenden?</string>
+    <string name="ui_drawer_resume_quit_message">%1$s beenden? Die Spielsitzung wird beendet.</string>
+    <string name="ui_drawer_resume_quit_confirm">Spiel beenden</string>
     <string name="ui_pushed_apk_title">%1$s installieren?</string>
     <string name="ui_pushed_apk_message">%1$s hat diese App an dieses Gerät gesendet.\n\nPaket: %2$s\nSignatur: %3$s</string>
     <string name="ui_pushed_apk_unknown_server">Dein RomM-Server</string>
@@ -702,6 +707,7 @@
     <string name="ui_launch_overlay_wait_core">Der Emulator-Core wird noch heruntergeladen</string>
     <string name="ui_launch_overlay_wait_core_sized">Der Emulator-Core wird noch heruntergeladen &#183; %1$s</string>
     <string name="ui_launch_overlay_wait_prepare">Der Emulator wird noch vorbereitet</string>
+    <string name="ui_resume_handoff_resuming">Spiel wird fortgesetzt…</string>
     <string name="ui_launch_overlay_failed_connect">RomM hat nicht geantwortet. Gestartet wird mit dem Spielstand auf diesem Gerät.</string>
     <string name="ui_launch_overlay_failed_timeout">RomM hat zu lange für eine Antwort gebraucht. Gestartet wird mit dem Spielstand auf diesem Gerät.</string>
     <string name="ui_launch_overlay_failed_download">Dein Spielstand konnte nicht heruntergeladen werden. Gestartet wird mit dem Spielstand auf diesem Gerät.</string>

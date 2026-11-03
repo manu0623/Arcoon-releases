@@ -139,9 +139,9 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
             // The logo: centred and large on its own, smaller in the left third beside the panel.
             val logo = detail.logoUrl ?: detail.artUrl?.takeIf { t > 0.5f && detail.logoUrl == null }
             if (logo != null) {
-                val logoW = lerp(w * 0.46f, w * 0.26f, t)
-                val logoH = lerp(h * 0.42f, h * 0.34f, t)
-                val centerX = lerp(w * 0.5f, w * 0.175f, t)
+                val logoW = w * 0.46f
+                val logoH = h * 0.42f
+                val centerX = w * 0.5f
                 AsyncImage(
                     model = com.nendo.argosy.ui.common.rememberFileImageModel(logo),
                     contentDescription = detail.title,
@@ -172,13 +172,12 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
             if (t > 0f) {
                 val left = w * 0.345f
                 val panelW = w * 0.64f
-                val slide = w * 0.12f * (1f - t)
                 val hasShots = screenshots.isNotEmpty()
                 val panelTop = h * 0.14f
                 val panelH = if (hasShots) h * 0.50f else h * 0.70f
                 Column(
                     modifier = Modifier
-                        .absoluteOffset(x = left + slide, y = panelTop)
+                        .absoluteOffset(x = left, y = panelTop)
                         .width(panelW)
                         .height(panelH)
                         .graphicsLayer { alpha = t }
@@ -192,7 +191,7 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
                     val stripH = h * 0.175f
                     Row(
                         modifier = Modifier
-                            .absoluteOffset(x = left + slide * 1.4f, y = stripTop)
+                            .absoluteOffset(x = left, y = stripTop)
                             .width(panelW)
                             .height(stripH)
                             .graphicsLayer { alpha = t }

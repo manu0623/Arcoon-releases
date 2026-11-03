@@ -244,7 +244,8 @@ open class GameSessionManager @Inject constructor(
                     android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
                     android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION
             )
-            task.startActivity(context, intent, null)
+            val options = android.app.ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()
+            task.startActivity(context, intent, options)
         }.isSuccess
         if (!moved) {
             runCatching { task.moveToFront() }
