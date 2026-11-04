@@ -18,6 +18,8 @@ import com.nendo.argosy.data.local.dao.EmulatorConfigDao
 import com.nendo.argosy.data.local.dao.GameDiscDao
 import com.nendo.argosy.data.local.dao.GameFileDao
 import com.nendo.argosy.data.local.entity.GameEntity
+import com.nendo.argosy.data.media.EmbeddedMediaRepository
+import com.nendo.argosy.data.platform.PlatformDefinitions
 import com.nendo.argosy.data.repository.PlatformRepository
 import com.nendo.argosy.data.model.ArtSlot
 import com.nendo.argosy.data.model.GameSource
@@ -112,6 +114,7 @@ class GameDetailViewModel @Inject constructor(
     private val playSessionTracker: PlaySessionTracker,
     private val collectionModalDelegate: CollectionModalDelegate,
     private val imageCacheManager: ImageCacheManager,
+    private val embeddedMediaRepository: EmbeddedMediaRepository,
     private val preferencesRepository: com.nendo.argosy.data.preferences.UserPreferencesRepository,
     private val gameUpdateBus: GameUpdateBus,
     private val repairImageCacheUseCase: RepairImageCacheUseCase,
@@ -171,6 +174,7 @@ class GameDetailViewModel @Inject constructor(
     val launchEvents: SharedFlow<LaunchEvent> = _launchEvents.asSharedFlow()
 
     private var currentGameId: Long = 0
+    private val embeddedMediaExtractionInFlight = mutableSetOf<Long>()
     private var steamLauncherRefreshVersion = 0L
     private val documentReaderController =
         com.nendo.argosy.ui.screens.gamedetail.components.DocumentReaderController(
@@ -563,6 +567,24 @@ class GameDetailViewModel @Inject constructor(
         }
     }
 
+    private fun extractEmbeddedRomMedia(game: GameEntity, refresh3dsBanner: Boolean) {
+        if (!embeddedMediaExtractionInFlight.add(game.id)) return
+        viewModelScope.launch {
+            try {
+                imageCacheManager.refreshEmbeddedBannerArt(game.id)
+                val embeddedGameId = game.id.toString()
+                val iconCached = embeddedMediaRepository.getCachedIconFile(embeddedGameId) != null
+                val bannerCached = embeddedMediaRepository.getCachedBannerImageFile(embeddedGameId) != null
+                if (!iconCached || (refresh3dsBanner && !bannerCached)) {
+                    embeddedMediaRepository.extractAndCacheForGame(embeddedGameId, game.localPath ?: return@launch)
+                }
+                imageCacheManager.refreshEmbeddedBannerArt(game.id)
+            } finally {
+                embeddedMediaExtractionInFlight.remove(game.id)
+            }
+        }
+    }
+
     fun loadGame(gameId: Long) {
         if (gameId != currentGameId) downloadDelegate.reset()
         steamLauncherRefreshVersion++
@@ -584,6 +606,16 @@ class GameDetailViewModel @Inject constructor(
             val platformDefaultConfig = emulatorConfigDao.getDefaultForPlatform(game.platformId)
 
             val prefs = preferencesRepository.userPreferences.first()
+            val canonicalPlatformSlug = PlatformDefinitions.getCanonicalSlug(game.platformSlug)
+            val isThreeDs = canonicalPlatformSlug == "3ds"
+            val supportsEmbeddedRomMedia = isThreeDs || canonicalPlatformSlug == "nds" ||
+                canonicalPlatformSlug == "dsi"
+            if (game.localPath != null &&
+                ((prefs.embeddedMediaExtractionEnabled && supportsEmbeddedRomMedia) ||
+                    (prefs.useEmbedded3dsBannerForHero && isThreeDs))
+            ) {
+                extractEmbeddedRomMedia(game, refresh3dsBanner = prefs.useEmbedded3dsBannerForHero && isThreeDs)
+            }
 
             val emulatorName = gameSpecificConfig?.displayName
                 ?: platformDefaultConfig?.displayName
@@ -609,6 +641,7 @@ class GameDetailViewModel @Inject constructor(
                     ?: platformDefaultConfig?.coreName
                     ?: EmulatorRegistry.getDefaultSelectableCore(game.platformSlug, isBuiltInEmulator)?.id
             }
+
             val selectedCoreName = if (isCoreSelectable) {
                 platformCores.find { it.id == selectedCoreId }?.displayName
             } else null

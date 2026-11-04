@@ -141,6 +141,10 @@ internal sealed class StorageItem(
     data object AutoStartDownloads : StorageItem("autoStartDownloads", "downloads")
     data object Threshold : StorageItem("threshold", "downloads")
     data object InternalStaging : StorageItem("internalStaging", "downloads")
+
+    data object ExtractRomMedia : StorageItem("extractRomMedia", "romMedia")
+    data object Use3dsBanner : StorageItem("use3dsBanner", "romMedia")
+
     data object FolderNameFromRom : StorageItem("folderNameFromRom", "downloads")
 
     data object ResetLibrary : StorageItem("resetLibrary", "danger")
@@ -153,6 +157,9 @@ internal sealed class StorageItem(
         private val DownloadsSpacer = SectionSpacer("downloadsSpacer", "downloads")
         private val DownloadsHeader =
             Header("downloadsHeader", "downloads", R.string.settings_storage_section_downloads)
+        private val RomMediaSpacer = SectionSpacer("romMediaSpacer", "romMedia")
+        private val RomMediaHeader =
+            Header("romMediaHeader", "romMedia", R.string.settings_storage_rom_media_section)
         private val DangerSpacer = SectionSpacer("dangerSpacer", "danger")
         private val DangerHeader = Header("dangerHeader", "danger", R.string.settings_storage_section_danger)
 
@@ -164,6 +171,7 @@ internal sealed class StorageItem(
                 DownloadsSpacer, DownloadsHeader, MaxDownloads, RemoteInstalls, AutoStartDownloads,
                 Threshold, InternalStaging,
                 FolderNameFromRom,
+                RomMediaSpacer, RomMediaHeader, ExtractRomMedia, Use3dsBanner,
                 DangerSpacer, DangerHeader, ResetLibrary, HardReset
             )
     }
@@ -183,6 +191,7 @@ private fun createStorageLayout(state: StorageLayoutState) = SettingsLayout<Stor
             "overview" -> R.string.settings_storage_section_overview
             "locations" -> R.string.settings_storage_section_locations
             "downloads" -> R.string.settings_storage_section_downloads
+            "romMedia" -> R.string.settings_storage_rom_media_section
             "danger" -> R.string.settings_storage_section_danger
             else -> null
         }
@@ -721,6 +730,22 @@ fun StorageSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
                 isEnabled = storage.folderNameFromRom,
                 isFocused = isFocused(item),
                 onToggle = { viewModel.toggleFolderNameFromRom() }
+            )
+
+            StorageItem.ExtractRomMedia -> SwitchPreference(
+                title = stringResource(R.string.settings_storage_rom_media_extract_title),
+                subtitle = stringResource(R.string.settings_storage_rom_media_extract_subtitle),
+                isEnabled = uiState.embeddedMediaExtractionEnabled,
+                isFocused = isFocused(item),
+                onToggle = viewModel::setEmbeddedMediaExtractionEnabled
+            )
+
+            StorageItem.Use3dsBanner -> SwitchPreference(
+                title = stringResource(R.string.settings_storage_rom_media_use_banner_title),
+                subtitle = stringResource(R.string.settings_storage_rom_media_use_banner_subtitle),
+                isEnabled = uiState.useEmbedded3dsBannerForHero,
+                isFocused = isFocused(item),
+                onToggle = viewModel::setUseEmbedded3dsBannerForHero
             )
 
             StorageItem.ResetLibrary -> {

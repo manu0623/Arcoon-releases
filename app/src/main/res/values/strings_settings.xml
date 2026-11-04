@@ -1907,6 +1907,11 @@
     <string name="settings_storage_media_artwork_title">Artwork cache</string>
     <!-- Second line of that row. "Backdrop" is the wide background picture for a title. -->
     <string name="settings_storage_media_artwork_subtitle">Posters and backdrops fetched while browsing, shared with other online artwork</string>
+    <string name="settings_storage_rom_media_section">ROM MEDIA</string>
+    <string name="settings_storage_rom_media_extract_title">Extract ROM media</string>
+    <string name="settings_storage_rom_media_extract_subtitle">Read embedded icons from supported local NDS ROMs and icons and banners from supported local 3DS ROMs</string>
+    <string name="settings_storage_rom_media_use_banner_title">Use 3DS banner for hero art</string>
+    <string name="settings_storage_rom_media_use_banner_subtitle">Prefer supported embedded 3DS banners over server hero art; manual artwork overrides still win</string>
     <!-- Figure on that row, counting the picture files held. -->
     <plurals name="settings_storage_media_artwork_files">
         <item quantity="one">%d file</item>

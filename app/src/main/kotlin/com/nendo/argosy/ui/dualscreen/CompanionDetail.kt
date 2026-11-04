@@ -16,6 +16,7 @@ data class CompanionDetail(
     val artUrl: String? = null,
     val backdropUrl: String? = null,
     val backdropIsScreenshotOrArt: Boolean = false,
+    val embeddedBannerBackdrop: Boolean = false,
     val facts: List<CompanionFact> = emptyList(),
     val isGameTitle: Boolean = false,
     val spineUrl: String? = null,

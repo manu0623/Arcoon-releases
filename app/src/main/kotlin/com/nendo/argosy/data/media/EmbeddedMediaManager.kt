@@ -22,7 +22,14 @@ class EmbeddedMediaManager @Inject constructor(
     data class ExtractionResult(
         val success: Boolean,
         val iconBitmap: Bitmap? = null,
-        val message: String = ""
+        val message: String = "",
+        val title: String? = null,
+        val publisher: String? = null,
+        val bannerCgfx: ByteArray? = null,
+        val bannerJingleWav: ByteArray? = null,
+        val bannerBitmap: Bitmap? = null,
+        val bannerGif: ByteArray? = null,
+        val bannerFailureReason: String? = null
     )
 
     suspend fun extractForGame(romPath: String): ExtractionResult = withContext(Dispatchers.IO) {
@@ -33,7 +40,10 @@ class EmbeddedMediaManager @Inject constructor(
 
         val inspection = containerReader.inspect(file)
         if (!inspection.isValid) {
-            return@withContext ExtractionResult(false, message = "Unsupported or invalid ROM container")
+            return@withContext ExtractionResult(
+                false,
+                message = inspection.failureReason ?: "Unsupported or invalid ROM container"
+            )
         }
 
         when (inspection.platform) {
@@ -46,8 +56,49 @@ class EmbeddedMediaManager @Inject constructor(
                 }
             }
             RomContainerReader.RomPlatform.THREEDS -> {
-                Log.d(TAG, "3DS embedded media extraction requested for ${file.name}")
-                ExtractionResult(false, message = "3DS banner extraction pipeline pending CGFX parser integration")
+                when (val parsed = containerReader.readThreeDsSmdh(file, inspection)) {
+                    is SmdhParseResult.Success -> {
+                        val media = parsed.media
+                        val bannerResult = containerReader.readThreeDsBannerCgfx(file, inspection)
+                        val bannerCgfx = (bannerResult as? ThreeDsBannerResult.Success)?.cgfx
+                        val bannerRenderResult = bannerCgfx?.let(ThreeDsBannerRenderer::render)
+                        val bannerGif = bannerCgfx?.let(ThreeDsBannerRenderer::renderRotationGif)
+                        val bannerBitmap = (bannerRenderResult as? ThreeDsBannerRenderResult.Success)?.let {
+                            Bitmap.createBitmap(it.argb, it.width, it.height, Bitmap.Config.ARGB_8888)
+                        }
+                        val bannerJingle = containerReader.readThreeDsBannerJingle(file, inspection)
+                        val bannerJingleWav = (bannerJingle as? BcwavResult.Success)?.wav
+                        if (bannerJingle is BcwavResult.Failure) {
+                            Log.w(TAG, "Could not decode 3DS banner jingle from ${file.name}: ${bannerJingle.reason}")
+                        }
+                        val bannerFailure = when {
+                            bannerResult is ThreeDsBannerResult.Failure -> bannerResult.reason
+                            bannerRenderResult is ThreeDsBannerRenderResult.Failure -> bannerRenderResult.reason
+                            else -> null
+                        }
+                        if (bannerFailure != null) {
+                            Log.w(TAG, "Could not render 3DS banner from ${file.name}: $bannerFailure")
+                        }
+                        ExtractionResult(
+                            success = true,
+                            iconBitmap = Bitmap.createBitmap(
+                                media.iconArgb,
+                                media.iconWidth,
+                                media.iconHeight,
+                                Bitmap.Config.ARGB_8888
+                            ),
+                            message = "Successfully extracted 3DS SMDH icon",
+                            title = media.title,
+                            publisher = media.publisher,
+                            bannerCgfx = bannerCgfx,
+                            bannerJingleWav = bannerJingleWav,
+                            bannerBitmap = bannerBitmap,
+                            bannerGif = bannerGif,
+                            bannerFailureReason = bannerFailure
+                        )
+                    }
+                    is SmdhParseResult.Failure -> ExtractionResult(false, message = parsed.reason)
+                }
             }
             RomContainerReader.RomPlatform.UNKNOWN -> {
                 ExtractionResult(false, message = "Unknown ROM platform format")

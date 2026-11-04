@@ -31,6 +31,21 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 internal fun routeObserveDelegateStates(vm: SettingsViewModel) {
+    vm.preferencesRepository.userPreferences
+        .distinctUntilChanged { old, new ->
+            old.embeddedMediaExtractionEnabled == new.embeddedMediaExtractionEnabled &&
+                old.useEmbedded3dsBannerForHero == new.useEmbedded3dsBannerForHero
+        }
+        .onEach { prefs ->
+            vm._uiState.update {
+                it.copy(
+                    embeddedMediaExtractionEnabled = prefs.embeddedMediaExtractionEnabled,
+                    useEmbedded3dsBannerForHero = prefs.useEmbedded3dsBannerForHero
+                )
+            }
+        }
+        .launchIn(vm.viewModelScope)
+
     vm.displayDelegate.state.onEach { display ->
         vm._uiState.update { current ->
             val newConfig = if (display.gradientPreset != GradientPreset.CUSTOM &&

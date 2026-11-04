@@ -39,7 +39,8 @@ data class AppPreferences(
     val monthlyRecapEnabled: Boolean = true,
     val lastMonthlyRecapShown: YearMonth? = null,
     val preLaunchRecapBaseline: Instant? = null,
-    val embeddedMediaExtractionEnabled: Boolean = true
+    val embeddedMediaExtractionEnabled: Boolean = true,
+    val useEmbedded3dsBannerForHero: Boolean = false
 )
 
 @Singleton
@@ -74,6 +75,7 @@ class AppPreferencesRepository @Inject constructor(
         val LAST_MONTHLY_RECAP_SHOWN = stringPreferencesKey("last_monthly_recap_shown")
         val PRE_LAUNCH_RECAP_BASELINE = stringPreferencesKey("pre_launch_recap_baseline")
         val EMBEDDED_MEDIA_EXTRACTION_ENABLED = booleanPreferencesKey("embedded_media_extraction_enabled")
+        val USE_EMBEDDED_3DS_BANNER_FOR_HERO = booleanPreferencesKey("use_embedded_3ds_banner_for_hero")
     }
 
     val preferences: Flow<AppPreferences> = dataStore.data.map { prefs ->
@@ -120,12 +122,17 @@ class AppPreferencesRepository @Inject constructor(
                 ?.let { runCatching { YearMonth.parse(it) }.getOrNull() },
             preLaunchRecapBaseline = prefs[Keys.PRE_LAUNCH_RECAP_BASELINE]
                 ?.let { runCatching { Instant.parse(it) }.getOrNull() },
-            embeddedMediaExtractionEnabled = prefs[Keys.EMBEDDED_MEDIA_EXTRACTION_ENABLED] ?: true
+            embeddedMediaExtractionEnabled = prefs[Keys.EMBEDDED_MEDIA_EXTRACTION_ENABLED] ?: true,
+            useEmbedded3dsBannerForHero = prefs[Keys.USE_EMBEDDED_3DS_BANNER_FOR_HERO] ?: false
         )
     }.flowOn(Dispatchers.Default)
 
     suspend fun setEmbeddedMediaExtractionEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.EMBEDDED_MEDIA_EXTRACTION_ENABLED] = enabled }
+    }
+
+    suspend fun setUseEmbedded3dsBannerForHero(enabled: Boolean) {
+        dataStore.edit { it[Keys.USE_EMBEDDED_3DS_BANNER_FOR_HERO] = enabled }
     }
 
     suspend fun setFirstRunComplete() {
