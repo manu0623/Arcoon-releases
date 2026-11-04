@@ -260,6 +260,7 @@ class UserPreferencesRepository @Inject constructor(
             quayPassAvatarSyncPending = sync.quayPassAvatarSyncPending,
             quayPassMessageSyncPending = sync.quayPassMessageSyncPending,
             embeddedMediaExtractionEnabled = app.embeddedMediaExtractionEnabled,
+            useEmbedded3dsBannerForHero = app.useEmbedded3dsBannerForHero,
             quayPassGreeting = sync.quayPassGreeting,
             quayPassTicketBalance = sync.quayPassTicketBalance,
             mediaStoragePath = storage.mediaStoragePath,
@@ -549,6 +550,7 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun setFolderNameFromRom(enabled: Boolean) = storagePrefs.setFolderNameFromRom(enabled)
     suspend fun setCustomBiosPath(path: String?) = storagePrefs.setCustomBiosPath(path)
     suspend fun setEmbeddedMediaExtractionEnabled(enabled: Boolean) = appPrefs.setEmbeddedMediaExtractionEnabled(enabled)
+    suspend fun setUseEmbedded3dsBannerForHero(enabled: Boolean) = appPrefs.setUseEmbedded3dsBannerForHero(enabled)
     suspend fun setWeeklyIntegrityCheckEnabled(enabled: Boolean) = storagePrefs.setWeeklyIntegrityCheckEnabled(enabled)
     suspend fun setLastIntegrityCheckTime(timeMs: Long) = storagePrefs.setLastIntegrityCheckTime(timeMs)
     suspend fun setMediaStoragePath(path: String?) = storagePrefs.setMediaStoragePath(path)
@@ -820,6 +822,7 @@ data class BuiltinEmulatorSettings(
 data class UserPreferences(
     val firstRunComplete: Boolean = false,
     val embeddedMediaExtractionEnabled: Boolean = true,
+    val useEmbedded3dsBannerForHero: Boolean = false,
     val rommBaseUrl: String? = null,
     val rommUsername: String? = null,
     val rommUserId: Long? = null,

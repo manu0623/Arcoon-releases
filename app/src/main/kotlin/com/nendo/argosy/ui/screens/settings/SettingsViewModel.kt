@@ -2034,6 +2034,11 @@ class SettingsViewModel @Inject constructor(
             preferencesRepository.setEmbeddedMediaExtractionEnabled(enabled)
         }
     }
+    fun setUseEmbedded3dsBannerForHero(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setUseEmbedded3dsBannerForHero(enabled)
+        }
+    }
 
     fun setPlatformEmulator(platformId: Long, platformSlug: String, emulator: InstalledEmulator?) =
         routeSetPlatformEmulator(this, platformId, platformSlug, emulator)

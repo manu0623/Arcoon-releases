@@ -589,6 +589,14 @@ private fun routeStorageConfirm(vm: SettingsViewModel, state: SettingsUiState): 
             vm.toggleFolderNameFromRom()
             return InputResult.handled(SoundType.TOGGLE)
         }
+        StorageItem.ExtractRomMedia -> {
+            vm.setEmbeddedMediaExtractionEnabled(!state.embeddedMediaExtractionEnabled)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        StorageItem.Use3dsBanner -> {
+            vm.setUseEmbedded3dsBannerForHero(!state.useEmbedded3dsBannerForHero)
+            return InputResult.handled(SoundType.TOGGLE)
+        }
         StorageItem.ResetLibrary -> vm.requestPurgeAll()
         StorageItem.HardReset -> {
             if (!state.storage.isHardResetting && !state.storage.isPurgingAll) vm.requestHardReset()
@@ -1538,5 +1546,3 @@ private fun routeBuiltinEmulatorConfirm(vm: SettingsViewModel, state: SettingsUi
     }
     return InputResult.HANDLED
 }
-
-

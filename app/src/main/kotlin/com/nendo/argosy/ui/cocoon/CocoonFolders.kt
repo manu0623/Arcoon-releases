@@ -1,6 +1,5 @@
 package com.nendo.argosy.ui.cocoon
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
@@ -52,7 +51,6 @@ enum class CocoonGlyph { PLATFORM, SETTINGS, APPS, EMULATORS, COLLECTION, FOLDER
  */
 object CocoonFolderPalette {
     private val stops: List<Pair<Color, Color>> = listOf(
-        // Cocoon's folders are saturated: a bright top running into a deeper, slightly shifted hue.
         Color(0xFFA27BFF) to Color(0xFF8B2BE8), // lilac
         Color(0xFFFF8798) to Color(0xFFEF3A50), // coral
         Color(0xFF8E7DFF) to Color(0xFF5A3BF6), // violet
@@ -66,29 +64,33 @@ object CocoonFolderPalette {
         Color(0xFFFFDB57) to Color(0xFFF3A70E), // sunflower
     )
 
-    val size: Int get() = stops.size
+    private val drawables: List<Int> = listOf(
+        com.nendo.argosy.R.drawable.folder_violet,
+        com.nendo.argosy.R.drawable.folder_coral,
+        com.nendo.argosy.R.drawable.folder_sky,
+        com.nendo.argosy.R.drawable.folder_mint,
+        com.nendo.argosy.R.drawable.folder_orange,
+        com.nendo.argosy.R.drawable.folder_amber,
+        com.nendo.argosy.R.drawable.folder_magenta,
+        com.nendo.argosy.R.drawable.folder_slate,
+        com.nendo.argosy.R.drawable.folder_charcoal,
+        com.nendo.argosy.R.drawable.folder_orange_soft,
+        com.nendo.argosy.R.drawable.folder_silver,
+    )
 
-    // Icon Style: every folder in the theme's accent, or flat grey, instead of its own colour.
-    private val accent: Color get() = com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.colors?.accent ?: Color(0xFF8E7DFF)
+    val size: Int get() = drawables.size
 
-    fun top(index: Int): Color = when (CocoonHomeStore.iconStyle) {
-        "ACCENT" -> accent
-        "FLAT" -> Color(0xFF4A4A52)
-        else -> stops[index.mod(stops.size)].first
-    }
+    fun drawableFor(index: Int): Int = drawables[index.mod(drawables.size)]
 
-    fun bottom(index: Int): Color = when (CocoonHomeStore.iconStyle) {
-        "ACCENT" -> androidx.compose.ui.graphics.lerp(accent, Color.Black, 0.35f)
-        "FLAT" -> Color(0xFF2C2C32)
-        else -> stops[index.mod(stops.size)].second
-    }
+    fun top(index: Int): Color = stops[index.mod(stops.size)].first
+    fun bottom(index: Int): Color = stops[index.mod(stops.size)].second
 
     /** A stable colour for a platform slug, so a folder does not change colour between launches. */
-    fun indexFor(key: String): Int = (key.hashCode() and 0x7fffffff) % stops.size
+    fun indexFor(key: String): Int = (key.hashCode() and 0x7fffffff) % drawables.size
 
-    const val SETTINGS = 4
-    const val APPS = 5
-    const val EMULATORS = 6
+    const val SETTINGS = 7
+    const val APPS = 3
+    const val EMULATORS = 0
 }
 
 /**
@@ -140,30 +142,16 @@ fun CocoonFolderIcon(
         }
         else -> Unit
     }
-    val top = CocoonFolderPalette.top(colorIndex)
-    val bottom = CocoonFolderPalette.bottom(colorIndex)
+    val drawableRes = CocoonFolderPalette.drawableFor(colorIndex)
+    val tintColor = CocoonFolderPalette.top(colorIndex)
     Box(modifier = modifier.size(size)) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = this.size.width
-            val h = this.size.height
-            val radius = w * 0.2f
-            val tabTop = if (showTab) h * 0.04f else 0f
-            val bodyTop = if (showTab) h * 0.13f else 0f
-            if (showTab) {
-                drawRoundRect(
-                    color = lerp(top, Color.White, 0.18f),
-                    topLeft = Offset(w * 0.02f, tabTop),
-                    size = Size(w * 0.46f, h * 0.3f),
-                    cornerRadius = CornerRadius(radius * 0.7f)
-                )
-            }
-            drawRoundRect(
-                brush = Brush.verticalGradient(listOf(top, bottom), startY = bodyTop, endY = h),
-                topLeft = Offset(0f, bodyTop),
-                size = Size(w, h - bodyTop),
-                cornerRadius = CornerRadius(radius)
-            )
-        }
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(drawableRes),
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(tintColor, androidx.compose.ui.graphics.BlendMode.Modulate),
+            modifier = Modifier.fillMaxSize()
+        )
         val glyphSize = size * 0.54f
         val glyphModifier = Modifier
             .align(Alignment.Center)
@@ -224,7 +212,7 @@ private fun CocoonGlyph.vector(): ImageVector = when (this) {
     CocoonGlyph.SETTINGS -> Icons.Filled.Settings
     CocoonGlyph.APPS -> Icons.Filled.Apps
     CocoonGlyph.EMULATORS -> Icons.Filled.Memory
-    CocoonGlyph.COLLECTION -> Icons.Filled.Star
+    CocoonGlyph.COLLECTION -> Icons.Filled.Folder
     CocoonGlyph.FOLDER, CocoonGlyph.PLATFORM -> Icons.Filled.Folder
     CocoonGlyph.APP, CocoonGlyph.POD, CocoonGlyph.WIDGET, CocoonGlyph.GAME -> Icons.Filled.Apps
     CocoonGlyph.SMART -> Icons.Filled.Star

@@ -1957,6 +1957,8 @@ data class SettingsUiState(
     val fileLoggingPath: String? = null,
     val fileLogLevel: LogLevel = LogLevel.INFO,
     val saveDebugLoggingEnabled: Boolean = false,
+    val embeddedMediaExtractionEnabled: Boolean = true,
+    val useEmbedded3dsBannerForHero: Boolean = false,
     val previewGame: SettingsPreviewGame? = null,
     val previewGames: List<SettingsPreviewGame> = emptyList(),
     val previewGameIndex: Int = 0,

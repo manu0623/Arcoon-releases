@@ -102,6 +102,7 @@ class GameLaunchDelegateTest {
         launchHandoff = LaunchHandoff(tracker, mockk(relaxed = true), router, playSessionTracker, holdMs),
         resolveSnapshotConflict = mockk(relaxed = true),
         connectedControllerTracker = mockk(relaxed = true),
+        gameSessionManager = mockk(relaxed = true),
         preLaunchRecapStep = preLaunchRecapStep
     )
 

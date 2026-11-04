@@ -137,7 +137,8 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
             val w = maxWidth
             val h = maxHeight
             // The logo: centred and large on its own, smaller in the left third beside the panel.
-            val logo = detail.logoUrl ?: detail.artUrl?.takeIf { t > 0.5f && detail.logoUrl == null }
+            val logo = if (detail.embeddedBannerBackdrop) null
+            else detail.logoUrl ?: detail.artUrl?.takeIf { t > 0.5f && detail.logoUrl == null }
             if (logo != null) {
                 val logoW = w * 0.46f
                 val logoH = h * 0.42f

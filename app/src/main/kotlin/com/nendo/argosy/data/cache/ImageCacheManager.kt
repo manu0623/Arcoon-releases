@@ -23,8 +23,11 @@ import com.nendo.argosy.data.local.dao.clearCachedPathsChunked
 import com.nendo.argosy.data.local.dao.clearOverride
 import com.nendo.argosy.data.local.dao.resolved
 import com.nendo.argosy.data.local.entity.toResolvedArtByGame
+import com.nendo.argosy.data.media.EmbeddedMediaRepository
 import com.nendo.argosy.data.model.ArtSlot
 import com.nendo.argosy.data.model.ResolvedGameArt
+import com.nendo.argosy.data.model.withEmbedded3dsBanner
+import com.nendo.argosy.data.preferences.AppPreferencesRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.nendo.argosy.util.Logger
 import com.nendo.argosy.util.SafeCoroutineScope
@@ -36,7 +39,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transform
@@ -160,21 +165,52 @@ class ImageCacheManager @Inject constructor(
     private val platformDao: PlatformDao,
     private val achievementDao: AchievementDao,
     private val volumeHealth: StorageVolumeHealth,
-    private val fileAccessLayer: FileAccessLayer
+    private val fileAccessLayer: FileAccessLayer,
+    private val appPreferencesRepository: AppPreferencesRepository,
+    private val embeddedMediaRepository: EmbeddedMediaRepository
 ) {
     private val artModelScope = SafeCoroutineScope(Dispatchers.IO, "GameArtModel")
+    private val embeddedBannerRevision = kotlinx.coroutines.flow.MutableStateFlow(0)
 
-    val gameArt: StateFlow<Map<Long, ResolvedGameArt>> = gameArtDao.observeRowCount()
+    val gameArt: StateFlow<Map<Long, ResolvedGameArt>> = combine(
+        gameArtDao.observeRowCount().conflate(),
+        appPreferencesRepository.preferences
+            .map { it.useEmbedded3dsBannerForHero }
+            .distinctUntilChanged(),
+        embeddedBannerRevision
+    ) { _, useEmbeddedBanner, _ -> useEmbeddedBanner }
         .conflate()
         .transform {
-            emit(gameArtDao.getAll().toResolvedArtByGame())
+            val artByGame = gameArtDao.getAll().toResolvedArtByGame()
+            emit(
+                if (it) {
+                    artByGame.mapValues { (gameId, art) ->
+                        art.withEmbedded3dsBanner(
+                            embeddedMediaRepository.getCachedBannerArtFile(gameId.toString())?.absolutePath
+                        )
+                    }
+                } else {
+                    artByGame
+                }
+            )
             delay(ART_MODEL_RELOAD_INTERVAL_MS)
         }
         .stateIn(artModelScope, SharingStarted.Lazily, emptyMap())
 
     fun artFor(gameId: Long): ResolvedGameArt? = gameArt.value[gameId]
 
-    suspend fun loadArt(gameId: Long): ResolvedGameArt = gameArtDao.resolved(gameId)
+    suspend fun loadArt(gameId: Long): ResolvedGameArt {
+        val art = gameArtDao.resolved(gameId)
+        if (!appPreferencesRepository.preferences.first().useEmbedded3dsBannerForHero) return art
+        val bannerPath = embeddedMediaRepository.getCachedBannerArtFile(gameId.toString())?.absolutePath
+        return art.withEmbedded3dsBanner(bannerPath)
+    }
+
+    suspend fun refreshEmbeddedBannerArt(gameId: Long) {
+        if (embeddedMediaRepository.getCachedBannerArtFile(gameId.toString()) == null) return
+        gameArtDao.insertSlotIfAbsent(gameId, ArtSlot.LOGO.name)
+        embeddedBannerRevision.update { it + 1 }
+    }
 
     fun observeArt(gameId: Long): Flow<ResolvedGameArt?> =
         gameArt.map { it[gameId] }.distinctUntilChanged()

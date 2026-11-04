@@ -8,6 +8,7 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import com.nendo.argosy.data.media.EmbeddedMediaRepository
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -56,8 +57,20 @@ object CocoonJingles {
         version.intValue++
     }
 
+    /**
+     * The jingle a 3DS ROM carries in its own banner, extracted beside its art. A game the user has
+     * assigned a jingle to still wins, because that assignment is an explicit choice.
+     */
+    private fun embeddedJingle(context: Context, gameId: Long): String? =
+        EmbeddedMediaRepository.cachedJingleFile(context, gameId.toString())?.absolutePath
+
     fun resolve(context: Context, gameId: Long, slug: String?): String? =
-        listOfNotNull(gameJingle(context, gameId), platformJingle(context, slug), globalJingle(context))
+        listOfNotNull(
+            gameJingle(context, gameId),
+            embeddedJingle(context, gameId),
+            platformJingle(context, slug),
+            globalJingle(context)
+        )
             .firstOrNull { java.io.File(it).isFile }
 
     fun playFor(context: Context, gameId: Long, slug: String?) {

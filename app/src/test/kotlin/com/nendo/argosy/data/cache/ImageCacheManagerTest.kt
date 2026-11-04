@@ -11,7 +11,10 @@ import com.nendo.argosy.data.local.dao.PendingScreenshot
 import com.nendo.argosy.data.local.dao.PlatformDao
 import com.nendo.argosy.data.local.entity.GameArtEntity
 import com.nendo.argosy.data.local.entity.GameScreenshotEntity
+import com.nendo.argosy.data.media.EmbeddedMediaRepository
 import com.nendo.argosy.data.model.ArtSlot
+import com.nendo.argosy.data.preferences.AppPreferences
+import com.nendo.argosy.data.preferences.AppPreferencesRepository
 import com.nendo.argosy.data.storage.FileAccessLayer
 import com.nendo.argosy.data.storage.StorageVolumeHealth
 import com.nendo.argosy.data.storage.VolumeProbe
@@ -24,6 +27,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -53,6 +57,8 @@ class ImageCacheManagerTest {
     private lateinit var achievementDao: AchievementDao
     private lateinit var volumeHealth: StorageVolumeHealth
     private lateinit var fileAccessLayer: FileAccessLayer
+    private lateinit var appPreferencesRepository: AppPreferencesRepository
+    private lateinit var embeddedMediaRepository: EmbeddedMediaRepository
     private lateinit var imageCacheManager: ImageCacheManager
     private lateinit var defaultCacheDir: File
     private lateinit var legacyCacheDir: File
@@ -72,6 +78,10 @@ class ImageCacheManagerTest {
         achievementDao = mockk(relaxed = true)
         volumeHealth = mockk(relaxed = true)
         fileAccessLayer = mockk(relaxed = true)
+        appPreferencesRepository = mockk {
+            every { preferences } returns flowOf(AppPreferences())
+        }
+        embeddedMediaRepository = mockk(relaxed = true)
         imageCacheManager = ImageCacheManager(
             context,
             gameDao,
@@ -80,7 +90,9 @@ class ImageCacheManagerTest {
             platformDao,
             achievementDao,
             volumeHealth,
-            fileAccessLayer
+            fileAccessLayer,
+            appPreferencesRepository,
+            embeddedMediaRepository
         )
     }
 
