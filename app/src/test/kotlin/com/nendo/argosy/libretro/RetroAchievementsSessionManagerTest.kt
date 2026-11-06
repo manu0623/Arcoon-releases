@@ -135,6 +135,7 @@ class RetroAchievementsSessionManagerTest {
             raRepository = raRepository,
             verifyRAGameIdUseCase = verifyRAGameIdUseCase,
             achievementUpdateBus = mockk<AchievementUpdateBus>(relaxed = true),
+            journeyEventRecorder = mockk(relaxed = true),
             ambientLedManager = mockk<AmbientLedManager>(relaxed = true),
             socialRepository = mockk<SocialRepository>(relaxed = true),
             scope = scope,

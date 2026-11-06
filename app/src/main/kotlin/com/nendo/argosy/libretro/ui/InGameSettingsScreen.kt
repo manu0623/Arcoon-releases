@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.SortByAlpha
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -341,6 +342,7 @@ fun InGameSettingsScreen(
     var showInputMappingModal by remember { mutableStateOf(false) }
     var showHotkeysModal by remember { mutableStateOf(false) }
     var showGripSettingsModal by remember { mutableStateOf(false) }
+    var showHomeSymbolPage by remember { mutableStateOf(false) }
 
     val currentOnDismiss = rememberUpdatedState(onDismiss)
     val currentControlsState = rememberUpdatedState(controlsState)
@@ -370,9 +372,10 @@ fun InGameSettingsScreen(
         )
     }
     val videoLibretroCount = remember(platformSlug, canEnableBFI) {
-        libretroSettingsMaxFocusIndex(platformSlug, canEnableBFI) + 1
+        libretroSettingsMaxFocusIndex(platformSlug, canEnableBFI, inSession = true) + 1
     }
-    val maxVideoFocusIndex = videoLibretroCount + InGameHudItem.entries.size - 1
+    val homeSymbolFocusIndex = videoLibretroCount + InGameHudItem.entries.size
+    val maxVideoFocusIndex = homeSymbolFocusIndex
     val controlsMaxFocusIndex = remember(controlsVisibility) {
         controlsLayout.maxFocusIndex(controlsVisibility)
     }
@@ -399,7 +402,8 @@ fun InGameSettingsScreen(
         InGameSettingsTab.VIDEO -> libretroSettingsItemAtFocusIndex(
             index = index,
             platformSlug = platformSlug,
-            canEnableBFI = canEnableBFI
+            canEnableBFI = canEnableBFI,
+            inSession = true
         )
         InGameSettingsTab.CONTROLS -> null
         InGameSettingsTab.CORE_OPTIONS -> null
@@ -549,6 +553,7 @@ fun InGameSettingsScreen(
                 }
                 val hudItem = getHudItemAtIndex(focusedIndex)
                 if (hudItem != null) return handleHudAdjust(hudItem, -1)
+                if (focusedIndex == homeSymbolFocusIndex) return InputResult.HANDLED
                 val setting = getSettingAtIndex(focusedIndex) ?: return InputResult.UNHANDLED
                 if (accessor.isActionItem(setting)) return InputResult.UNHANDLED
                 return accessor.step(setting, -1)
@@ -569,6 +574,7 @@ fun InGameSettingsScreen(
                 }
                 val hudItem = getHudItemAtIndex(focusedIndex)
                 if (hudItem != null) return handleHudAdjust(hudItem, 1)
+                if (focusedIndex == homeSymbolFocusIndex) return InputResult.HANDLED
                 val setting = getSettingAtIndex(focusedIndex) ?: return InputResult.HANDLED
                 if (accessor.isActionItem(setting)) return InputResult.HANDLED
                 if (setting.type is LibretroSettingDef.SettingType.Cycle) return accessor.step(setting, 1)
@@ -580,6 +586,10 @@ fun InGameSettingsScreen(
                     InGameSettingsTab.VIDEO -> {
                         val hudItem = getHudItemAtIndex(focusedIndex)
                         if (hudItem != null) return handleHudConfirm(hudItem)
+                        if (focusedIndex == homeSymbolFocusIndex) {
+                            showHomeSymbolPage = true
+                            return InputResult.handled(SoundType.OPEN_MODAL)
+                        }
                         val setting = getSettingAtIndex(focusedIndex) ?: return InputResult.HANDLED
                         if (accessor.isActionItem(setting)) {
                             accessor.onAction(setting)
@@ -665,9 +675,10 @@ fun InGameSettingsScreen(
             }
             Box(
                 modifier = Modifier
+                    // No edge fade here: the fade is an offscreen mask, and on a fast scroll it
+                    // smears the rows into ghosts as they cross the top and bottom of the list.
                     .weight(1f)
                     .fillMaxWidth()
-                    .verticalEdgeFade(currentListState, fadeHeight = Dimens.spacingXl)
                     .focusProperties { canFocus = false }
             ) {
                 when (currentTab) {
@@ -681,7 +692,7 @@ fun InGameSettingsScreen(
                             enablePicker = false,
                             inSession = true,
                             trailingContent = { InGameHudHeader() },
-                            trailingFocusCount = InGameHudItem.entries.size,
+                            trailingFocusCount = InGameHudItem.entries.size + 1,
                             trailingItems = {
                                 items(InGameHudItem.entries, key = { it.key }) { item ->
                                     InGameHudRow(
@@ -689,6 +700,15 @@ fun InGameSettingsScreen(
                                         state = controlsState,
                                         isFocused = focusedIndex == videoLibretroCount + item.ordinal,
                                         onAction = onControlsAction
+                                    )
+                                }
+                                item(key = "homeSymbol") {
+                                    NavigationPreference(
+                                        icon = Icons.Outlined.Home,
+                                        title = stringResource(R.string.cocoon_home_symbol_title),
+                                        subtitle = stringResource(R.string.cocoon_home_symbol_subtitle),
+                                        isFocused = focusedIndex == homeSymbolFocusIndex,
+                                        onClick = { showHomeSymbolPage = true }
                                     )
                                 }
                             }
@@ -794,6 +814,13 @@ fun InGameSettingsScreen(
                 onClearCoreBind = modalCallbacks.onClearCoreBind
             )
         }
+    }
+
+    if (showHomeSymbolPage) {
+        val pageHandler = com.nendo.argosy.ui.cocoon.CocoonHomeSymbolPage(
+            onDismiss = { showHomeSymbolPage = false }
+        )
+        return pageHandler
     }
 
     return inputHandler

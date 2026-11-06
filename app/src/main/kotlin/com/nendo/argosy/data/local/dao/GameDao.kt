@@ -642,6 +642,7 @@ interface GameDao {
     @Query("SELECT * FROM games WHERE source IN (:sources) AND localPath IS NOT NULL")
     suspend fun getDownloadedBySources(sources: List<GameSource>): List<GameEntity>
 
+
     @Query("SELECT COUNT(*) FROM games WHERE localPath IS NOT NULL AND fileOrigin = :origin")
     suspend fun countWithLocalPathByOrigin(origin: FileOrigin): Int
 

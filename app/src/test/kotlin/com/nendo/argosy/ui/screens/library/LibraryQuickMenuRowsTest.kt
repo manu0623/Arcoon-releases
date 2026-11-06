@@ -5,9 +5,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
 
+/**
+ * The quick menu is Cocoon's game menu: Launch, the full game page, achievements for server
+ * games, then the library actions. Everything else (edit, scrape, delete, variants, files) lives
+ * on the game's own page, so none of it belongs in this list.
+ */
 class LibraryQuickMenuRowsTest {
 
-    private fun game(isDownloaded: Boolean = false, canRemoveFromLibrary: Boolean = false) = LibraryGameUi(
+    private fun game(
+        isDownloaded: Boolean = false,
+        canRemoveFromLibrary: Boolean = false,
+        isRommGame: Boolean = true
+    ) = LibraryGameUi(
         id = 1,
         title = "Game",
         sortTitle = "game",
@@ -15,10 +24,10 @@ class LibraryQuickMenuRowsTest {
         platformSlug = "snes",
         platformDisplayName = "SNES",
         coverPath = null,
-        source = GameSource.ROMM_REMOTE,
+        source = if (isRommGame) GameSource.ROMM_REMOTE else GameSource.LOCAL_ONLY,
         isFavorite = false,
         isDownloaded = isDownloaded,
-        isRommGame = true,
+        isRommGame = isRommGame,
         canRemoveFromLibrary = canRemoveFromLibrary,
         isAndroidApp = false,
         emulatorName = null,
@@ -26,63 +35,56 @@ class LibraryQuickMenuRowsTest {
     )
 
     @Test
-    fun `the active variant row is hidden for a single-member group`() {
-        val rows = libraryQuickMenuRows(game(), isCustomGridHome = false, hasSiblingGroup = false)
+    fun `the menu opens on launch and closes on the platform resync`() {
+        val rows = libraryQuickMenuRows(game(), isCustomGridHome = true, hasSiblingGroup = false)
 
-        assertFalse(rows.contains(LibraryQuickMenuRow.ACTIVE_VARIANT))
+        assertEquals(LibraryQuickMenuRow.PRIMARY, rows.first())
+        assertEquals(LibraryQuickMenuRow.RESYNC_PLATFORM, rows.last())
     }
 
     @Test
-    fun `the active variant row follows the collection rows and precedes refresh`() {
+    fun `the sequence is launch, game page, achievements, then the library actions`() {
         val rows = libraryQuickMenuRows(game(), isCustomGridHome = true, hasSiblingGroup = true)
 
         assertEquals(
             listOf(
                 LibraryQuickMenuRow.PRIMARY,
-                LibraryQuickMenuRow.FAVORITE,
                 LibraryQuickMenuRow.DETAILS,
+                LibraryQuickMenuRow.ACHIEVEMENTS,
+                LibraryQuickMenuRow.HIDE,
+                LibraryQuickMenuRow.FAVORITE,
                 LibraryQuickMenuRow.ADD_TO_COLLECTION,
                 LibraryQuickMenuRow.ADD_TO_GRID,
-                LibraryQuickMenuRow.ACTIVE_VARIANT,
-                LibraryQuickMenuRow.REFRESH,
-                LibraryQuickMenuRow.RESYNC_PLATFORM,
-                LibraryQuickMenuRow.HIDE
+                LibraryQuickMenuRow.RESYNC_PLATFORM
             ),
             rows
         )
     }
 
     @Test
-    fun `the row list keeps the order the menu had before the active variant row`() {
-        val rows = libraryQuickMenuRows(game(isDownloaded = true), isCustomGridHome = false, hasSiblingGroup = false)
-
-        assertEquals(
-            listOf(
-                LibraryQuickMenuRow.PRIMARY,
-                LibraryQuickMenuRow.FAVORITE,
-                LibraryQuickMenuRow.DETAILS,
-                LibraryQuickMenuRow.ADD_TO_COLLECTION,
-                LibraryQuickMenuRow.REFRESH,
-                LibraryQuickMenuRow.RESYNC_PLATFORM,
-                LibraryQuickMenuRow.DELETE,
-                LibraryQuickMenuRow.HIDE
-            ),
-            rows
+    fun `a game that is not on the server offers no achievements row`() {
+        val rows = libraryQuickMenuRows(
+            game(isRommGame = false),
+            isCustomGridHome = true,
+            hasSiblingGroup = false
         )
+
+        assertFalse(rows.contains(LibraryQuickMenuRow.ACHIEVEMENTS))
     }
 
     @Test
-    fun `a removable game offers remove from library just before hide`() {
-        val rows = libraryQuickMenuRows(game(canRemoveFromLibrary = true), isCustomGridHome = false, hasSiblingGroup = false)
+    fun `actions that live on the game page are never listed`() {
+        val rows = libraryQuickMenuRows(
+            game(isDownloaded = true, canRemoveFromLibrary = true),
+            isCustomGridHome = true,
+            hasSiblingGroup = true
+        )
 
-        assertEquals(LibraryQuickMenuRow.REMOVE_FROM_LIBRARY, rows[rows.lastIndex - 1])
-        assertEquals(LibraryQuickMenuRow.HIDE, rows.last())
-    }
-
-    @Test
-    fun `a game that is not removable never offers remove from library`() {
-        val rows = libraryQuickMenuRows(game(), isCustomGridHome = false, hasSiblingGroup = false)
-
-        assertFalse(rows.contains(LibraryQuickMenuRow.REMOVE_FROM_LIBRARY))
+        listOf(
+            LibraryQuickMenuRow.ACTIVE_VARIANT,
+            LibraryQuickMenuRow.DELETE,
+            LibraryQuickMenuRow.REMOVE_FROM_LIBRARY
+        ).forEach { assertFalse("$it belongs on the game page, not the quick menu",
+            rows.contains(it)) }
     }
 }

@@ -271,7 +271,12 @@ class GameRepository @Inject constructor(
         }
         if (entries.isEmpty()) return 0
 
-        val targets = games.map { ClaimTarget(it.id, it.rommFileName, it.title) }
+        val fileNamesByGame = gameFileDao.getFilesByPlatform(platform.id)
+            .filter { VariantCategory.fromKey(it.category) == VariantCategory.GAME }
+            .groupBy({ it.gameId }, { it.fileName })
+        val targets = games.map {
+            ClaimTarget(it.id, it.rommFileName, it.title, fileNamesByGame[it.id].orEmpty())
+        }
         val claims = claimLocalEntries(targets, entries.keys.toList())
         val pathOwners = (
             gameDao.getGamesWithLocalPathByPlatform(platform.id).mapNotNull { g -> g.localPath?.let { it to g.id } } +

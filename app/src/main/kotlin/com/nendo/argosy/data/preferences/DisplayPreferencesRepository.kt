@@ -79,6 +79,7 @@ data class DisplayPreferences(
     val presentationBackgroundBlur: Int = 0,
     val useAccentColorFooter: Boolean = false,
     val compactFooter: Boolean = false,
+    val launcherUiMode: LauncherUiMode = LauncherUiMode.COCOON,
     val hideSystemNavigationBar: Boolean = true,
     val hideSystemStatusBar: Boolean = true,
     val lockScreenArt: Boolean = true,
@@ -187,6 +188,7 @@ class DisplayPreferencesRepository @Inject constructor(
         val PRESENTATION_BACKGROUND_BLUR = intPreferencesKey("presentation_background_blur")
         val USE_ACCENT_COLOR_FOOTER = booleanPreferencesKey("use_accent_color_footer")
         val COMPACT_FOOTER = booleanPreferencesKey("compact_footer")
+        val LAUNCHER_UI_MODE = stringPreferencesKey("launcher_ui_mode")
         val HIDE_SYSTEM_NAVIGATION_BAR = booleanPreferencesKey("hide_system_navigation_bar")
         val HIDE_SYSTEM_STATUS_BAR = booleanPreferencesKey("hide_system_status_bar")
         val LOCK_SCREEN_ART = booleanPreferencesKey("lock_screen_art")
@@ -304,6 +306,7 @@ class DisplayPreferencesRepository @Inject constructor(
             presentationBackgroundBlur = prefs[Keys.PRESENTATION_BACKGROUND_BLUR] ?: 0,
             useAccentColorFooter = prefs[Keys.USE_ACCENT_COLOR_FOOTER] ?: false,
             compactFooter = prefs[Keys.COMPACT_FOOTER] ?: false,
+            launcherUiMode = LauncherUiMode.fromString(prefs[Keys.LAUNCHER_UI_MODE]),
             hideSystemNavigationBar = prefs[Keys.HIDE_SYSTEM_NAVIGATION_BAR] ?: true,
             hideSystemStatusBar = prefs[Keys.HIDE_SYSTEM_STATUS_BAR] ?: true,
             lockScreenArt = prefs[Keys.LOCK_SCREEN_ART] ?: true,
@@ -612,6 +615,10 @@ class DisplayPreferencesRepository @Inject constructor(
 
     suspend fun setCompactFooter(enabled: Boolean) {
         dataStore.edit { it[Keys.COMPACT_FOOTER] = enabled }
+    }
+
+    suspend fun setLauncherUiMode(mode: LauncherUiMode) {
+        dataStore.edit { it[Keys.LAUNCHER_UI_MODE] = mode.name }
     }
 
     suspend fun setHideSystemNavigationBar(hide: Boolean) {

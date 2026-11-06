@@ -133,6 +133,7 @@ class UserPreferencesRepository @Inject constructor(
             presentationBackgroundBlur = display.presentationBackgroundBlur,
             useAccentColorFooter = display.useAccentColorFooter,
             compactFooter = display.compactFooter,
+            launcherUiMode = display.launcherUiMode,
             hideSystemNavigationBar = display.hideSystemNavigationBar,
             hideSystemStatusBar = display.hideSystemStatusBar,
             lockScreenArt = display.lockScreenArt,
@@ -261,6 +262,8 @@ class UserPreferencesRepository @Inject constructor(
             quayPassMessageSyncPending = sync.quayPassMessageSyncPending,
             embeddedMediaExtractionEnabled = app.embeddedMediaExtractionEnabled,
             useEmbedded3dsBannerForHero = app.useEmbedded3dsBannerForHero,
+            steamGridDbEnabled = app.steamGridDbEnabled,
+            steamGridDbApiKey = app.steamGridDbApiKey,
             quayPassGreeting = sync.quayPassGreeting,
             quayPassTicketBalance = sync.quayPassTicketBalance,
             mediaStoragePath = storage.mediaStoragePath,
@@ -363,6 +366,7 @@ class UserPreferencesRepository @Inject constructor(
         displayPrefs.setPresentationStyle(style)
     suspend fun setPresentationBackgroundBlur(blur: Int) = displayPrefs.setPresentationBackgroundBlur(blur)
     suspend fun setUseAccentColorFooter(use: Boolean) = displayPrefs.setUseAccentColorFooter(use)
+    suspend fun setLauncherUiMode(mode: LauncherUiMode) = displayPrefs.setLauncherUiMode(mode)
     suspend fun setCompactFooter(enabled: Boolean) = displayPrefs.setCompactFooter(enabled)
     suspend fun setHideSystemNavigationBar(hide: Boolean) = displayPrefs.setHideSystemNavigationBar(hide)
     suspend fun setHideSystemStatusBar(hide: Boolean) = displayPrefs.setHideSystemStatusBar(hide)
@@ -551,6 +555,8 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun setCustomBiosPath(path: String?) = storagePrefs.setCustomBiosPath(path)
     suspend fun setEmbeddedMediaExtractionEnabled(enabled: Boolean) = appPrefs.setEmbeddedMediaExtractionEnabled(enabled)
     suspend fun setUseEmbedded3dsBannerForHero(enabled: Boolean) = appPrefs.setUseEmbedded3dsBannerForHero(enabled)
+    suspend fun setSteamGridDbEnabled(enabled: Boolean) = appPrefs.setSteamGridDbEnabled(enabled)
+    suspend fun setSteamGridDbApiKey(key: String?) = appPrefs.setSteamGridDbApiKey(key)
     suspend fun setWeeklyIntegrityCheckEnabled(enabled: Boolean) = storagePrefs.setWeeklyIntegrityCheckEnabled(enabled)
     suspend fun setLastIntegrityCheckTime(timeMs: Long) = storagePrefs.setLastIntegrityCheckTime(timeMs)
     suspend fun setMediaStoragePath(path: String?) = storagePrefs.setMediaStoragePath(path)
@@ -626,6 +632,11 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun setBuiltinFastForwardMode(mode: com.nendo.argosy.data.local.entity.FastForwardMode) = builtinPrefs.setBuiltinFastForwardMode(mode)
     suspend fun setBuiltinSelectAsBack(mode: com.nendo.argosy.data.local.entity.SelectAsBackMode) = builtinPrefs.setBuiltinSelectAsBack(mode)
     suspend fun setBuiltinDualScreenMatchSize(enabled: Boolean) = builtinPrefs.setBuiltinDualScreenMatchSize(enabled)
+
+    suspend fun getBuiltinGameMatchScreenSize(gameId: Long) = builtinPrefs.getGameMatchScreenSize(gameId)
+
+    suspend fun setBuiltinGameMatchScreenSize(gameId: Long, enabled: Boolean) =
+        builtinPrefs.setGameMatchScreenSize(gameId, enabled)
     suspend fun setBuiltinFastForwardPreservePitch(enabled: Boolean) = builtinPrefs.setBuiltinFastForwardPreservePitch(enabled)
     suspend fun setBuiltinRotation(rotation: Int) = builtinPrefs.setBuiltinRotation(rotation)
     suspend fun setBuiltinOverscanCrop(crop: Int) = builtinPrefs.setBuiltinOverscanCrop(crop)
@@ -694,6 +705,10 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun clearActiveSession(startedAt: Instant? = null) = sessionPrefs.clearActiveSession(startedAt)
 
     suspend fun getPersistedSession(): PersistedSession? = sessionPrefs.getPersistedSession()
+
+    suspend fun openSuspendedSpan(atMillis: Long) = sessionPrefs.openSuspendedSpan(atMillis)
+
+    suspend fun closeSuspendedSpan(atMillis: Long): Long = sessionPrefs.closeSuspendedSpan(atMillis)
 
     suspend fun keepSessionForRetry(maxAttempts: Int, startedAt: Instant? = null): Boolean =
         sessionPrefs.keepSessionForRetry(maxAttempts, startedAt)
@@ -823,6 +838,8 @@ data class UserPreferences(
     val firstRunComplete: Boolean = false,
     val embeddedMediaExtractionEnabled: Boolean = true,
     val useEmbedded3dsBannerForHero: Boolean = false,
+    val steamGridDbEnabled: Boolean = false,
+    val steamGridDbApiKey: String? = null,
     val rommBaseUrl: String? = null,
     val rommUsername: String? = null,
     val rommUserId: Long? = null,
@@ -937,6 +954,7 @@ data class UserPreferences(
     val presentationBackgroundBlur: Int = 0,
     val useAccentColorFooter: Boolean = false,
     val compactFooter: Boolean = false,
+    val launcherUiMode: LauncherUiMode = LauncherUiMode.COCOON,
     val hideSystemNavigationBar: Boolean = true,
     val hideSystemStatusBar: Boolean = true,
     val lockScreenArt: Boolean = true,
@@ -1071,6 +1089,18 @@ enum class ThemeMode(val displayName: String) {
     companion object {
         fun fromString(value: String?): ThemeMode =
             entries.find { it.name == value } ?: DARK
+    }
+}
+
+/**
+ * Which launcher home is running. Stored as the token, never the label, so the names can be
+ * re-worded or translated without invalidating rows already written.
+ */
+enum class LauncherUiMode {
+    COCOON, CLASSIC;
+
+    companion object {
+        fun fromString(value: String?): LauncherUiMode = entries.find { it.name == value } ?: COCOON
     }
 }
 
@@ -1256,6 +1286,24 @@ enum class BoxArtShape(val aspectRatio: Float, val displayName: String) {
 
     /** Whether covers should use their real image proportions instead of [aspectRatio]. */
     val isNative: Boolean get() = this == NATIVE
+
+    /**
+     * Ratio band a downloaded cover must fall inside to fill a tile of this shape without matte
+     * bars. [NATIVE] renders each cover at its own proportions and keeps preferring box art.
+     */
+    val coverRatioRange: ClosedFloatingPointRange<Float>
+        get() = when (this) {
+            SQUARE -> 0.9f..1.1f
+            STANDARD -> 0.72f..0.82f
+            TALL, NATIVE -> 0.62f..0.72f
+        }
+
+    /**
+     * The cover ratio a tile of this shape is drawn at, and the ratio the artwork scrape looks
+     * for when it chooses a grid.
+     */
+    val coverRatioTarget: Float
+        get() = if (isNative) 2f / 3f else aspectRatio
 
     companion object {
         fun fromString(value: String?): BoxArtShape =

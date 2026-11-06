@@ -36,6 +36,89 @@ class SessionStateStore(context: Context) {
     fun getEmulatorPackage(): String? = prefs.getString(KEY_EMULATOR_PACKAGE, null)
 
     /**
+     * The activity the external emulator opened the game in, as "package/class". Written with
+     * commit() because it is what lets a resume after the launcher was killed reorder the paused
+     * emulator to the front, instead of handing it the ROM and taking the running game down.
+     */
+    fun setExternalGameActivity(component: android.content.ComponentName?) {
+        val editor = prefs.edit()
+        if (component == null) editor.remove(KEY_EXTERNAL_GAME_ACTIVITY)
+        else editor.putString(KEY_EXTERNAL_GAME_ACTIVITY, component.flattenToString())
+        editor.commit()
+    }
+
+    fun getExternalGameActivity(): android.content.ComponentName? =
+        prefs.getString(KEY_EXTERNAL_GAME_ACTIVITY, null)
+            ?.let { runCatching { android.content.ComponentName.unflattenFromString(it) }.getOrNull() }
+
+    /**
+     * The external game left paused inside its own emulator. Written with commit() because the
+     * emulator outlives the launcher: without this a restarted Argosy has no idea a game is still
+     * waiting in that app and starts it again from the beginning.
+     */
+    fun setSuspendedSession(
+        gameId: Long,
+        title: String,
+        platformName: String,
+        packageName: String,
+        emulatorName: String?,
+        startTimeMillis: Long,
+        elapsedSeconds: Long,
+        suspendedAtMillis: Long
+    ) {
+        prefs.edit()
+            .putLong(KEY_SUSPENDED_GAME_ID, gameId)
+            .putString(KEY_SUSPENDED_TITLE, title)
+            .putString(KEY_SUSPENDED_PLATFORM, platformName)
+            .putString(KEY_SUSPENDED_PACKAGE, packageName)
+            .putString(KEY_SUSPENDED_EMULATOR_NAME, emulatorName)
+            .putLong(KEY_SUSPENDED_START_TIME, startTimeMillis)
+            .putLong(KEY_SUSPENDED_ELAPSED, elapsedSeconds)
+            .putLong(KEY_SUSPENDED_AT, suspendedAtMillis)
+            .commit()
+    }
+
+    fun getSuspendedSession(): SuspendedSnapshot? {
+        val gameId = prefs.getLong(KEY_SUSPENDED_GAME_ID, NO_GAME_ID)
+        if (gameId == NO_GAME_ID) return null
+        val packageName = prefs.getString(KEY_SUSPENDED_PACKAGE, null) ?: return null
+        return SuspendedSnapshot(
+            gameId = gameId,
+            title = prefs.getString(KEY_SUSPENDED_TITLE, "") ?: "",
+            platformName = prefs.getString(KEY_SUSPENDED_PLATFORM, "") ?: "",
+            packageName = packageName,
+            emulatorName = prefs.getString(KEY_SUSPENDED_EMULATOR_NAME, null),
+            startTimeMillis = prefs.getLong(KEY_SUSPENDED_START_TIME, 0),
+            elapsedSeconds = prefs.getLong(KEY_SUSPENDED_ELAPSED, 0),
+            suspendedAtMillis = prefs.getLong(KEY_SUSPENDED_AT, 0)
+        )
+    }
+
+    fun clearSuspendedSession() {
+        prefs.edit()
+            .remove(KEY_SUSPENDED_GAME_ID)
+            .remove(KEY_SUSPENDED_TITLE)
+            .remove(KEY_SUSPENDED_PLATFORM)
+            .remove(KEY_SUSPENDED_PACKAGE)
+            .remove(KEY_SUSPENDED_EMULATOR_NAME)
+            .remove(KEY_SUSPENDED_START_TIME)
+            .remove(KEY_SUSPENDED_ELAPSED)
+            .remove(KEY_SUSPENDED_AT)
+            .commit()
+    }
+
+    data class SuspendedSnapshot(
+        val gameId: Long,
+        val title: String,
+        val platformName: String,
+        val packageName: String,
+        val emulatorName: String?,
+        val startTimeMillis: Long,
+        val elapsedSeconds: Long,
+        val suspendedAtMillis: Long
+    )
+
+    /**
      * The display the running game occupies, written with commit() because its whole purpose is to
      * outlive the process that set it: every site that lets a game on the other display survive the
      * launcher coming forward reads this, and a launcher that comes back without it cannot tell a
@@ -225,6 +308,7 @@ class SessionStateStore(context: Context) {
 
     companion object {
         private const val NO_USER_ID = -1L
+        private const val NO_GAME_ID = -1L
         private const val PREFS_NAME = "argosy_session_state"
         private const val KEY_HAS_SESSION = "has_session"
         private const val KEY_GAME_ID = "game_id"
@@ -243,6 +327,15 @@ class SessionStateStore(context: Context) {
         private const val KEY_SESSION_START_TIME = "session_start_time"
         private const val KEY_EMULATOR_PACKAGE = "emulator_package"
         private const val KEY_EMULATOR_DISPLAY_ID = "emulator_display_id"
+        private const val KEY_EXTERNAL_GAME_ACTIVITY = "external_game_activity"
+        private const val KEY_SUSPENDED_GAME_ID = "suspended_game_id"
+        private const val KEY_SUSPENDED_TITLE = "suspended_title"
+        private const val KEY_SUSPENDED_PLATFORM = "suspended_platform"
+        private const val KEY_SUSPENDED_PACKAGE = "suspended_package"
+        private const val KEY_SUSPENDED_EMULATOR_NAME = "suspended_emulator_name"
+        private const val KEY_SUSPENDED_START_TIME = "suspended_start_time"
+        private const val KEY_SUSPENDED_ELAPSED = "suspended_elapsed"
+        private const val KEY_SUSPENDED_AT = "suspended_at"
         private const val KEY_FIRST_RUN_COMPLETE = "first_run_complete"
         private const val KEY_DUAL_SCREEN_ENABLED = "dual_screen_enabled"
         private const val KEY_SECONDARY_DISPLAY_USABLE = "secondary_display_usable"

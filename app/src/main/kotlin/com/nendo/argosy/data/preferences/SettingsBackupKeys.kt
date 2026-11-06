@@ -28,6 +28,7 @@ object SettingsBackupKeys {
         SettingsBackupKey("game_detail_theme", SettingsBackupType.BOOLEAN),
         SettingsBackupKey("use_accent_color_footer", SettingsBackupType.BOOLEAN),
         SettingsBackupKey("compact_footer", SettingsBackupType.BOOLEAN),
+        SettingsBackupKey("launcher_ui_mode", SettingsBackupType.STRING),
         SettingsBackupKey("hide_system_navigation_bar", SettingsBackupType.BOOLEAN),
         SettingsBackupKey("hide_system_status_bar", SettingsBackupType.BOOLEAN),
         SettingsBackupKey("lock_screen_art", SettingsBackupType.BOOLEAN),

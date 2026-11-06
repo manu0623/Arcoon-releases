@@ -54,7 +54,7 @@ class RouteRestoreTest {
     @Test
     fun `a top-level screen sits directly on home`() {
         assertEquals(listOf("settings?platformId=-1"), RouteRestore.restoreStack("settings?platformId=-1"))
-        assertEquals(listOf("game/42"), RouteRestore.restoreStack("game/42"))
+        assertEquals(listOf("home", "game/42"), RouteRestore.restoreStack("game/42"))
     }
 
     @Test

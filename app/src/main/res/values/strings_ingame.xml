@@ -1302,4 +1302,10 @@
     <string name="ingame_touch_generic_shoulder_r" translatable="false">R</string>
     <string name="ingame_touch_generic_sys_select">Select</string>
     <string name="ingame_touch_generic_sys_start">Start</string>
+    <!-- Content description of the faint home icon in the lower-left corner of a two-screen
+         game. Verb phrase: it opens the menu. -->
+    <string name="ingame_home_handle">Open the in-game menu</string>
+    <!-- Content description of the faint home icon that suspends the running game.
+         Verb phrase: it suspends it. -->
+    <string name="ingame_suspend_handle">Suspend the game</string>
 </resources>

@@ -1,4 +1,4 @@
-package com.nendo.argosy.data.media
+﻿package com.nendo.argosy.data.media
 
 import kotlin.math.cos
 import kotlin.math.max
@@ -85,8 +85,9 @@ internal object CgfxBannerScene {
 
     fun render(cgfx: ByteArray): ThreeDsBannerRenderResult.Success? {
         val scene = parseScene(cgfx) ?: return null
-        val argb = rasterise(scene, SCENE_WIDTH, SCENE_HEIGHT, SCENE_YAW) ?: return null
-        if (!hasCoverage(argb)) return null
+        val argb = rasterise(scene, SCENE_WIDTH, SCENE_HEIGHT, SCENE_YAW) ?: return null.also { println("DBG rasterise null") }
+        if (!hasCoverage(argb)) { println("DBG no coverage"); return null }
+        println("DBG render drew ok")
         return ThreeDsBannerRenderResult.Success(SCENE_WIDTH, SCENE_HEIGHT, argb)
     }
 
@@ -112,15 +113,14 @@ internal object CgfxBannerScene {
     }
 
     private fun parseScene(cgfx: ByteArray): List<SceneMesh>? {
-        if (cgfx.size < 0x18 || !hasAscii(cgfx, 0, "CGFX")) return null
-        val dataSection = dataSectionOffset(cgfx) ?: return null
+        println("DBG parseScene enter size=${cgfx.size}")
+        if (cgfx.size < 0x18 || !hasAscii(cgfx, 0, "CGFX")) { println("DBG magic_fail"); return null }
+        val dataSection = dataSectionOffset(cgfx) ?: return null.also { println("DBG dataSection_null") }
         val textures = readTextures(cgfx, dataSection)
-        if (textures.isEmpty()) return null
-        val commandList = readCommandList(cgfx, dataSection, textures)
+        if (textures.isEmpty()) { println("DBG textures empty"); return null }
+        val commandList = readCommandList(cgfx, dataSection, textures) ?: return null.also { println("DBG commandList_null") }
         val meshes = readMeshes(cgfx, commandList, textures)
-        // A mesh whose material binds no texture cannot be composited: drawing it untextured would
-        // put opaque grey shapes over the art. Those meshes are left out, and a container with
-        // nothing bound falls back to its single-image path instead.
+        println("DBG meshes=${meshes.size}")
         return meshes.filter { it.texture != null }.takeIf { it.isNotEmpty() }
     }
 
@@ -514,6 +514,7 @@ internal object CgfxBannerScene {
     // --- rasteriser --------------------------------------------------------------------------
 
     private fun rasterise(meshes: List<SceneMesh>, width: Int, height: Int, yaw: Double): IntArray? {
+        println("DBG rasterise enter meshes=${meshes.size}")
         val pixels = IntArray(width * height)
         val depth = FloatArray(width * height) { Float.MAX_VALUE }
         val cosYaw = cos(yaw).toFloat()

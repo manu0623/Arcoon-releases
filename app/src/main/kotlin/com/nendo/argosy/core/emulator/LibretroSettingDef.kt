@@ -81,6 +81,19 @@ sealed class LibretroSettingDef(
         )
     )
 
+    /**
+     * DS only, and only in a running game: the two pictures are drawn at the panel's true size and
+     * meet at the hinge. It is a per-game choice because a game that looks right stretched looks
+     * wrong matched, and the other way round.
+     */
+    data object MatchScreenSizes : LibretroSettingDef(
+        key = "matchScreenSizes",
+        section = "display",
+        title = R.string.settings_displays_match_screen_size_title,
+        subtitle = R.string.settings_displays_match_screen_size_subtitle,
+        type = SettingType.Switch
+    )
+
     data object PortraitPosition : LibretroSettingDef(
         key = "portraitPosition",
         section = "display",
@@ -309,6 +322,7 @@ sealed class LibretroSettingDef(
                 Filter,
                 Frame,
                 AspectRatio,
+                MatchScreenSizes,
                 PortraitPosition,
                 Rotation,
                 OverscanCrop,

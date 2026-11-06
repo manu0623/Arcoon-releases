@@ -141,6 +141,18 @@ internal fun isCachedFileFrom(cachedPath: String, sourceUrl: String): Boolean =
 internal fun canBackfillCachedFromUrl(cachedPath: String?, cachedFromUrl: String?, sourceUrl: String): Boolean =
     cachedPath != null && cachedFromUrl == null && isCachedFileFrom(cachedPath, sourceUrl)
 
+internal fun sameArtHost(cachedFromUrl: String, sourceUrl: String): Boolean {
+    val cachedHost = artHost(cachedFromUrl) ?: return false
+    val sourceHost = artHost(sourceUrl) ?: return false
+    return cachedHost.equals(sourceHost, ignoreCase = true)
+}
+
+private fun artHost(url: String): String? = try {
+    java.net.URI(url).host
+} catch (e: Exception) {
+    null
+}
+
 internal enum class CachedArtDecision { KEEP_AND_RENAME, REPLACE, SKIP, DROP }
 
 internal fun cachedArtDecision(
@@ -171,14 +183,16 @@ class ImageCacheManager @Inject constructor(
 ) {
     private val artModelScope = SafeCoroutineScope(Dispatchers.IO, "GameArtModel")
     private val embeddedBannerRevision = kotlinx.coroutines.flow.MutableStateFlow(0)
+    private val artRevision = kotlinx.coroutines.flow.MutableStateFlow(0L)
 
     val gameArt: StateFlow<Map<Long, ResolvedGameArt>> = combine(
         gameArtDao.observeRowCount().conflate(),
         appPreferencesRepository.preferences
             .map { it.useEmbedded3dsBannerForHero }
             .distinctUntilChanged(),
-        embeddedBannerRevision
-    ) { _, useEmbeddedBanner, _ -> useEmbeddedBanner }
+        embeddedBannerRevision,
+        artRevision
+    ) { _, useEmbeddedBanner, _, _ -> useEmbeddedBanner }
         .conflate()
         .transform {
             val artByGame = gameArtDao.getAll().toResolvedArtByGame()
@@ -682,13 +696,22 @@ class ImageCacheManager @Inject constructor(
         }
     }
 
-    suspend fun deleteGameImages(rommId: Long, clearDecoded: Boolean = true) {
+    suspend fun deleteGameImages(
+        rommId: Long,
+        clearDecoded: Boolean = true,
+        includeCovers: Boolean = true
+    ) {
         withContext(Dispatchers.IO) {
             val slug = resolveRommPlatformSlug(rommId)
-            val prefixes = listOf(
-                "cover_${rommId}_", "bg_${rommId}_", "ss_${rommId}_",
-                "box_back_${rommId}_", "box_spine_${rommId}_", "game_logo_${rommId}_", "box_3d_${rommId}_"
-            )
+            val prefixes = buildList {
+                if (includeCovers) add("cover_${rommId}_")
+                add("bg_${rommId}_")
+                add("ss_${rommId}_")
+                add("box_back_${rommId}_")
+                add("box_spine_${rommId}_")
+                add("game_logo_${rommId}_")
+                add("box_3d_${rommId}_")
+            }
             val types = listOf("covers", "backgrounds", "screenshots")
             types.forEach { type ->
                 val dir = File(File(cacheDir, slug), type)
@@ -703,8 +726,11 @@ class ImageCacheManager @Inject constructor(
         if (clearDecoded) clearDecodedImageCache()
     }
 
-    suspend fun forgetCachedArt(gameId: Long) {
-        ArtSlot.entries.forEach { forgetCachedArt(gameId, it) }
+    suspend fun forgetCachedArt(gameId: Long, includeCovers: Boolean = true) {
+        ArtSlot.entries.forEach { slot ->
+            if (slot == ArtSlot.COVER && !includeCovers) return@forEach
+            forgetCachedArt(gameId, slot)
+        }
         gameScreenshotDao.clearCachedForGame(gameId)
     }
 
@@ -946,6 +972,12 @@ class ImageCacheManager @Inject constructor(
         if (cachedPath != null && cachedFrom == source) return
         if (cachedPath != null && canBackfillCachedFromUrl(cachedPath, cachedFrom, source)) {
             gameArtDao.backfillCachedFromUrl(gameId, slot.name, cachedPath, source)
+            return
+        }
+        val hostChanged = cachedPath != null && cachedFrom != null && !sameArtHost(cachedFrom, source)
+        if (hostChanged) {
+            gameArtDao.clearCached(gameId, slot)
+            queueArt(gameId, slot, urls, rommId, steamAppId, title, cachedPath = null)
             return
         }
         queueArt(gameId, slot, urls, rommId, steamAppId, title, cachedPath)
@@ -1484,6 +1516,7 @@ class ImageCacheManager @Inject constructor(
     private suspend fun storeCachedArt(request: ImageCacheRequest, slot: ArtSlot, localPath: String) {
         val game = storedGame(request) ?: return
         gameArtDao.setCached(game.id, slot, localPath, request.urls.firstOrNull())
+        artRevision.value = artRevision.value + 1
     }
 
     private suspend fun isCachedFromSource(request: ImageCacheRequest, slot: ArtSlot): Boolean {
@@ -2086,6 +2119,7 @@ class ImageCacheManager @Inject constructor(
 
     private fun shouldClearMissingPath(path: String, probe: VolumeProbe): Boolean {
         if (!path.startsWith("/")) return false
+        if (File(path).exists()) return false
         return probe.isGenuinelyAbsent(path)
     }
 
@@ -2144,19 +2178,21 @@ class ImageCacheManager @Inject constructor(
                 overridePaths = gameArtDao.getAllOverridePaths(),
                 recentCutoff = sweepStartedAt - SWEEP_RECENT_FILE_GRACE_MS
             )
-            plan.orphanFiles.forEach { path ->
+            val goneCached = plan.missingCachedPaths.filter { shouldClearMissingPath(it, probe) }
+            val goneOverrides = plan.missingOverridePaths.filter { shouldClearMissingPath(it, probe) }
+            val justOrphaned = (goneCached + goneOverrides).toHashSet()
+            val deletableOrphans = plan.orphanFiles.filterNot { it in justOrphaned }
+            deletableOrphans.forEach { path ->
                 if (File(path).delete()) deleted++
             }
-            val goneCached = plan.missingCachedPaths.filter { shouldClearMissingPath(it, probe) }
             if (goneCached.isNotEmpty()) {
                 gameArtDao.clearCachedPathsChunked(goneCached)
                 gameScreenshotDao.clearCachedPathsChunked(goneCached)
             }
-            val goneOverrides = plan.missingOverridePaths.filter { shouldClearMissingPath(it, probe) }
             goneOverrides.chunked(ART_PATH_CHUNK).forEach { gameArtDao.clearOverridePaths(it) }
             cleared += goneCached.size + goneOverrides.size
-            if (plan.orphanFiles.isNotEmpty()) {
-                Log.i(TAG, "Art sweep removed ${plan.orphanFiles.size} files no game references")
+            if (deletableOrphans.isNotEmpty()) {
+                Log.i(TAG, "Art sweep removed ${deletableOrphans.size} files no game references")
             }
         }
 

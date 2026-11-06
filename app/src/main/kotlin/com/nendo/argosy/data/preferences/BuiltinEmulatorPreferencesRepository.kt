@@ -11,6 +11,7 @@ import com.nendo.argosy.data.emulator.GpuDriverToken
 import com.nendo.argosy.data.local.entity.FastForwardMode
 import com.nendo.argosy.data.local.entity.SelectAsBackMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -291,6 +292,20 @@ class BuiltinEmulatorPreferencesRepository @Inject constructor(
     suspend fun setBuiltinDualScreenMatchSize(enabled: Boolean) {
         dataStore.edit { it[Keys.BUILTIN_DUAL_SCREEN_MATCH_SIZE] = enabled }
     }
+
+    /**
+     * Matched DS screens belong to the game, not to the app: a game that looks right stretched
+     * looks wrong matched, so the in-game Video ▸ Display row writes here per game.
+     */
+    suspend fun getGameMatchScreenSize(gameId: Long): Boolean =
+        dataStore.data.first()[matchScreenSizeKey(gameId)] ?: false
+
+    suspend fun setGameMatchScreenSize(gameId: Long, enabled: Boolean) {
+        dataStore.edit { it[matchScreenSizeKey(gameId)] = enabled }
+    }
+
+    private fun matchScreenSizeKey(gameId: Long) =
+        androidx.datastore.preferences.core.booleanPreferencesKey("builtin_match_screen_size_game_$gameId")
 
     suspend fun setBuiltinFastForwardPreservePitch(enabled: Boolean) {
         dataStore.edit { it[Keys.BUILTIN_FAST_FORWARD_PRESERVE_PITCH] = enabled }

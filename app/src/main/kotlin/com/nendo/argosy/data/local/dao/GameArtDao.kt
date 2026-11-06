@@ -40,6 +40,18 @@ data class AppIconTarget(
     val packageName: String
 )
 
+data class TitleAliases(
+    val searchTitle: String?,
+    val alternativeNames: String?
+)
+
+data class ArtScrapeCandidate(
+    val gameId: Long,
+    val title: String,
+    val rommId: Long?,
+    val steamAppId: Long?
+)
+
 data class GameArtLocalPaths(
     val gameId: Long,
     val slot: String,
@@ -186,6 +198,53 @@ interface GameArtDao {
         """
     )
     suspend fun getAndroidGamesWithoutCover(): List<AppIconTarget>
+
+    @Query(
+        """
+        SELECT games.id AS gameId, games.title AS title,
+               games.rommId AS rommId, games.steamAppId AS steamAppId
+        FROM games
+        LEFT JOIN game_art art ON art.gameId = games.id AND art.slot = 'COVER'
+        WHERE art.overridePath IS NULL AND (
+            :rescanAll OR art.gameId IS NULL OR (
+                art.sourceUrl IS NOT NULL AND art.sourceUrl NOT LIKE '%steamgriddb%'
+            )
+        ) AND games.id > :afterGameId
+          AND (:platformSlug IS NULL OR games.platformSlug = :platformSlug)
+        ORDER BY games.id ASC
+        LIMIT 1
+        """
+    )
+    suspend fun getNextArtScrapeCandidate(
+        afterGameId: Long,
+        platformSlug: String? = null,
+        rescanAll: Boolean = false
+    ): ArtScrapeCandidate?
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM games
+        LEFT JOIN game_art art ON art.gameId = games.id AND art.slot = 'COVER'
+        WHERE art.overridePath IS NULL AND (
+            :rescanAll OR art.gameId IS NULL OR (
+                art.sourceUrl IS NOT NULL AND art.sourceUrl NOT LIKE '%steamgriddb%'
+            )
+        ) AND (:platformSlug IS NULL OR games.platformSlug = :platformSlug)
+        """
+    )
+    suspend fun countArtScrapeCandidates(platformSlug: String? = null, rescanAll: Boolean = false): Int
+
+    @Query("SELECT searchTitle, alternativeNames FROM games WHERE id = :gameId")
+    suspend fun getTitleAliases(gameId: Long): TitleAliases?
+
+    @Query(
+        """
+        DELETE FROM game_art
+        WHERE slot = 'COVER' AND overridePath IS NULL
+          AND gameId IN (SELECT id FROM games WHERE platformSlug = :platformSlug)
+        """
+    )
+    suspend fun clearCoverRowsForPlatform(platformSlug: String)
 
     @Query(
         "INSERT OR IGNORE INTO game_art (gameId, slot) " +

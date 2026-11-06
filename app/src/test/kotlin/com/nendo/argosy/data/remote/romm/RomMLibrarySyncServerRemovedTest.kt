@@ -117,6 +117,7 @@ class RomMLibrarySyncServerRemovedTest {
             apiClient = apiClient,
             connectionManager = connectionManager,
             userPreferencesRepository = preferencesRepository,
+                steamGridDbCoverOwner = mockk(relaxed = true),
             database = mockk(relaxed = true),
             gameDao = gameDao,
             homeTileDao = mockk(relaxed = true),

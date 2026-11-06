@@ -49,6 +49,7 @@ class RetroAchievementsSessionManager(
     private val raRepository: RetroAchievementsRepository,
     private val verifyRAGameIdUseCase: VerifyRAGameIdUseCase,
     private val achievementUpdateBus: AchievementUpdateBus,
+    private val journeyEventRecorder: com.nendo.argosy.data.repository.JourneyEventRecorder,
     private val ambientLedManager: AmbientLedManager,
     private val socialRepository: SocialRepository,
     private val scope: CoroutineScope,
@@ -314,6 +315,7 @@ class RetroAchievementsSessionManager(
         earnedAchievements++
 
         scope.launch {
+            journeyEventRecorder.capture(gameId, achievementId)
             Log.d(TAG, "Submitting achievement $achievementId to RA server...")
             val result = raRepository.awardAchievement(
                 gameId = gameId,

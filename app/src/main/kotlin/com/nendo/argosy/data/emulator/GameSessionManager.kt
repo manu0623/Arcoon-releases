@@ -10,7 +10,6 @@ import com.nendo.argosy.util.Logger
 import com.nendo.argosy.util.SafeCoroutineScope
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,7 +40,8 @@ private const val RESUME_REQUEST_TIMEOUT_MS = 5_000L
  */
 @Singleton
 open class GameSessionManager @Inject constructor(
-    @param:ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context,
+    private val playSessionTracker: dagger.Lazy<PlaySessionTracker>
 ) {
     private val scope = SafeCoroutineScope(Dispatchers.IO, "GameSessionManager")
 
@@ -56,7 +56,6 @@ open class GameSessionManager @Inject constructor(
     val resumeRequest: StateFlow<com.nendo.argosy.ui.dualscreen.BuiltInResumeRequest?> =
         _resumeRequest.asStateFlow()
 
-    private var timerJob: Job? = null
     @Volatile private var suspendedDisplayId: Int? = null
 
     /** Called by the built-in emulator when the user leaves it with Home. */
@@ -77,14 +76,15 @@ open class GameSessionManager @Inject constructor(
             packageName = context.packageName,
             processPid = 0,
             startTimeMillis = now,
-            elapsedTimeSeconds = 0,
+            elapsedTimeSeconds = playSessionTracker.get().currentPlaySeconds(),
             screenshotPath = null,
             builtIn = true,
             emulatorName = "Argosy"
         )
         lastSuspendedAt = now
+        suspendedRestoredFromDisk = false
         _processState.value = ProcessState.SUSPENDED
-        startTimer(now)
+        playSessionTracker.get().noteSuspended()
         if (snapshot != null) {
             scope.launch {
                 val path = runCatching { saveSnapshotToDisk(gameId, snapshot) }.getOrNull()
@@ -98,7 +98,8 @@ open class GameSessionManager @Inject constructor(
     fun onBuiltInResumed(gameId: Long) {
         val session = _sessionState.value ?: return
         if (!session.builtIn || session.gameId != gameId) return
-        stopTimer()
+        playSessionTracker.get().noteResumed()
+        suspendedRestoredFromDisk = false
         _sessionState.value = null
         _processState.value = ProcessState.RUNNING
     }
@@ -141,30 +142,145 @@ open class GameSessionManager @Inject constructor(
             packageName = packageName,
             processPid = 0,
             startTimeMillis = now,
-            elapsedTimeSeconds = 0,
+            elapsedTimeSeconds = playSessionTracker.get().currentPlaySeconds(),
             screenshotPath = null,
             builtIn = false,
             emulatorName = emulatorName
         )
         lastSuspendedAt = now
+        suspendedRestoredFromDisk = false
         _processState.value = ProcessState.SUSPENDED
-        startTimer(now)
+        playSessionTracker.get().noteSuspended()
+        sessionStateStore.setSuspendedSession(
+            gameId = gameId,
+            title = title,
+            platformName = platformName,
+            packageName = packageName,
+            emulatorName = emulatorName,
+            startTimeMillis = now,
+            elapsedSeconds = _sessionState.value?.elapsedTimeSeconds ?: 0L,
+            suspendedAtMillis = now
+        )
         Logger.info(TAG, "Suspended '$title' in $packageName")
     }
 
-    /** The external game was brought back to the front. */
+    private val sessionStateStore by lazy {
+        com.nendo.argosy.data.preferences.SessionStateStore(context)
+    }
+
+    init {
+        scope.launch { restoreSuspendedExternal() }
+    }
+
+    var suspendedRestoredFromDisk = false
+        private set
+
+    suspend fun restoreSuspendedExternal(): SuspendedGameSession? {
+        _sessionState.value?.let { return it }
+        return withContext(Dispatchers.IO) {
+            val snapshot = sessionStateStore.getSuspendedSession() ?: return@withContext null
+            if (isEmulatorStopped(snapshot.packageName)) {
+                Logger.info(TAG, "Dropped the suspended record for ${snapshot.packageName}: emulator stopped")
+                sessionStateStore.clearSuspendedSession()
+                return@withContext null
+            }
+            val restored = SuspendedGameSession(
+                gameId = snapshot.gameId,
+                title = snapshot.title,
+                platformName = snapshot.platformName,
+                packageName = snapshot.packageName,
+                processPid = 0,
+                startTimeMillis = snapshot.startTimeMillis,
+                elapsedTimeSeconds = snapshot.elapsedSeconds,
+                screenshotPath = null,
+                builtIn = false,
+                emulatorName = snapshot.emulatorName
+            )
+            suspendedRestoredFromDisk = true
+            _sessionState.value = restored
+            lastSuspendedAt = snapshot.suspendedAtMillis
+            _processState.value = ProcessState.SUSPENDED
+            Logger.info(TAG, "Restored suspended external game '${snapshot.title}'")
+            restored
+        }
+    }
+
+    private fun callerFrames(): String =
+        Throwable().stackTrace.drop(2).take(3).joinToString(" <- ") {
+            it.className.substringAfterLast('.') + "." + it.methodName + ":" + it.lineNumber
+        }
+
+    private fun isEmulatorStopped(packageName: String): Boolean = runCatching {
+        (context.packageManager.getApplicationInfo(packageName, 0).flags and
+            android.content.pm.ApplicationInfo.FLAG_STOPPED) != 0
+    }.getOrDefault(true)
+
+    @Volatile
+    var externalGameActivity: android.content.ComponentName? = null
+        private set
+
+    fun noteExternalLaunch(intent: android.content.Intent?) {
+        val target = intent?.let { resolveLaunchTarget(it) } ?: return
+        if (target.packageName == context.packageName) return
+        externalGameActivity = target
+        sessionStateStore.setExternalGameActivity(target)
+    }
+
+    private fun resolveLaunchTarget(intent: android.content.Intent): android.content.ComponentName? {
+        intent.component?.let { return it }
+        val owner = intent.`package` ?: return null
+        val matches = runCatching {
+            context.packageManager
+                .queryIntentActivities(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+                .filter { it.activityInfo.packageName == owner }
+                .map { android.content.ComponentName(it.activityInfo.packageName, it.activityInfo.name) }
+                .distinct()
+        }.getOrDefault(emptyList())
+        return matches.singleOrNull()
+    }
+
+    /**
+     * Brings a suspended external game back by reordering its own paused activity to the front.
+     * Returns false when the emulator that opened it is not the one this session remembers.
+     */
+    fun bringExternalToFront(options: android.os.Bundle? = null): Boolean {
+        val session = _sessionState.value?.takeIf { !it.builtIn } ?: return false
+        val target = externalGameActivity
+            ?: sessionStateStore.getExternalGameActivity()
+            ?: return false
+        if (target.packageName != session.packageName) return false
+        externalGameActivity = target
+        return runCatching {
+            val intent = android.content.Intent()
+                .setComponent(target)
+                .addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            if (options == null) context.startActivity(intent)
+            else context.startActivity(intent, options)
+        }.isSuccess
+    }
+
     fun onExternalResumed(gameId: Long) {
         val session = _sessionState.value ?: return
         if (session.builtIn || session.gameId != gameId) return
-        stopTimer()
+        playSessionTracker.get().noteResumed()
+        suspendedRestoredFromDisk = false
         _sessionState.value = null
         _processState.value = ProcessState.RUNNING
+        sessionStateStore.clearSuspendedSession()
     }
 
-    /** The play session ended (any way at all): an external card no longer has a game behind it. */
     fun onSessionEnded() {
         val session = _sessionState.value ?: return
-        if (!session.builtIn) clear(session)
+        if (session.builtIn) return
+        if (!isEmulatorStopped(session.packageName)) {
+            Logger.info(TAG, "Play session ended while ${session.packageName} still holds '${session.title}'")
+            return
+        }
+        clear(session)
     }
 
     /**
@@ -286,9 +402,14 @@ open class GameSessionManager @Inject constructor(
     }
 
     private fun clear(session: SuspendedGameSession) {
-        stopTimer()
+        if (!session.builtIn) {
+            Logger.info(TAG, "Ended the suspended record for '${session.title}' from ${callerFrames()}")
+            sessionStateStore.setExternalGameActivity(null)
+            sessionStateStore.clearSuspendedSession()
+        }
         _resumeRequest.update { current -> current?.takeIf { it.gameId != session.gameId } }
         session.screenshotPath?.let { path -> runCatching { File(path).delete() } }
+        suspendedRestoredFromDisk = false
         _sessionState.value = null
         _processState.value = ProcessState.IDLE
     }
@@ -304,22 +425,6 @@ open class GameSessionManager @Inject constructor(
             val info = runCatching { task.taskInfo }.getOrNull() ?: return@firstOrNull false
             info.baseActivity?.className == gameActivity || info.topActivity?.className == gameActivity
         }
-    }
-
-    private fun startTimer(startTimeMillis: Long) {
-        stopTimer()
-        timerJob = scope.launch {
-            while (true) {
-                delay(1000)
-                val elapsed = (System.currentTimeMillis() - startTimeMillis) / 1000
-                _sessionState.update { current -> current?.copy(elapsedTimeSeconds = elapsed) }
-            }
-        }
-    }
-
-    private fun stopTimer() {
-        timerJob?.cancel()
-        timerJob = null
     }
 
     private suspend fun saveSnapshotToDisk(gameId: Long, bitmap: Bitmap): String = withContext(Dispatchers.IO) {

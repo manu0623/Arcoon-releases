@@ -276,6 +276,10 @@ class RomMCollectionSyncService @Inject constructor(
                             existing.copy(
                                 name = remote.name,
                                 description = remote.description,
+                                // RomM's /api/collections is the user's own list; the derived ones
+                                // (genres, modes, series, smart) arrive from other endpoints. A row
+                                // synced from here is the user's, even if this device never made it.
+                                isUserCreated = true,
                                 updatedAt = System.currentTimeMillis()
                             )
                         )
@@ -286,7 +290,7 @@ class RomMCollectionSyncService @Inject constructor(
                                 rommId = remote.id,
                                 name = remote.name,
                                 description = remote.description,
-                                isUserCreated = false
+                                isUserCreated = true
                             )
                         )
                     }
