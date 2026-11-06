@@ -85,6 +85,16 @@ object DatabaseModule {
     fun providePlatformDao(database: ALauncherDatabase): PlatformDao = database.platformDao()
 
     @Provides
+    fun provideAchievementJourneyDao(
+        database: ALauncherDatabase
+    ): com.nendo.argosy.data.local.dao.AchievementJourneyDao = database.achievementJourneyDao()
+
+    @Provides
+    fun provideAchievementJourneyEventDao(
+        database: ALauncherDatabase
+    ): com.nendo.argosy.data.local.dao.AchievementJourneyEventDao = database.achievementJourneyEventDao()
+
+    @Provides
     fun provideGameDao(database: ALauncherDatabase): GameDao = database.gameDao()
 
     @Provides

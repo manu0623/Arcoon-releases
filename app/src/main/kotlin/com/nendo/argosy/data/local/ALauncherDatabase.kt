@@ -191,9 +191,11 @@ import com.nendo.argosy.data.local.entity.SteamLicenseEntity
         com.nendo.argosy.data.local.entity.SnapshotChannelEntity::class,
         com.nendo.argosy.data.local.entity.GameScreenshotEntity::class,
         com.nendo.argosy.data.local.entity.RAPatchCacheEntity::class,
-        com.nendo.argosy.data.local.entity.PlayRecordDeletionEntity::class
+        com.nendo.argosy.data.local.entity.PlayRecordDeletionEntity::class,
+        com.nendo.argosy.data.local.entity.AchievementJourneyEntity::class,
+        com.nendo.argosy.data.local.entity.AchievementJourneyEventEntity::class
     ],
-    version = 221,
+    version = 222,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -267,5 +269,9 @@ abstract class ALauncherDatabase : RoomDatabase() {
     abstract fun gameScreenshotDao(): com.nendo.argosy.data.local.dao.GameScreenshotDao
     abstract fun raPatchCacheDao(): com.nendo.argosy.data.local.dao.RAPatchCacheDao
     abstract fun playRecordDeletionDao(): com.nendo.argosy.data.local.dao.PlayRecordDeletionDao
+
+    abstract fun achievementJourneyDao(): com.nendo.argosy.data.local.dao.AchievementJourneyDao
+
+    abstract fun achievementJourneyEventDao(): com.nendo.argosy.data.local.dao.AchievementJourneyEventDao
 
 }
