@@ -485,4 +485,14 @@ class ImageCacheManagerTest {
         assertFalse(canBackfillCachedFromUrl(cachedFromOld, oldUrl, oldUrl))
         assertFalse(canBackfillCachedFromUrl(null, null, oldUrl))
     }
+
+    @Test
+    fun `a cached file from another host is not reused for the new source`() {
+        val romm = "http://192.168.1.10:7676/assets/romm/resources/roms/7/1662/cover/big.png"
+        val rommOtherGame = "http://192.168.1.10:7676/assets/romm/resources/roms/7/1695/cover/big.png"
+        val steamGridDb = "https://cdn2.steamgriddb.com/file/sgdb-cdn/grid/abc123.png"
+        assertTrue(sameArtHost(romm, rommOtherGame))
+        assertFalse(sameArtHost(romm, steamGridDb))
+        assertFalse(sameArtHost("nonsense", romm))
+    }
 }

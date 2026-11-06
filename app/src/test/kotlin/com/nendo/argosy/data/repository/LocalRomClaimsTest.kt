@@ -19,6 +19,35 @@ class LocalRomClaimsTest {
     }
 
     @Test
+    fun `a file the server lists under a folder-named rom claims it`() {
+        val claims = claimLocalEntries(
+            listOf(
+                ClaimTarget(
+                    gameId = 1,
+                    rommFileName = "The Legend of Zelda Breath of the Wild",
+                    title = "The Legend of Zelda: Breath of the Wild",
+                    fileNames = listOf("Breath of the Wild (US) (v208).wua")
+                )
+            ),
+            listOf(file("Breath of the Wild (US) (v208).wua"), file("Other Thing (US).wua"))
+        )
+        assertEquals("Breath of the Wild (US) (v208).wua", claims[1]?.name)
+    }
+
+    @Test
+    fun `a file the server lists still loses to another game's exact server filename`() {
+        val claims = claimLocalEntries(
+            listOf(
+                ClaimTarget(1, "Zelda", "Zelda", listOf("Wind Waker HD (US).wua")),
+                ClaimTarget(2, "Wind Waker HD (US).wua", "Wind Waker")
+            ),
+            listOf(file("Wind Waker HD (US).wua"))
+        )
+        assertNull("the contested file goes to nobody", claims[1])
+        assertNull("the contested file goes to nobody", claims[2])
+    }
+
+    @Test
     fun `a folder named for the server filename claims it`() {
         val claims = claimLocalEntries(
             listOf(ClaimTarget(1, "Death Road to Canada", "Death Road to Canada")),

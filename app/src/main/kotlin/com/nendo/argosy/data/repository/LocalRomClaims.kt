@@ -8,10 +8,16 @@ data class ClaimCandidate(
     val isDirectory: Boolean
 )
 
+/**
+ * One game's names as the server reports them. [rommFileName] is the name of the rom RomM holds,
+ * which for a folder-shaped rom is the folder itself, and [fileNames] carries the individual file
+ * names from that game's file entries.
+ */
 data class ClaimTarget(
     val gameId: Long,
     val rommFileName: String?,
-    val title: String
+    val title: String,
+    val fileNames: List<String> = emptyList()
 )
 
 private val PLAYLIST_SUFFIXES = setOf("m3u", "m3u8")
@@ -34,17 +40,21 @@ private fun normalize(name: String): String = FileNames.normalizeForMatch(name)
 
 private enum class Tier { EXACT_FILE, EXACT_FOLDER, STEM_FILE, STEM_FOLDER, TITLE_FILE, TITLE_FOLDER }
 
+private fun knownNames(target: ClaimTarget): List<String> =
+    listOfNotNull(target.rommFileName?.takeIf { it.isNotBlank() }) + target.fileNames
+
 private fun matches(tier: Tier, target: ClaimTarget, candidate: ClaimCandidate): Boolean {
     val romm = target.rommFileName?.takeIf { it.isNotBlank() }
     return when (tier) {
         Tier.EXACT_FILE ->
-            !candidate.isDirectory && romm != null && candidate.name.equals(romm, ignoreCase = true)
+            !candidate.isDirectory &&
+                knownNames(target).any { candidate.name.equals(it, ignoreCase = true) }
         Tier.EXACT_FOLDER ->
             candidate.isDirectory && romm != null &&
                 folderNames(candidate.name).any { it.equals(romm, ignoreCase = true) }
         Tier.STEM_FILE ->
-            !candidate.isDirectory && romm != null &&
-                stemOf(candidate.name).equals(stemOf(romm), ignoreCase = true)
+            !candidate.isDirectory &&
+                knownNames(target).any { stemOf(candidate.name).equals(stemOf(it), ignoreCase = true) }
         Tier.STEM_FOLDER ->
             candidate.isDirectory && romm != null &&
                 folderNames(candidate.name).any { it.equals(stemOf(romm), ignoreCase = true) }

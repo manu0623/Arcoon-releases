@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -14,8 +15,16 @@ class RightStickStepperTest {
 
     private val steps = mutableListOf<Pair<GamepadEvent, Boolean>>()
 
+    /** [advance] runs tasks due exactly on the boundary, so the pause end is the first repeat. */
+    private val firstRepeatAt = DirectionRepeat.START_DELAY_MS
+
     private fun TestScope.stepper() = RightStickStepper(backgroundScope) { event, isRepeat ->
         steps += event to isRepeat
+    }
+
+    private fun TestScope.advance(ms: Long) {
+        advanceTimeBy(ms)
+        runCurrent()
     }
 
     @Test
@@ -44,11 +53,9 @@ class RightStickStepperTest {
         }
 
         stepper.onAxis(0.8f)
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS)
-        runCurrent()
+        advance(firstRepeatAt)
         stepper.release()
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS * 3)
-        runCurrent()
+        advance(1_000)
 
         assertEquals(
             listOf(GamepadEvent.RightStickRight to false, GamepadEvent.RightStickRight to true),
@@ -57,12 +64,25 @@ class RightStickStepperTest {
     }
 
     @Test
+    fun `a flick inside the hold pause steps once and stops`() = runTest {
+        val stepper = stepper()
+
+        stepper.onAxis(0.8f)
+        advance(DirectionRepeat.START_DELAY_MS - 1)
+        assertEquals(1, steps.size)
+
+        stepper.release()
+        advance(1_000)
+
+        assertEquals(listOf(GamepadEvent.RightStickDown to false), steps)
+    }
+
+    @Test
     fun `a tilt inside the deadzone emits nothing`() = runTest {
         val stepper = stepper()
 
         stepper.onAxis(0.3f)
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS * 3)
-        runCurrent()
+        advance(1_000)
 
         assertEquals(emptyList<Pair<GamepadEvent, Boolean>>(), steps)
     }
@@ -77,23 +97,25 @@ class RightStickStepperTest {
     }
 
     @Test
-    fun `holding repeats at a constant interval`() = runTest {
+    fun `holding pauses and then speeds up past the first gap`() = runTest {
         val stepper = stepper()
 
         stepper.onAxis(-0.8f)
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS - 1)
-        runCurrent()
+        advance(DirectionRepeat.START_DELAY_MS - 1)
         assertEquals(1, steps.size)
 
-        advanceTimeBy(1)
-        runCurrent()
+        advance(1)
         assertEquals(2, steps.size)
 
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS * 3)
-        runCurrent()
+        assertTrue(DirectionRepeat.intervalMs(1) < DirectionRepeat.intervalMs(0))
+        advance(DirectionRepeat.intervalMs(0))
+        assertEquals(3, steps.size)
+
+        // a second of holding now travels far further than a flat 350 ms per step
+        advance(1_000)
+        assertTrue("steps=${steps.size}", steps.size >= 15)
         assertEquals(
-            listOf(GamepadEvent.RightStickUp to false) +
-                List(4) { GamepadEvent.RightStickUp to true },
+            listOf(GamepadEvent.RightStickUp to false) + List(steps.size - 1) { GamepadEvent.RightStickUp to true },
             steps
         )
     }
@@ -114,11 +136,9 @@ class RightStickStepperTest {
         val stepper = stepper()
 
         stepper.onAxis(0.8f)
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS)
-        runCurrent()
+        advance(firstRepeatAt)
         stepper.onAxis(0.1f)
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS * 5)
-        runCurrent()
+        advance(1_000)
 
         assertEquals(
             listOf(GamepadEvent.RightStickDown to false, GamepadEvent.RightStickDown to true),
@@ -132,8 +152,7 @@ class RightStickStepperTest {
 
         stepper.onAxis(-0.8f)
         stepper.release()
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS * 5)
-        runCurrent()
+        advance(1_000)
 
         assertEquals(listOf(GamepadEvent.RightStickUp to false), steps)
     }
@@ -144,8 +163,7 @@ class RightStickStepperTest {
 
         stepper.onAxis(-0.8f)
         stepper.onAxis(0.8f)
-        advanceTimeBy(RightStickStepper.STEP_INTERVAL_MS)
-        runCurrent()
+        advance(firstRepeatAt)
 
         assertEquals(
             listOf(

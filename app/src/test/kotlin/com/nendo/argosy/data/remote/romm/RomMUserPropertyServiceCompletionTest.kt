@@ -51,6 +51,7 @@ class RomMUserPropertyServiceCompletionTest {
             imageCacheManager = mockk(relaxed = true),
             syncCoordinator = Lazy { syncCoordinator },
             userPreferencesRepository = mockk(relaxed = true),
+            steamGridDbCoverOwner = mockk(relaxed = true),
             gameFileSync = mockk(relaxed = true),
             gameFileDao = mockk(relaxed = true),
             siblingGroupRepository = mockk(relaxed = true),

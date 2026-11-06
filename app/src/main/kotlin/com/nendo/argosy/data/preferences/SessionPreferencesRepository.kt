@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.nendo.argosy.data.emulator.LaunchOrigin
 import kotlinx.coroutines.flow.Flow
@@ -23,7 +24,9 @@ data class PersistedSession(
     val channelName: String? = null,
     val variantFileId: Long? = null,
     val origin: LaunchOrigin = LaunchOrigin.INTERNAL,
-    val isNetplayGuest: Boolean = false
+    val isNetplayGuest: Boolean = false,
+    val suspendedMs: Long = 0L,
+    val suspendedSinceMillis: Long? = null
 )
 
 @Singleton
@@ -42,6 +45,8 @@ class SessionPreferencesRepository @Inject constructor(
         val ACTIVE_SESSION_NETPLAY_GUEST = booleanPreferencesKey("active_session_netplay_guest")
         val ACTIVE_SESSION_RECOVERY_ATTEMPTS = intPreferencesKey("active_session_recovery_attempts")
         val ACTIVE_SESSION_RA_LAUNCH_SNAPSHOT = stringPreferencesKey("active_session_ra_launch_snapshot")
+        val ACTIVE_SESSION_SUSPENDED_MS = longPreferencesKey("active_session_suspended_ms")
+        val ACTIVE_SESSION_SUSPENDED_SINCE = longPreferencesKey("active_session_suspended_since")
     }
 
     /**
@@ -86,6 +91,8 @@ class SessionPreferencesRepository @Inject constructor(
             if (variantFileId != null) prefs[Keys.ACTIVE_SESSION_VARIANT_FILE_ID] = variantFileId.toString()
             else prefs.remove(Keys.ACTIVE_SESSION_VARIANT_FILE_ID)
             prefs[Keys.ACTIVE_SESSION_LAUNCH_ORIGIN] = origin.name
+            prefs.remove(Keys.ACTIVE_SESSION_SUSPENDED_MS)
+            prefs.remove(Keys.ACTIVE_SESSION_SUSPENDED_SINCE)
         }
     }
 
@@ -106,6 +113,8 @@ class SessionPreferencesRepository @Inject constructor(
             prefs.remove(Keys.ACTIVE_SESSION_LAUNCH_ORIGIN)
             prefs.remove(Keys.ACTIVE_SESSION_NETPLAY_GUEST)
             prefs.remove(Keys.ACTIVE_SESSION_RECOVERY_ATTEMPTS)
+            prefs.remove(Keys.ACTIVE_SESSION_SUSPENDED_MS)
+            prefs.remove(Keys.ACTIVE_SESSION_SUSPENDED_SINCE)
         }
     }
 
@@ -128,6 +137,32 @@ class SessionPreferencesRepository @Inject constructor(
     private fun Preferences.isSessionStartedAt(startedAt: Instant?): Boolean =
         startedAt == null || this[Keys.ACTIVE_SESSION_START_TIME] == startedAt.toString()
 
+    /**
+     * Opens a pause at [atMillis], left open until [closeSuspendedSpan] closes it.
+     */
+    suspend fun openSuspendedSpan(atMillis: Long) {
+        dataStore.edit { prefs ->
+            prefs[Keys.ACTIVE_SESSION_SUSPENDED_SINCE] = atMillis
+        }
+    }
+
+    /**
+     * Closes the open pause at [atMillis] and returns the paused milliseconds now on record.
+     */
+    suspend fun closeSuspendedSpan(atMillis: Long): Long {
+        var total = 0L
+        dataStore.edit { prefs ->
+            val banked = prefs[Keys.ACTIVE_SESSION_SUSPENDED_MS] ?: 0L
+            val openPause = prefs[Keys.ACTIVE_SESSION_SUSPENDED_SINCE]
+                ?.let { (atMillis - it).coerceAtLeast(0L) }
+                ?: 0L
+            total = banked + openPause
+            prefs[Keys.ACTIVE_SESSION_SUSPENDED_MS] = total
+            prefs.remove(Keys.ACTIVE_SESSION_SUSPENDED_SINCE)
+        }
+        return total
+    }
+
     suspend fun getPersistedSession(): PersistedSession? {
         return dataStore.data.first().toPersistedSession()
     }
@@ -147,7 +182,9 @@ class SessionPreferencesRepository @Inject constructor(
             channelName = this[Keys.ACTIVE_SESSION_CHANNEL_NAME],
             variantFileId = this[Keys.ACTIVE_SESSION_VARIANT_FILE_ID]?.toLongOrNull(),
             origin = LaunchOrigin.fromString(this[Keys.ACTIVE_SESSION_LAUNCH_ORIGIN]),
-            isNetplayGuest = this[Keys.ACTIVE_SESSION_NETPLAY_GUEST] ?: false
+            isNetplayGuest = this[Keys.ACTIVE_SESSION_NETPLAY_GUEST] ?: false,
+            suspendedMs = this[Keys.ACTIVE_SESSION_SUSPENDED_MS] ?: 0L,
+            suspendedSinceMillis = this[Keys.ACTIVE_SESSION_SUSPENDED_SINCE]
         )
     }
 }

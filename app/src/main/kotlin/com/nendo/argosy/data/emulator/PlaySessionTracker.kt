@@ -126,6 +126,8 @@ class PlaySessionTracker @Inject constructor(
     private val saveObserved = AtomicBoolean(false)
     private val sessionServiceMutex = Mutex()
     private val sessionServiceStarted = AtomicBoolean(false)
+    @Volatile private var suspendMark: Instant? = null
+    private val suspendedTotalMs = java.util.concurrent.atomic.AtomicLong(0)
 
     private fun broadcastSessionChanged(gameId: Long?, channelName: String?, isHardcore: Boolean) {
         if (gameId != null && gameId > 0) {
@@ -237,7 +239,13 @@ class PlaySessionTracker @Inject constructor(
 
     private suspend fun recordOrphanedPlaySession(orphaned: PersistedSession, endTime: Instant): Boolean {
         val totalMs = Duration.between(orphaned.startTime, endTime).toMillis()
-        val (activePlayMs, standbyMs) = resolveActivePlayTime(orphaned.emulatorPackage, orphaned.startTime, endTime, totalMs)
+        val (activePlayMs, standbyMs) = resolveActivePlayTime(
+            orphaned.emulatorPackage,
+            orphaned.startTime,
+            endTime,
+            totalMs,
+            pausedBeforeStartMs(orphaned, endTime)
+        )
         return try {
             val game = gameDao.getById(orphaned.gameId)
             val prefs = preferencesRepository.userPreferences.first()
@@ -315,6 +323,50 @@ class PlaySessionTracker @Inject constructor(
         return outcome
     }
 
+    /**
+     * Adopts the session behind a game an emulator still holds suspended.
+     *
+     * The orphan recovery that normally takes the record back runs from the watcher service, and
+     * nothing starts that service for a game parked behind the launcher. The restore path knows the
+     * game is open, so it asks for the adoption directly. The persisted record is used when it is
+     * still there, so play time and suspended spans survive; otherwise the session opens again for
+     * a game that is demonstrably running.
+     */
+    suspend fun adoptHeldSession(gameId: Long, emulatorPackage: String) {
+        val running = _activeSession.value
+        if (running != null) {
+            if (running.gameId != gameId) {
+                Logger.info(TAG, "[SaveSync] SESSION gameId=$gameId | Adopt skipped, session for ${running.gameId} is live")
+                return
+            }
+            /*
+             * The session outlived its watcher: a game resumed from a stored record has no Home
+             * handle and no save watcher until the service behind the session is running again.
+             */
+            Logger.info(TAG, "[SaveSync] SESSION gameId=$gameId | Session live, ensuring its watcher runs")
+            sessionServiceMutex.withLock {
+                if (!sessionServiceStarted.getAndSet(true)) {
+                    startGameSessionService(
+                        gameId = running.gameId,
+                        emulatorPackage = running.emulatorPackage,
+                        coreName = running.coreName,
+                        isHardcore = running.isHardcore,
+                        sessionStartTime = running.startTime.toEpochMilli()
+                    )
+                }
+            }
+            return
+        }
+        val persisted = preferencesRepository.getPersistedSession()
+        if (persisted != null && persisted.gameId == gameId) {
+            Logger.info(TAG, "[SaveSync] SESSION gameId=$gameId | Adopting the persisted session for a held game")
+            resumePersistedSession(persisted)
+            return
+        }
+        Logger.info(TAG, "[SaveSync] SESSION gameId=$gameId | Opening a session for a held game with no persisted record")
+        startSession(gameId = gameId, emulatorPackage = emulatorPackage)
+    }
+
     suspend fun checkOrphanedSession() {
         if (_activeSession.value != null) {
             saveRecoveryGate.markComplete()
@@ -333,6 +385,18 @@ class PlaySessionTracker @Inject constructor(
                 return
             }
             if (isSessionStillOnScreen(orphaned)) {
+                resumePersistedSession(orphaned)
+                return
+            }
+            /*
+             * An emulator holding this game suspended is still playing it, even with its window
+             * behind the launcher. The record on disk outlives the process that wrote it, and the
+             * resumed game needs its session back or the Home handle and save sync stop with it.
+             * Reading it here keeps that answer ahead of the orphan recovery's upload and release.
+             */
+            val heldGame = sessionStateStore.getSuspendedSession()
+            if (heldGame != null && heldGame.gameId == orphaned.gameId && !isEmulatorStopped(heldGame.packageName)) {
+                Logger.info(TAG, "[SaveSync] SESSION gameId=${orphaned.gameId} | Emulator holds it suspended, resuming the record")
                 resumePersistedSession(orphaned)
                 return
             }
@@ -356,6 +420,12 @@ class PlaySessionTracker @Inject constructor(
     private fun isSessionStillOnScreen(persisted: PersistedSession): Boolean =
         permissionHelper.isPackageOnScreenOrRecent(application, persisted.emulatorPackage)
 
+    /** An app Android has stopped has nothing paused inside it. */
+    private fun isEmulatorStopped(packageName: String): Boolean = runCatching {
+        (application.packageManager.getApplicationInfo(packageName, 0).flags and
+            android.content.pm.ApplicationInfo.FLAG_STOPPED) != 0
+    }.getOrDefault(true)
+
     /**
      * Adopts a persisted session back into memory rather than closing it out.
      *
@@ -376,6 +446,8 @@ class PlaySessionTracker @Inject constructor(
         lastScreenOffTime = null
         marathonSegmentDuration = Duration.ZERO
         longestMarathonSegment = Duration.ZERO
+        suspendMark = null
+        suspendedTotalMs.set(persisted.suspendedMs)
 
         _activeSession.value = ActiveSession(
             gameId = persisted.gameId,
@@ -423,11 +495,52 @@ class PlaySessionTracker @Inject constructor(
         return longEnough
     }
 
+    fun noteSuspended() {
+        val now = Instant.now()
+        if (suspendMark == null) suspendMark = now
+        scope.launch { preferencesRepository.openSuspendedSpan(now.toEpochMilli()) }
+    }
+
+    fun noteResumed() {
+        val mark = suspendMark ?: return
+        val now = Instant.now()
+        suspendedTotalMs.addAndGet(Duration.between(mark, now).toMillis().coerceAtLeast(0L))
+        suspendMark = null
+        scope.launch { preferencesRepository.closeSuspendedSpan(now.toEpochMilli()) }
+    }
+
+    private fun pausedBeforeStartMs(orphaned: PersistedSession, endTime: Instant): Long {
+        val openPause = orphaned.suspendedSinceMillis
+            ?.let { (endTime.toEpochMilli() - it).coerceAtLeast(0L) }
+            ?: 0L
+        return orphaned.suspendedMs + openPause
+    }
+
+    private fun suspendedMsAt(endTime: Instant): Long {
+        val openPause = suspendMark
+            ?.let { Duration.between(it, endTime).toMillis().coerceAtLeast(0L) }
+            ?: 0L
+        return suspendedTotalMs.get() + openPause
+    }
+
+    private fun clearSuspendMarks() {
+        suspendMark = null
+        suspendedTotalMs.set(0L)
+    }
+
+    fun currentPlaySeconds(): Long {
+        val session = _activeSession.value ?: return 0L
+        val elapsedMs = Duration.between(session.startTime, Instant.now()).toMillis() -
+            suspendedMsAt(Instant.now())
+        return elapsedMs.coerceAtLeast(0L) / 1000
+    }
+
     private fun resolveActivePlayTime(
         emulatorPackage: String,
         startTime: Instant,
         endTime: Instant,
-        totalMs: Long
+        totalMs: Long,
+        pausedBeforeStartMs: Long = 0L
     ): Pair<Long, Long> {
         val statsPackage = if (emulatorPackage == EmulatorRegistry.BUILTIN_PACKAGE) {
             application.packageName
@@ -442,7 +555,15 @@ class PlaySessionTracker @Inject constructor(
         )
         val foregroundMs = if (durations.foregroundMs >= 0) durations.foregroundMs else totalMs
         val screenOnMs = if (durations.screenOnMs >= 0) durations.screenOnMs else totalMs
-        val active = minOf(foregroundMs, screenOnMs).coerceAtMost(totalMs)
+        val statsSpanTheLauncher = statsPackage == application.packageName
+        val statsSpanOnlyTheEmulator = !statsSpanTheLauncher && durations.foregroundMs >= 0
+        val pausedMs = (suspendedMsAt(endTime) + pausedBeforeStartMs).coerceAtMost(totalMs)
+        val onScreenMs = if (statsSpanOnlyTheEmulator) {
+            minOf(foregroundMs, screenOnMs)
+        } else {
+            minOf(foregroundMs, screenOnMs) - pausedMs
+        }
+        val active = onScreenMs.coerceIn(0L, totalMs)
         val standby = (totalMs - active).coerceAtLeast(0)
         return active to standby
     }
@@ -724,6 +845,7 @@ class PlaySessionTracker @Inject constructor(
             val (activePlayMs, standbyMs) = resolveActivePlayTime(
                 session.emulatorPackage, session.startTime, endTime, totalMs
             )
+            clearSuspendMarks()
             Logger.debug(TAG, "[SaveSync] SESSION gameId=${session.gameId} | Session ended | duration=${sessionDuration.seconds}s, activePlayMs=$activePlayMs, standbyMs=$standbyMs, emulator=${session.emulatorPackage}")
             try {
                 val game = gameDao.getById(session.gameId)

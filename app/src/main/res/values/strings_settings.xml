@@ -5209,4 +5209,9 @@
     <string name="settings_builtin_gpu_driver_reason_backend">Applies when Backend is Vulkan</string>
     <!-- Second line of a read-only GPU Driver row on a device that cannot load custom drivers. -->
     <string name="settings_builtin_gpu_driver_reason_device">Custom drivers need an Adreno GPU</string>
+    <string name="settings_interface_section_launcher">Launcher</string>
+    <string name="settings_interface_ui_mode_title">Home and controls</string>
+    <string name="settings_interface_ui_mode_subtitle">Which home the launcher opens, and which menu the pad drives</string>
+    <string name="settings_interface_ui_mode_cocoon">Cocoon</string>
+    <string name="settings_interface_ui_mode_classic">Argosy</string>
 </resources>

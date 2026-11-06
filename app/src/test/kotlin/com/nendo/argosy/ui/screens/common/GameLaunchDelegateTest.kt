@@ -6,6 +6,7 @@ import android.os.Bundle
 import com.nendo.argosy.DualScreenManager
 import com.nendo.argosy.DualScreenManagerHolder
 import com.nendo.argosy.data.emulator.ExternalSessionStart
+import com.nendo.argosy.data.emulator.GameSessionManager
 import com.nendo.argosy.data.emulator.LaunchOrigin
 import com.nendo.argosy.data.emulator.LaunchProgressTracker
 import com.nendo.argosy.data.emulator.LaunchResult
@@ -13,6 +14,7 @@ import com.nendo.argosy.data.emulator.PlaySessionTracker
 import com.nendo.argosy.data.local.entity.GameEntity
 import com.nendo.argosy.data.repository.GameRepository
 import com.nendo.argosy.domain.model.LaunchStep
+import com.nendo.argosy.domain.model.multitasking.SuspendedGameSession
 import com.nendo.argosy.domain.usecase.game.LaunchGameUseCase
 import com.nendo.argosy.ui.theme.generated.ComponentDefaults
 import io.mockk.coEvery
@@ -49,6 +51,7 @@ class GameLaunchDelegateTest {
     private val preLaunchRecapStep: PreLaunchRecapStep = mockk()
     private val resolver: EmulatorLaunchTargetResolver = mockk()
     private val manager: DualScreenManager = mockk()
+    private val gameSessionManager: GameSessionManager = mockk(relaxed = true)
 
     @Before
     fun setUp() {
@@ -61,6 +64,7 @@ class GameLaunchDelegateTest {
         coEvery { preLaunchRecapStep.run(any(), any(), any()) } returns true
         coEvery { resolver.launchOptionsFor(gameId, any(), any()) } returns options
         every { manager.startGame(any()) } returns Result.success(Unit)
+        every { manager.onSessionChanged(any(), any(), any()) } returns Unit
         DualScreenManagerHolder.instance = manager
     }
 
@@ -102,13 +106,18 @@ class GameLaunchDelegateTest {
         launchHandoff = LaunchHandoff(tracker, mockk(relaxed = true), router, playSessionTracker, holdMs),
         resolveSnapshotConflict = mockk(relaxed = true),
         connectedControllerTracker = mockk(relaxed = true),
-        gameSessionManager = mockk(relaxed = true),
-        preLaunchRecapStep = preLaunchRecapStep
+        gameSessionManager = gameSessionManager,
+        preLaunchRecapStep = preLaunchRecapStep,
+        launchTargetResolver = resolver
     )
 
-    private fun callbacks(onFailure: (Throwable) -> Unit = {}, onLaunchFailed: () -> Unit = {}) =
+    private fun callbacks(
+        overrideDisplayId: Int? = null,
+        onFailure: (Throwable) -> Unit = {},
+        onLaunchFailed: () -> Unit = {}
+    ) =
         LaunchResultCallbacks(
-            start = GameStart(gameId, onFailure = onFailure),
+            start = GameStart(gameId, overrideDisplayId = overrideDisplayId, onFailure = onFailure),
             onLaunchFailed = onLaunchFailed
         )
 
@@ -236,5 +245,62 @@ class GameLaunchDelegateTest {
         verify(exactly = 1) { tracker.finish(any(), false) }
         verify(exactly = 0) { tracker.finish(any(), true) }
         verify(exactly = 0) { manager.startGame(any()) }
+    }
+
+    private fun suspendedRecord(
+        recordGameId: Long = gameId,
+        builtIn: Boolean = false,
+        packageName: String = "org.azahar_emu.azahar"
+    ) = SuspendedGameSession(
+        gameId = recordGameId,
+        title = "Game",
+        platformName = "3ds",
+        packageName = packageName,
+        processPid = 4242,
+        startTimeMillis = 1_000L,
+        elapsedTimeSeconds = 60L,
+        builtIn = builtIn
+    )
+
+    @Test
+    fun `a held game with no emulator task on record is delivered again instead of adopted`() = runTest {
+        every { gameSessionManager.sessionState } returns MutableStateFlow(suspendedRecord())
+        every { gameSessionManager.bringExternalToFront(any()) } returns false
+        useCaseReturns(LaunchResult.NoRomFile(null))
+        val tracker = tracker()
+
+        delegate(tracker, router()).launchSimple(this, gameId, callbacks = callbacks())
+        runCurrent()
+
+        coVerify(exactly = 0) { playSessionTracker.adoptHeldSession(any(), any()) }
+        coVerify(exactly = 1) {
+            launchGameUseCase(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `a record held for another game is never adopted`() = runTest {
+        every { gameSessionManager.sessionState } returns MutableStateFlow(suspendedRecord(recordGameId = 99L))
+        useCaseReturns(LaunchResult.NoRomFile(null))
+        val tracker = tracker()
+
+        delegate(tracker, router()).launchSimple(this, gameId, callbacks = callbacks())
+        runCurrent()
+
+        verify(exactly = 0) { gameSessionManager.bringExternalToFront(any()) }
+        coVerify(exactly = 0) { playSessionTracker.adoptHeldSession(any(), any()) }
+    }
+
+    @Test
+    fun `a built-in record never takes the external resume path`() = runTest {
+        every { gameSessionManager.sessionState } returns MutableStateFlow(suspendedRecord(builtIn = true))
+        useCaseReturns(LaunchResult.NoRomFile(null))
+        val tracker = tracker()
+
+        delegate(tracker, router()).launchSimple(this, gameId, callbacks = callbacks())
+        runCurrent()
+
+        verify(exactly = 0) { gameSessionManager.bringExternalToFront(any()) }
+        coVerify(exactly = 0) { playSessionTracker.adoptHeldSession(any(), any()) }
     }
 }

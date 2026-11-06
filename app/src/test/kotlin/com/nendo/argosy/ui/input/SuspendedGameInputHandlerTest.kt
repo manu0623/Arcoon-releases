@@ -12,7 +12,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 private class TestGameSessionManager : GameSessionManager(
-    context = ContextWrapper(null)
+    context = ContextWrapper(null),
+    playSessionTracker = dagger.Lazy {
+        io.mockk.mockk<com.nendo.argosy.data.emulator.PlaySessionTracker>(relaxed = true)
+    }
 ) {
     var resumeCalled = false
     var closeCalled = false

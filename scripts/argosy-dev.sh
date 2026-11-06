@@ -6,6 +6,7 @@
 #   devices                 list connected adb devices
 #   pid                     print the running debug-app pid (empty if not running)
 #   install [--build]       install the debug APK (--build runs assembleDebug first, blocks)
+#   cycle                   fast loop: build+install+relaunch, no tests/lint (edit -> cycle -> look)
 #   launch                  wake the screen and foreground the debug app
 #   logs [-c] [pattern]     dump debug-process logcat; -c clears buffer first; pattern greps (-iE)
 #   key <name|code> ...     send key events: up down left right a b confirm back enter menu home wake
@@ -64,6 +65,20 @@ main() {
         ./gradlew :app:assembleDebug
       fi
       "${adb[@]}" install -r "$APK" ;;
+    cycle)
+      # The polishing loop: one edit in, one look on the device. assembleDebug only - unit tests,
+      # lint and detekt are deliberately not on this path (run them when the change is done), and
+      # a warm Gradle daemon makes a one-file edit land in about half a minute.
+      local t0 t1 t2
+      t0=$(date +%s)
+      if ! ANDROID_SERIAL="$serial" ./gradlew :app:installDebug --offline; then
+        echo "argosy-dev: offline build failed; retrying with the network" >&2
+        ANDROID_SERIAL="$serial" ./gradlew :app:installDebug
+      fi
+      t1=$(date +%s)
+      "${adb[@]}" shell am start -n "$ACTIVITY" >/dev/null 2>&1 || true
+      t2=$(date +%s)
+      echo "cycle: build+install $((t1-t0))s, launch $((t2-t1))s";;
     launch)
       "${adb[@]}" shell input keyevent 224 >/dev/null 2>&1 || true
       "${adb[@]}" shell am start -n "$ACTIVITY" >/dev/null 2>&1
@@ -95,7 +110,7 @@ main() {
       "${adb[@]}" exec-out screencap -p > "$path" 2>/dev/null
       echo "$path" ;;
     help|*)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+      awk 'NR>=2 && /^#/ {sub(/^# ?/, ""); print; next} NR>=2 {exit}' "$0" ;;
   esac
 }
 

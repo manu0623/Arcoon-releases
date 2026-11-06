@@ -109,7 +109,7 @@ class GamepadInputHandlerTest {
     fun `an idle sample from a second pad does not cancel the first pad's held direction`() {
         process(sample(x = 1f, deviceId = PAD_A))
         process(sample(deviceId = PAD_B))
-        scheduler.advanceTimeBy(401)
+        scheduler.advanceTimeBy(DirectionRepeat.START_DELAY_MS + 1)
 
         assertEquals(listOf(GamepadEvent.Right to false, GamepadEvent.Right to true), delivered)
     }
@@ -170,7 +170,7 @@ class GamepadInputHandlerTest {
         var consuming = false
         handler.setRawMotionEventListener { consuming }
         process(sample(x = 1f))
-        scheduler.advanceTimeBy(401)
+        scheduler.advanceTimeBy(DirectionRepeat.START_DELAY_MS + 1)
         assertEquals(listOf(GamepadEvent.Right to false, GamepadEvent.Right to true), delivered)
 
         consuming = true
@@ -192,7 +192,7 @@ class GamepadInputHandlerTest {
     @Test
     fun `no tick is delivered after resetStickMotion`() {
         process(sample(y = -1f))
-        scheduler.advanceTimeBy(401)
+        scheduler.advanceTimeBy(DirectionRepeat.START_DELAY_MS + 1)
         assertEquals(listOf(GamepadEvent.Up to false, GamepadEvent.Up to true), delivered)
 
         handler.resetStickMotion()
@@ -204,7 +204,7 @@ class GamepadInputHandlerTest {
     @Test
     fun `the stick outranks the hat while both are held`() {
         process(sample(x = 1f, hatY = 1f))
-        scheduler.advanceTimeBy(401)
+        scheduler.advanceTimeBy(DirectionRepeat.START_DELAY_MS + 1)
 
         assertEquals(listOf(GamepadEvent.Right to false, GamepadEvent.Right to true), delivered)
     }
@@ -232,9 +232,25 @@ class GamepadInputHandlerTest {
         process(sample(y = 1f))
         process(sample(y = 0.9f))
         process(sample(y = 0.4f))
-        scheduler.advanceTimeBy(401)
+        scheduler.advanceTimeBy(DirectionRepeat.START_DELAY_MS + 1)
 
         assertEquals(listOf(GamepadEvent.Down to false, GamepadEvent.Down to true), delivered)
+    }
+
+    @Test
+    fun `a held direction pauses before it starts repeating`() {
+        process(sample(x = 1f))
+
+        scheduler.advanceTimeBy(DirectionRepeat.START_DELAY_MS)
+        assertEquals(listOf(GamepadEvent.Right to false), delivered)
+
+        scheduler.advanceTimeBy(1)
+        assertEquals(listOf(GamepadEvent.Right to false, GamepadEvent.Right to true), delivered)
+
+        // past the pause the ramp quickens, so a second of holding travels far further
+        scheduler.advanceTimeBy(1_000)
+        assertTrue("delivered=$delivered", delivered.size >= 12)
+        assertTrue(delivered.drop(1).all { it.second })
     }
 
     private companion object {

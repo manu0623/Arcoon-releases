@@ -167,6 +167,13 @@ interface GameFileDao {
     """)
     suspend fun getFilesWithLocalPathByPlatform(platformId: Long): List<GameFileEntity>
 
+    @Query("""
+        SELECT gf.* FROM game_files gf
+        INNER JOIN games g ON gf.gameId = g.id
+        WHERE g.platformId = :platformId
+    """)
+    suspend fun getFilesByPlatform(platformId: Long): List<GameFileEntity>
+
     @Query("UPDATE game_files SET localPath = NULL, downloadedAt = NULL WHERE id = :fileId")
     suspend fun clearLocalPath(fileId: Long)
 

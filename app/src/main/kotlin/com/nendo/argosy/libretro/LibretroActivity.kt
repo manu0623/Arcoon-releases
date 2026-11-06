@@ -208,6 +208,7 @@ class LibretroActivity : ComponentActivity() {
     @Inject lateinit var raRepository: RetroAchievementsRepository
     @Inject lateinit var verifyRAGameIdUseCase: com.nendo.argosy.domain.usecase.achievement.VerifyRAGameIdUseCase
     @Inject lateinit var achievementUpdateBus: AchievementUpdateBus
+    @Inject lateinit var journeyEventRecorder: com.nendo.argosy.data.repository.JourneyEventRecorder
     @Inject lateinit var saveCacheManager: SaveCacheManager
     @Inject lateinit var saveScreenshotCapture: com.nendo.argosy.hardware.SaveScreenshotCapture
     @Inject lateinit var saveUnitResolver: com.nendo.argosy.data.sync.SaveUnitResolver
@@ -312,7 +313,15 @@ class LibretroActivity : ComponentActivity() {
     private var limitHotkeysToPlayer1 by mutableStateOf(true)
     private var selectAsBack by mutableStateOf(com.nendo.argosy.data.local.entity.SelectAsBackMode.AUTO)
     private val backAsSelect = BackAsSelectTranslator { selectAsBack }
-    private var dualScreenMatchSize = false
+    /**
+     * Matched DS screens for this game. A Compose state, not a plain field: the in-game Video row
+     * reads it through [VideoSettingsManager.matchScreenSizesProvider] while composing, and as a
+     * plain field the picture changed while the switch kept drawing the value it first read.
+     */
+    private val dualScreenMatchSizeState = androidx.compose.runtime.mutableStateOf(false)
+    private var dualScreenMatchSize: Boolean
+        get() = dualScreenMatchSizeState.value
+        set(value) { dualScreenMatchSizeState.value = value }
     private var matchedScreens: MatchedScreens? = null
     private var firstFrameRendered = false
     private var arrivalRevealed by mutableStateOf(false)
@@ -603,7 +612,8 @@ class LibretroActivity : ComponentActivity() {
             ambientLedManager = ambientLedManager,
             socialRepository = socialRepository,
             scope = lifecycleScope,
-            context = this
+            context = this,
+            journeyEventRecorder = journeyEventRecorder
         )
         netplay.start()
         setupRetroViewListeners()
@@ -920,7 +930,16 @@ class LibretroActivity : ComponentActivity() {
         videoSettings.resolveCustomShader(settings)
         limitHotkeysToPlayer1 = settings.limitHotkeysToPlayer1
         selectAsBack = settings.selectAsBack
-        dualScreenMatchSize = settings.dualScreenMatchSize
+        // Matched DS screens are this game's choice, set from in-game Video ▸ Display.
+        dualScreenMatchSize = if (gameId != -1L) {
+            kotlinx.coroutines.runBlocking {
+                preferencesRepository.getBuiltinGameMatchScreenSize(gameId)
+            }
+        } else {
+            false
+        }
+        videoSettings.matchScreenSizesProvider = { dualScreenMatchSize }
+        videoSettings.onMatchScreenSizesToggle = { enabled -> setMatchScreenSizes(enabled) }
         videoSettings.onRewindToggled = { enabled ->
             if (enabled && !hardcoreMode) {
                 setupRewind(settings)
@@ -3597,8 +3616,24 @@ class LibretroActivity : ComponentActivity() {
     }
 
     private fun suspendFromTestButton() {
-        if (!canSuspend() || dualScreenOutput != null || suspendedByHome) return
+        if (!canSuspend() || suspendedByHome) return
         com.nendo.argosy.util.ArcoonTrace.log("test suspend: button pressed")
+        suspendToLauncher()
+    }
+
+    /**
+     * The corner handle on the console's second screen. A two-screen game is the picture on both
+     * displays, so suspending has to be reachable from the game itself, not only from Home or from
+     * a menu that would cover the frame.
+     */
+    private fun suspendFromHomeHandle() {
+        if (!canSuspend() || suspendedByHome) return
+        com.nendo.argosy.util.ArcoonTrace.log("home handle: suspend pressed")
+        suspendToLauncher()
+    }
+
+    /** Capture the frame, leave the session suspended, and bring the launcher up on that picture. */
+    private fun suspendToLauncher() {
         com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(-1L)
         suspendedByHome = true
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.resumeInProgress.value = false
@@ -3636,6 +3671,11 @@ class LibretroActivity : ComponentActivity() {
             .setLaunchDisplayId(displayId)
             .toBundle()
         val started = runCatching { startActivity(intent, options) }
+        if (started.isSuccess) {
+            // Tell the launcher which game it is coming back to, so it can step off that game's
+            // details page rather than leaving a screen no button reaches.
+            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.value = gameId
+        }
         if (started.isFailure) {
             suspendedByHome = false
             gameSessionManager.onBuiltInResumed(gameId)
@@ -3681,6 +3721,18 @@ class LibretroActivity : ComponentActivity() {
         retroView.secondaryCrop = output.secondary
         retroView.secondaryAspectRatio = output.secondaryAspect
         applyMatchedScreens(output, secondScreenDisplay())
+    }
+
+    /** In-game Video ▸ Display: this game's own choice of matched DS screens. */
+    private fun setMatchScreenSizes(enabled: Boolean) {
+        dualScreenMatchSize = enabled
+        dualScreenOutput?.let { applyMatchedScreens(it, secondScreenDisplay()) }
+        // The picture's bars just changed, so the handle has to move with them.
+        secondScreenHandle?.refresh()
+        if (gameId == -1L) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            preferencesRepository.setBuiltinGameMatchScreenSize(gameId, enabled)
+        }
     }
 
     private fun applyMatchedScreens(output: DualScreenOutput, secondDisplay: android.view.Display?) {
@@ -3734,6 +3786,8 @@ class LibretroActivity : ComponentActivity() {
      * Rebuilds the second screen's window. Its surface belongs to the display, not to us, so it is
      * taken down whenever this activity leaves and built again on the way back rather than kept.
      */
+    private var secondScreenHandle: HomeHandlePresentation? = null
+
     private fun showSecondScreen() {
         if (dualScreenOutput == null || secondScreen != null) return
         val display = secondScreenDisplay()
@@ -3764,6 +3818,7 @@ class LibretroActivity : ComponentActivity() {
             .isSuccess
         secondScreen = presentation.takeIf { shown }
         Log.i(TAG, "Second screen: show on display ${display.displayId} shown=$shown")
+        if (shown) showHomeHandle(display)
         if (shown && !arrivalRevealed) {
             lifecycleScope.launch {
                 snapshotFlow { arrivalRevealed }.first { it }
@@ -3772,7 +3827,82 @@ class LibretroActivity : ComponentActivity() {
         }
     }
 
+    /** Puts the faint home handle on the same display as the game's second screen. */
+    private fun showHomeHandle(display: android.view.Display) {
+        if (secondScreenHandle != null) return
+        val handle = HomeHandlePresentation(this, display, { homeHandleBand(display) }) {
+            suspendFromHomeHandle()
+        }
+        val shown = runCatching { handle.show() }.isSuccess
+        secondScreenHandle = handle.takeIf { shown }
+        Log.i(TAG, "Second screen: home handle shown=$shown")
+    }
+
+    /**
+     * The bar left around the second screen's picture, which is the only place a handle may sit:
+     * this console's touch panel is that screen, so a handle over the picture eats the game's taps.
+     * The bar on the side the chosen corner points at is preferred, and null means the picture
+     * covers the whole panel with nothing worth putting a handle in.
+     */
+    private fun homeHandleBand(display: android.view.Display): android.graphics.Rect? {
+        val output = dualScreenOutput ?: return null
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        display.getRealMetrics(metrics)
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        if (width <= 0 || height <= 0) return null
+        val aspect = if (output.secondaryAspect > 0f) {
+            output.secondaryAspect
+        } else {
+            width.toFloat() / height
+        }
+        val matched = matchedScreens
+        val pictureWidth: Int
+        val pictureHeight: Int
+        if (matched != null) {
+            // Matched screens rest the picture on the top edge and fill the width.
+            pictureWidth = width
+            pictureHeight = matched.secondary.height.coerceIn(1, height)
+        } else if (width / aspect <= height) {
+            pictureWidth = width
+            pictureHeight = (width / aspect).toInt().coerceIn(1, height)
+        } else {
+            pictureHeight = height
+            pictureWidth = (height * aspect).toInt().coerceIn(1, width)
+        }
+        // The navigation bar is drawn above app windows and takes every touch in its band, so a bar
+        // the picture leaves empty inside that band is still no use for a handle.
+        val appMetrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        display.getMetrics(appMetrics)
+        val usableBottom = appMetrics.heightPixels.coerceIn(0, height)
+        val pictureTop = if (matched != null) 0 else (height - pictureHeight) / 2
+        val pictureLeft = (width - pictureWidth) / 2
+        val below = android.graphics.Rect(
+            0,
+            (pictureTop + pictureHeight).coerceAtMost(usableBottom),
+            width,
+            usableBottom
+        )
+        val above = android.graphics.Rect(0, 0, width, pictureTop)
+        val after = android.graphics.Rect(pictureLeft + pictureWidth, pictureTop, width, pictureTop + pictureHeight)
+        val before = android.graphics.Rect(0, pictureTop, pictureLeft, pictureTop + pictureHeight)
+        // A bar thinner than this cannot hold a handle worth pressing; try another side instead.
+        val minimum = (24 * resources.displayMetrics.density).toInt()
+        val order = if (com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleY < 0.5f) {
+            listOf(above, below, after, before)
+        } else {
+            listOf(below, above, after, before)
+        }
+        return order.firstOrNull { it.width() >= minimum && it.height() >= minimum }
+    }
+
     private fun hideSecondScreen() {
+        secondScreenHandle?.let { handle ->
+            secondScreenHandle = null
+            runCatching { handle.dismiss() }
+        }
         secondScreen?.let { presentation ->
             secondScreen = null
             runCatching { presentation.dismiss() }
@@ -3794,6 +3924,10 @@ class LibretroActivity : ComponentActivity() {
             // Cocoon-style suspend: leave the game paused in its own task instead of quitting.
             // onPause, which runs next, pauses the core and writes the save as it always has.
             suspendedByHome = true
+            // The launcher comes back to this game's page whenever it is next brought forward;
+            // if that page is the game's own details, nothing on it can leave it (the pad belongs
+            // to the other screen there). Mark the return so the launcher steps off it.
+            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.value = gameId
             gameSessionManager.suspendBuiltIn(
                 gameId = gameId,
                 title = gameName,

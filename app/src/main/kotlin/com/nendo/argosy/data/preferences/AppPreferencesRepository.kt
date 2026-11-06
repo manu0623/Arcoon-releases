@@ -4,6 +4,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.nendo.argosy.util.LogLevel
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +41,9 @@ data class AppPreferences(
     val lastMonthlyRecapShown: YearMonth? = null,
     val preLaunchRecapBaseline: Instant? = null,
     val embeddedMediaExtractionEnabled: Boolean = true,
-    val useEmbedded3dsBannerForHero: Boolean = false
+    val useEmbedded3dsBannerForHero: Boolean = false,
+    val steamGridDbEnabled: Boolean = false,
+    val steamGridDbApiKey: String? = null
 )
 
 @Singleton
@@ -76,6 +79,14 @@ class AppPreferencesRepository @Inject constructor(
         val PRE_LAUNCH_RECAP_BASELINE = stringPreferencesKey("pre_launch_recap_baseline")
         val EMBEDDED_MEDIA_EXTRACTION_ENABLED = booleanPreferencesKey("embedded_media_extraction_enabled")
         val USE_EMBEDDED_3DS_BANNER_FOR_HERO = booleanPreferencesKey("use_embedded_3ds_banner_for_hero")
+        val STEAMGRIDDB_ENABLED = booleanPreferencesKey("steamgriddb_enabled")
+        val STEAMGRIDDB_API_KEY = stringPreferencesKey("steamgriddb_api_key")
+        val STEAMGRIDDB_SCRAPE_CURSOR = longPreferencesKey("steamgriddb_scrape_cursor")
+        val STEAMGRIDDB_SCRAPE_PARKED_UNTIL = longPreferencesKey("steamgriddb_scrape_parked_until")
+        val STEAMGRIDDB_SCRAPE_PLATFORM = stringPreferencesKey("steamgriddb_scrape_platform")
+        val STEAMGRIDDB_SCRAPE_AUTO_START = booleanPreferencesKey("steamgriddb_scrape_auto_start")
+        val STEAMGRIDDB_SCRAPE_RESCAN_ALL = booleanPreferencesKey("steamgriddb_scrape_rescan_all")
+        val STEAMGRIDDB_COVER_SHAPE = stringPreferencesKey("steamgriddb_cover_shape")
     }
 
     val preferences: Flow<AppPreferences> = dataStore.data.map { prefs ->
@@ -123,7 +134,9 @@ class AppPreferencesRepository @Inject constructor(
             preLaunchRecapBaseline = prefs[Keys.PRE_LAUNCH_RECAP_BASELINE]
                 ?.let { runCatching { Instant.parse(it) }.getOrNull() },
             embeddedMediaExtractionEnabled = prefs[Keys.EMBEDDED_MEDIA_EXTRACTION_ENABLED] ?: true,
-            useEmbedded3dsBannerForHero = prefs[Keys.USE_EMBEDDED_3DS_BANNER_FOR_HERO] ?: false
+            useEmbedded3dsBannerForHero = prefs[Keys.USE_EMBEDDED_3DS_BANNER_FOR_HERO] ?: false,
+            steamGridDbEnabled = prefs[Keys.STEAMGRIDDB_ENABLED] ?: false,
+            steamGridDbApiKey = prefs[Keys.STEAMGRIDDB_API_KEY]?.takeIf { it.isNotBlank() }
         )
     }.flowOn(Dispatchers.Default)
 
@@ -133,6 +146,66 @@ class AppPreferencesRepository @Inject constructor(
 
     suspend fun setUseEmbedded3dsBannerForHero(enabled: Boolean) {
         dataStore.edit { it[Keys.USE_EMBEDDED_3DS_BANNER_FOR_HERO] = enabled }
+    }
+
+    suspend fun setSteamGridDbEnabled(enabled: Boolean) {
+        dataStore.edit { it[Keys.STEAMGRIDDB_ENABLED] = enabled }
+    }
+
+    suspend fun setSteamGridDbApiKey(key: String?) {
+        dataStore.edit { prefs ->
+            val trimmed = key?.trim()
+            if (trimmed.isNullOrEmpty()) {
+                prefs.remove(Keys.STEAMGRIDDB_API_KEY)
+            } else {
+                prefs[Keys.STEAMGRIDDB_API_KEY] = trimmed
+            }
+        }
+    }
+
+    suspend fun getSteamGridDbScrapeCursor(): Long =
+        dataStore.data.first()[Keys.STEAMGRIDDB_SCRAPE_CURSOR] ?: 0L
+
+    suspend fun setSteamGridDbScrapeCursor(gameId: Long) {
+        dataStore.edit { it[Keys.STEAMGRIDDB_SCRAPE_CURSOR] = gameId }
+    }
+
+    suspend fun getSteamGridDbScrapeParkedUntil(): Long =
+        dataStore.data.first()[Keys.STEAMGRIDDB_SCRAPE_PARKED_UNTIL] ?: 0L
+
+    suspend fun setSteamGridDbScrapeParkedUntil(untilMillis: Long) {
+        dataStore.edit { it[Keys.STEAMGRIDDB_SCRAPE_PARKED_UNTIL] = untilMillis }
+    }
+
+    suspend fun getSteamGridDbScrapePlatform(): String? =
+        dataStore.data.first()[Keys.STEAMGRIDDB_SCRAPE_PLATFORM]
+
+    suspend fun setSteamGridDbScrapePlatform(platformSlug: String?) {
+        dataStore.edit { prefs ->
+            if (platformSlug == null) prefs.remove(Keys.STEAMGRIDDB_SCRAPE_PLATFORM)
+            else prefs[Keys.STEAMGRIDDB_SCRAPE_PLATFORM] = platformSlug
+        }
+    }
+
+    suspend fun getSteamGridDbScrapeAutoStart(): Boolean =
+        dataStore.data.first()[Keys.STEAMGRIDDB_SCRAPE_AUTO_START] ?: true
+
+    suspend fun setSteamGridDbScrapeAutoStart(enabled: Boolean) {
+        dataStore.edit { it[Keys.STEAMGRIDDB_SCRAPE_AUTO_START] = enabled }
+    }
+
+    suspend fun getSteamGridDbScrapeRescanAll(): Boolean =
+        dataStore.data.first()[Keys.STEAMGRIDDB_SCRAPE_RESCAN_ALL] ?: false
+
+    suspend fun setSteamGridDbScrapeRescanAll(enabled: Boolean) {
+        dataStore.edit { it[Keys.STEAMGRIDDB_SCRAPE_RESCAN_ALL] = enabled }
+    }
+
+    suspend fun getSteamGridDbCoverShape(): String? =
+        dataStore.data.first()[Keys.STEAMGRIDDB_COVER_SHAPE]
+
+    suspend fun setSteamGridDbCoverShape(shape: String) {
+        dataStore.edit { it[Keys.STEAMGRIDDB_COVER_SHAPE] = shape }
     }
 
     suspend fun setFirstRunComplete() {

@@ -71,6 +71,13 @@ class VideoSettingsManager(
     private var screenWidth: Int = 0
     private var screenHeight: Int = 0
 
+    /**
+     * DS matched screens are the game's own choice, so the manager asks for it instead of owning
+     * it; [onMatchScreenSizesToggle] writes the new value back through the game's settings.
+     */
+    var matchScreenSizesProvider: () -> Boolean = { false }
+    var onMatchScreenSizesToggle: ((Boolean) -> Unit)? = null
+
     var onRewindToggled: ((enabled: Boolean) -> Unit)? = null
     var onRewindConfigChanged: (() -> Unit)? = null
     var onPortraitPositionChanged: ((String) -> Unit)? = null
@@ -128,6 +135,7 @@ class VideoSettingsManager(
         LibretroSettingDef.Shader -> currentShader
         LibretroSettingDef.Filter -> currentFilter
         LibretroSettingDef.AspectRatio -> currentAspectRatio
+        LibretroSettingDef.MatchScreenSizes -> matchScreenSizesProvider().toString()
         LibretroSettingDef.PortraitPosition -> currentPortraitPosition
         LibretroSettingDef.Rotation -> currentRotation
         LibretroSettingDef.OverscanCrop -> currentOverscanCrop
@@ -154,6 +162,7 @@ class VideoSettingsManager(
         LibretroSettingDef.Shader -> globalSettings.shader
         LibretroSettingDef.Filter -> globalSettings.filter
         LibretroSettingDef.AspectRatio -> globalSettings.aspectRatio
+        LibretroSettingDef.MatchScreenSizes -> "false"
         LibretroSettingDef.PortraitPosition -> globalSettings.portraitPosition
         LibretroSettingDef.Rotation -> globalSettings.rotationDisplay
         LibretroSettingDef.OverscanCrop -> globalSettings.overscanCropDisplay
@@ -342,7 +351,8 @@ class VideoSettingsManager(
                 LibretroSettingDef.AutoSaveState,
                 LibretroSettingDef.AutoRestoreState,
                 LibretroSettingDef.PreferNewerServerSave,
-                LibretroSettingDef.HwCoreSaveStates -> current
+                LibretroSettingDef.HwCoreSaveStates,
+                LibretroSettingDef.MatchScreenSizes -> current
             }
             if (updated.hasAnyOverrides()) {
                 platformLibretroSettingsDao.upsert(updated)
@@ -401,6 +411,9 @@ class VideoSettingsManager(
             LibretroSettingDef.VSync -> {
                 currentVSync = !currentVSync
                 applyVideoSettingChange(setting, currentVSync.toString())
+            }
+            LibretroSettingDef.MatchScreenSizes -> {
+                onMatchScreenSizesToggle?.invoke(!matchScreenSizesProvider())
             }
             else -> {}
         }
@@ -481,6 +494,9 @@ class VideoSettingsManager(
             }
             LibretroSettingDef.AudioVolume -> {
                 setAudioVolume((value.removeSuffix("%").toIntOrNull() ?: 100) / 100f)
+            }
+            LibretroSettingDef.MatchScreenSizes -> {
+                onMatchScreenSizesToggle?.invoke(value.toBooleanStrictOrNull() ?: false)
             }
             LibretroSettingDef.SkipDuplicateFrames,
             LibretroSettingDef.LowLatencyAudio,
@@ -578,7 +594,8 @@ class VideoSettingsManager(
                 LibretroSettingDef.AutoSaveState,
                 LibretroSettingDef.AutoRestoreState,
                 LibretroSettingDef.PreferNewerServerSave,
-                LibretroSettingDef.HwCoreSaveStates -> current
+                LibretroSettingDef.HwCoreSaveStates,
+                LibretroSettingDef.MatchScreenSizes -> current
             }
 
             if (updated.hasAnyOverrides()) {
