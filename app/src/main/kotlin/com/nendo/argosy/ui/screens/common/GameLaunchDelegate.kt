@@ -320,6 +320,16 @@ class GameLaunchDelegate @Inject constructor(
                             launchProgressTracker.finish(ticket, launched = true)
                             return@launch
                         }
+                        if (gameSessionManager.bringEmulatorAppToFront(suspendedExternal.packageName)) {
+                            android.util.Log.d("GameLaunchDelegate", "Resumed '${game.title}' through the emulator app")
+                            playSessionTracker.adoptHeldSession(gameId, suspendedExternal.packageName)
+                            gameSessionManager.onExternalResumed(gameId)
+                            com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
+                                gameId, activeSession?.isHardcore ?: false, activeSession?.channelName
+                            )
+                            launchProgressTracker.finish(ticket, launched = true)
+                            return@launch
+                        }
                         android.util.Log.d("GameLaunchDelegate", "No emulator activity on record; delivering the ROM again")
                         gameSessionManager.onExternalResumed(gameId)
                         com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
