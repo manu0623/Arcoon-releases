@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import com.nendo.argosy.data.emulator.AzaharTexturePacks
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -179,6 +180,7 @@ class DownloadManager internal constructor(
     private val extContentOrganizer: ExtContentOrganizer,
     private val romStagingManager: RomStagingManager,
     private val platformFolderResolver: PlatformFolderResolver,
+    private val azaharTexturePacks: AzaharTexturePacks,
     private val scope: CoroutineScope
 ) {
     @Inject constructor(
@@ -201,13 +203,14 @@ class DownloadManager internal constructor(
         customGridShapeStore: CustomGridShapeStore,
         extContentOrganizer: ExtContentOrganizer,
         romStagingManager: RomStagingManager,
-        platformFolderResolver: PlatformFolderResolver
+        platformFolderResolver: PlatformFolderResolver,
+        azaharTexturePacks: AzaharTexturePacks
     ) : this(
         gameDao, gameDiscDao, gameFileDao, downloadQueueDao, platformDao, romMRepository,
         preferencesRepository, soundManager, m3uManager, thermalManager,
         mediaDownloadManager, musicDirectoryManager, attributionRepository, syncPreferencesRepository,
         homeTileRepository, homeTilePromptQueue, customGridShapeStore, extContentOrganizer,
-        romStagingManager, platformFolderResolver,
+        romStagingManager, platformFolderResolver, azaharTexturePacks,
         SafeCoroutineScope(Dispatchers.Main, TAG)
     )
 
@@ -1383,6 +1386,17 @@ class DownloadManager internal constructor(
         return linkCompletedDownload(progress, finalPath, platformDir)
     }
 
+    private suspend fun installTexturePackIfNeeded(progress: DownloadProgress, path: String) {
+        if (!azaharTexturePacks.looksLikeTexturePack(progress.fileName, progress.fileCategory)) return
+        val game = gameDao.getById(progress.gameId) ?: return
+        val installed = azaharTexturePacks.installFromFile(game, File(path)) ?: return
+        azaharTexturePacks.setEnabled(game.id, true)
+        Logger.info(
+            TAG,
+            "Texture pack installed | game=${game.title} files=${installed.fileCount} dest=${installed.directory}"
+        )
+    }
+
     private suspend fun linkCompletedDownload(
         progress: DownloadProgress,
         deployedPath: String,
@@ -1430,6 +1444,7 @@ class DownloadManager internal constructor(
                 val isDisc = gameFileDao.getById(progress.gameFileId)
                     ?.let { m3uManager.recordDiscFile(progress.gameId, it.fileName, finalPath) } == true
                 if (!isDisc) claimLaunchTargetIfBase(progress, finalPath)
+                installTexturePackIfNeeded(progress, finalPath)
             }
             progress.isDiscDownload && progress.discId != null -> {
                 gameDiscDao.updateLocalPath(progress.discId, finalPath)
