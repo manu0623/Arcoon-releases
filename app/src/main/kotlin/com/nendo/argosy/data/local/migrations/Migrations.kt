@@ -4468,3 +4468,27 @@ object Migration_202_203 : Migration(202, 203) {
         db.execSQL("PRAGMA foreign_keys=ON")
     }
 }
+
+object Migration_221_222 : Migration(221, 222) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `achievement_journeys` (" +
+                "`gameId` INTEGER NOT NULL, `ownerUserId` INTEGER NOT NULL, `raGameId` INTEGER, " +
+                "`evidenceKey` TEXT NOT NULL, `generatedAt` INTEGER NOT NULL, " +
+                "`totalCount` INTEGER NOT NULL, `unlockedCount` INTEGER NOT NULL, " +
+                "`totalPoints` INTEGER NOT NULL, `unlockedPoints` INTEGER NOT NULL, " +
+                "`stateToken` TEXT NOT NULL, PRIMARY KEY(`gameId`, `ownerUserId`))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_achievement_journeys_ownerUserId` " +
+                "ON `achievement_journeys` (`ownerUserId`)"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `achievement_journey_events` (" +
+                "`gameId` INTEGER NOT NULL, `raId` INTEGER NOT NULL, " +
+                "`ownerUserId` INTEGER NOT NULL, `richPresence` TEXT, " +
+                "`capturedAt` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`gameId`, `raId`, `ownerUserId`))"
+        )
+    }
+}

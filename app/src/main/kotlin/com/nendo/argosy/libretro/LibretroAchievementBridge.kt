@@ -38,7 +38,8 @@ class LibretroAchievementBridge(
     private val ambientLedManager: AmbientLedManager,
     private val socialRepository: SocialRepository,
     private val scope: CoroutineScope,
-    private val context: Context
+    private val context: Context,
+    private val journeyEventRecorder: com.nendo.argosy.data.repository.JourneyEventRecorder
 ) {
     private var session by mutableStateOf<RetroAchievementsSessionManager?>(null)
     private var modeJob: Job? = null
@@ -74,7 +75,8 @@ class LibretroAchievementBridge(
             ambientLedManager = ambientLedManager,
             socialRepository = socialRepository,
             scope = scope,
-            context = context
+            context = context,
+            journeyEventRecorder = journeyEventRecorder
         )
         session = created
         modeJob?.cancel()

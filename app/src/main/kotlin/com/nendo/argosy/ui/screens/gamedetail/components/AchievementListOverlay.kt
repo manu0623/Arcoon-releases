@@ -54,6 +54,8 @@ fun AchievementListOverlay(
     gameTitle: String,
     achievements: List<AchievementUi>,
     focusIndex: Int = 0,
+    journeyTab: Boolean = false,
+    journey: com.nendo.argosy.domain.model.AchievementJourney? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -74,6 +76,27 @@ fun AchievementListOverlay(
                 )
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                JourneyTabRow(journeyTab = journeyTab)
+
+                if (journeyTab) {
+                    JourneyBody(
+                        journey = journey,
+                        focusIndex = focusIndex,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FooterHints(
+                        hints = listOf(
+                            InputButton.DPAD_VERTICAL to
+                                stringResource(R.string.gamedetail_achievement_list_footer_navigate),
+                            InputButton.A to stringResource(R.string.gamedetail_journey_footer_switch),
+                            InputButton.B to
+                                stringResource(R.string.gamedetail_achievement_list_footer_back)
+                        )
+                    )
+                    FooterSpacer()
+                    return@Column
+                }
 
                 val unlocked = achievements.filter { it.isUnlocked }
                 val locked = achievements.filter { !it.isUnlocked }
@@ -139,6 +162,7 @@ fun AchievementListOverlay(
                     hints = listOf(
                         InputButton.DPAD_VERTICAL to
                             stringResource(R.string.gamedetail_achievement_list_footer_navigate),
+                        InputButton.A to stringResource(R.string.gamedetail_journey_footer_switch),
                         InputButton.B to
                             stringResource(R.string.gamedetail_achievement_list_footer_back)
                     )
