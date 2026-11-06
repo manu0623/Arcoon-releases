@@ -231,6 +231,22 @@ class ArgosyViewModel @Inject constructor(
         observeNetplayInvites()
         observeNetplayJoinLaunch()
         registerSettingsObserver()
+        // The launcher home is picked in Settings > Interface. Mirror it into the flow the nav
+        // graph, the library and the bumper handling read, and let that flow write back.
+        viewModelScope.launch {
+            preferencesRepository.userPreferences.collect { prefs ->
+                com.nendo.argosy.ui.cocoon.CocoonMode.useClassicHome.value =
+                    prefs.launcherUiMode == com.nendo.argosy.data.preferences.LauncherUiMode.CLASSIC
+            }
+        }
+        com.nendo.argosy.ui.cocoon.CocoonMode.onModeRequested = { classic ->
+            viewModelScope.launch {
+                preferencesRepository.setLauncherUiMode(
+                    if (classic) com.nendo.argosy.data.preferences.LauncherUiMode.CLASSIC
+                    else com.nendo.argosy.data.preferences.LauncherUiMode.COCOON
+                )
+            }
+        }
     }
 
     override fun onCleared() {

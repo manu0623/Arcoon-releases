@@ -35,9 +35,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.nendo.argosy.ui.theme.CocoonSurface
+import com.nendo.argosy.ui.theme.LocalBoxArtStyle
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
- * Cocoon's cover grid inside a folder: [rows] rows of square covers filled top to bottom and
+ * Cocoon's cover grid inside a folder: [rows] rows of covers shaped by the box art setting, filled top to bottom and
  * growing to the right. With one row the covers sit low and the focused game's name card floats
  * above them. Changing [rows] slides every cover to its new place.
  */
@@ -68,9 +72,11 @@ fun CocoonFolderCovers(
         val oneRow = rows == 1
         val usable = maxHeight - topPadding
         val gridHeight = if (oneRow) usable * 0.46f else usable
-        val cellSize = ((gridHeight - gap * (rows + 1)) / rows).coerceAtLeast(36.dp)
+        val cellHeight = ((gridHeight - gap * (rows + 1)) / rows).coerceAtLeast(36.dp)
+        val coverAspect = LocalBoxArtStyle.current.aspectRatio
+        val cellWidth = cellHeight * coverAspect
         val boxWidth = maxWidth
-        val visibleColumns = ((boxWidth - gap) / (cellSize + gap)).toInt().coerceAtLeast(1)
+        val visibleColumns = ((boxWidth - gap) / (cellWidth + gap)).toInt().coerceAtLeast(1)
 
         LaunchedEffect(focusedIndex, rows, visibleColumns) {
             if (count == 0) return@LaunchedEffect
@@ -132,7 +138,7 @@ fun CocoonFolderCovers(
                 items(count, key = { keys[it] }) { index ->
                     Box(
                         modifier = Modifier
-                            .size(cellSize)
+                            .size(width = cellWidth, height = cellHeight)
                             .then(
                                 if (wave != null) Modifier.graphicsLayer {
                                     // position in view: columns from the left, then rows downward
@@ -159,6 +165,12 @@ fun CocoonFolderCovers(
                                 } else Modifier
                             )
                             .then(
+                                // A cover that was past the right edge before R3 is composed fresh
+                                // at its new place; it slides in rather than popping into view.
+                                if (animateReflow) Modifier.cocoonReflowArrival(keys.getOrNull(index))
+                                else Modifier
+                            )
+                            .then(
                                 if (index == focusedIndex) {
                                     Modifier.onGloballyPositioned {
                                         CocoonSessionDialog.origin = it.boundsInRoot()
@@ -170,7 +182,7 @@ fun CocoonFolderCovers(
                         androidx.compose.runtime.CompositionLocalProvider(
                             com.nendo.argosy.ui.components.LocalCoverRequestSize provides COCOON_COVER_DECODE_PX
                         ) {
-                            cell(index, cellSize)
+                            cell(index, cellHeight)
                         }
                     }
                 }
@@ -219,6 +231,26 @@ class CocoonCoverWave {
         done = true
     }
 
+    /**
+     * Plays the entrance and reports each cover column as it starts to arrive, in the same order
+     * the covers populate, so a caller can put a tick underneath the population instead of beside
+     * it. [columns] is how many columns the folder actually holds. Returns once the wave is done.
+     */
+    suspend fun playInReportingColumns(columns: Int, onColumn: suspend (Int) -> Unit) {
+        coroutineScope {
+            launch { playIn() }
+            var elapsed = 0L
+            for (column in 0 until columns.coerceIn(1, MAX_COLUMNS)) {
+                val start = column * COLUMN_STEP.toLong()
+                if (start > elapsed) {
+                    delay(start - elapsed)
+                    elapsed = start
+                }
+                onColumn(column)
+            }
+        }
+    }
+
     suspend fun playOut() {
         leaving = true
         clock.snapTo(0f)
@@ -243,4 +275,22 @@ const val COCOON_COVER_DECODE_PX = 512
 /** Remembers the last row count and until when a change of it should animate. */
 private class ReflowWindow(var rows: Int) {
     var until: Long = 0L
+}
+
+/**
+ * The arrival of a cover that only became visible because the row count changed: it starts just
+ * off to the right of its place and slides in, instead of appearing fully formed.
+ */
+@Composable
+private fun Modifier.cocoonReflowArrival(key: Any?): Modifier {
+    val arrive = androidx.compose.runtime.remember(key) {
+        androidx.compose.animation.core.Animatable(0f)
+    }
+    androidx.compose.runtime.LaunchedEffect(key) {
+        arrive.animateTo(1f, tween(260, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
+    }
+    return this.graphicsLayer {
+        alpha = 0.25f + 0.75f * arrive.value
+        translationX = (1f - arrive.value) * 56.dp.toPx()
+    }
 }

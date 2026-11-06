@@ -904,6 +904,16 @@
 
     <!-- Heading of the modal holding settings that apply to this one game. Noun phrase. -->
     <string name="gamedetail_per_game_title">Per-Game Settings</string>
+    <string name="gamedetail_per_game_textures_label">Custom Textures</string>
+    <string name="gamedetail_per_game_textures_enabled">Enabled</string>
+    <string name="gamedetail_per_game_textures_disabled">Disabled</string>
+    <string name="gamedetail_per_game_texture_pack_label">Texture Pack</string>
+    <string name="gamedetail_per_game_texture_pack_none">None installed</string>
+    <string name="gamedetail_per_game_texture_pack_summary">%1$d files · %2$s</string>
+    <string name="gamedetail_per_game_footer_import">Import</string>
+    <string name="gamedetail_per_game_textures_imported">Installed %1$d texture files</string>
+    <string name="gamedetail_per_game_textures_import_failed">Couldn\'t read that texture pack</string>
+    <string name="gamedetail_per_game_textures_no_title_id">Title ID not detected for this game</string>
     <!-- Footer hint on rows that step through a fixed set of choices. Verb: left and right change
          the value. -->
     <string name="gamedetail_per_game_footer_adjust">Adjust</string>
@@ -1256,4 +1266,31 @@
     <!-- Stands in for the platform's name in the game header when the library has no platform row
          for this game. Adjective describing the platform, not a command. -->
     <string name="gamedetail_header_platform_unknown">Unknown</string>
+
+    <string name="gamedetail_journey_tab_achievements">Achievements</string>
+    <string name="gamedetail_journey_tab_journey">Journey</string>
+    <string name="gamedetail_journey_footer_switch">Switch</string>
+    <string name="gamedetail_journey_empty">No unlocked achievements are recorded for this game yet.</string>
+    <string name="gamedetail_journey_intro_title">Gaming journey</string>
+    <string name="gamedetail_journey_record">%1$d of %2$d achievements recorded, %3$d of %4$d points.</string>
+    <string name="gamedetail_journey_state_early">The record is short: this journey has only started.</string>
+    <string name="gamedetail_journey_state_progress">This journey is still open.</string>
+    <string name="gamedetail_journey_state_main">The main objectives are recorded as finished.</string>
+    <string name="gamedetail_journey_state_mastered">Every achievement this game defines is unlocked.</string>
+    <string name="gamedetail_journey_lead_progression">The main path moved forward with %1$s.</string>
+    <string name="gamedetail_journey_lead_exploration">Exploration added %1$s.</string>
+    <string name="gamedetail_journey_lead_combat">Opponents were cleared on the way: %1$s.</string>
+    <string name="gamedetail_journey_lead_collection">The collection grew with %1$s.</string>
+    <string name="gamedetail_journey_lead_mastery">Harder conditions were met: %1$s.</string>
+    <string name="gamedetail_journey_lead_completion">The journey turned toward its close with %1$s.</string>
+    <string name="gamedetail_journey_lead_unclassified">Other recorded moments: %1$s.</string>
+    <string name="gamedetail_journey_phase_meta">%1$s to %2$s · %3$d points</string>
+    <string name="gamedetail_journey_milestones_title">Milestones</string>
+    <string name="gamedetail_journey_milestones_none">No single unlock stands out yet.</string>
+    <string name="gamedetail_journey_milestone_row">%1$s · %2$d points</string>
+    <string name="gamedetail_journey_summary_title">Journey summary</string>
+    <string name="gamedetail_journey_summary_body">%1$d recorded achievements across %2$d phases, from %3$s to %4$s.</string>
+    <string name="gamedetail_journey_updated">Last narrative update %1$s</string>
+    <string name="gamedetail_journey_context">%1$s · %2$s</string>
+    <string name="gamedetail_journey_subjects">Named in the record: %1$s.</string>
 </resources>

@@ -1,8 +1,10 @@
 package com.nendo.argosy.ui.screens.gamedetail.delegates
 
 import android.content.Context
+import android.net.Uri
 import com.nendo.argosy.R
 import com.nendo.argosy.core.input.SoundType
+import com.nendo.argosy.data.emulator.AzaharTexturePacks
 import com.nendo.argosy.data.emulator.BuiltinCoreResolver
 import com.nendo.argosy.data.emulator.BuiltinGraphicsResolver
 import com.nendo.argosy.data.emulator.GpuDriverToken
@@ -54,7 +56,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
-enum class PerGameSettingsRow { EMULATOR, CORE, SAVE_PATH, SAVE_BASE_PATH, MEMCARD, DISPLAY_TARGET, EXTENSION, BACKEND, GPU_DRIVER, PLATFORM_SETTINGS }
+enum class PerGameSettingsRow { EMULATOR, CORE, SAVE_PATH, SAVE_BASE_PATH, MEMCARD, DISPLAY_TARGET, EXTENSION, BACKEND, GPU_DRIVER, TEXTURES, TEXTURE_PACK, PLATFORM_SETTINGS }
 
 data class PerGameSettingsState(
     val visible: Boolean = false,
@@ -95,7 +97,14 @@ data class PerGameSettingsState(
     val showGpuDriverPicker: Boolean = false,
     val backendOptions: List<GraphicsBackendOptionUi> = emptyList(),
     val gameBackend: String? = null,
-    val inheritedBackend: String? = null
+    val inheritedBackend: String? = null,
+    val showTextureRows: Boolean = false,
+    val texturesEnabled: Boolean = false,
+    val textureDirectory: String? = null,
+    val textureFileCount: Int = 0,
+    val textureBytes: Long = 0L,
+    val textureHasPackConfig: Boolean = false,
+    val showTexturePicker: Boolean = false
 ) {
     val rows: List<PerGameSettingsRow>
         get() = buildList {
@@ -108,6 +117,10 @@ data class PerGameSettingsState(
             if (extensionOptions.isNotEmpty()) add(PerGameSettingsRow.EXTENSION)
             if (backendOptions.isNotEmpty()) add(PerGameSettingsRow.BACKEND)
             if (showGpuDriverRow) add(PerGameSettingsRow.GPU_DRIVER)
+            if (showTextureRows) {
+                add(PerGameSettingsRow.TEXTURES)
+                add(PerGameSettingsRow.TEXTURE_PACK)
+            }
             add(PerGameSettingsRow.PLATFORM_SETTINGS)
         }
 
@@ -153,6 +166,7 @@ class PerGameSettingsDelegate @Inject constructor(
     private val resolveGameEmulatorContext:
         com.nendo.argosy.domain.usecase.emulator.ResolveGameEmulatorContextUseCase,
     private val displayAffinityHelper: DisplayAffinityHelper,
+    private val azaharTexturePacks: AzaharTexturePacks,
     private val soundManager: SoundFeedbackManager
 ) {
     private val _state = MutableStateFlow(PerGameSettingsState())
@@ -345,6 +359,56 @@ class PerGameSettingsDelegate @Inject constructor(
         refresh(gameId)
     }
 
+    fun openTexturePicker() {
+        if (!_state.value.showTextureRows) return
+        _state.update { it.copy(showTexturePicker = true) }
+        soundManager.play(SoundType.OPEN_MODAL)
+    }
+
+    fun dismissTexturePicker() {
+        if (!_state.value.showTexturePicker) return
+        _state.update { it.copy(showTexturePicker = false) }
+        soundManager.play(SoundType.CLOSE_MODAL)
+    }
+
+    suspend fun toggleTextures(gameId: Long) {
+        val state = _state.value
+        if (!state.showTextureRows) return
+        azaharTexturePacks.setEnabled(gameId, !state.texturesEnabled)
+        soundManager.play(SoundType.NAVIGATE)
+        refresh(gameId)
+    }
+
+    suspend fun importTexturePack(gameId: Long, uri: Uri) {
+        val game = gameRepository.getById(gameId) ?: return
+        if (game.titleId.isNullOrBlank()) {
+            notificationManager.show(
+                title = NotificationText.Res(R.string.gamedetail_per_game_textures_no_title_id),
+                type = NotificationType.ERROR
+            )
+            return
+        }
+        val result = azaharTexturePacks.install(game) {
+            context.contentResolver.openInputStream(uri)
+        }
+        if (result == null) {
+            notificationManager.show(
+                title = NotificationText.Res(R.string.gamedetail_per_game_textures_import_failed),
+                type = NotificationType.ERROR
+            )
+            return
+        }
+        azaharTexturePacks.setEnabled(gameId, true)
+        notificationManager.show(
+            title = NotificationText.Res(
+                R.string.gamedetail_per_game_textures_imported,
+                listOf(result.fileCount)
+            ),
+            type = NotificationType.SUCCESS
+        )
+        refresh(gameId)
+    }
+
     private suspend fun buildState(gameId: Long): PerGameSettingsState? {
         val game = gameRepository.getById(gameId) ?: return null
         if (emulatorDetector.installedEmulators.value.isEmpty()) {
@@ -443,6 +507,12 @@ class PerGameSettingsDelegate @Inject constructor(
             ?.let { p -> memcardCards.find { it.path == p }?.name ?: File(p).name }
             ?: memcardCards.firstOrNull()?.name
 
+        val textures = if (isBuiltIn && selectedCoreId == AzaharTexturePacks.CORE_ID) {
+            azaharTexturePacks.load(game)
+        } else {
+            null
+        }
+
         val graphics = if (isBuiltIn) {
             builtinGraphicsResolver.resolveForGame(
                 game = game,
@@ -454,6 +524,12 @@ class PerGameSettingsDelegate @Inject constructor(
         }
 
         return PerGameSettingsState(
+            showTextureRows = textures?.supported == true,
+            texturesEnabled = textures?.enabled == true,
+            textureDirectory = textures?.directory,
+            textureFileCount = textures?.fileCount ?: 0,
+            textureBytes = textures?.totalBytes ?: 0L,
+            textureHasPackConfig = textures?.hasPackConfig == true,
             showGpuDriverRow = graphics != null,
             gpuDriver = graphics?.gameDriver,
             inheritedGpuDriver = graphics?.inheritedDriver ?: GpuDriverToken.SYSTEM,

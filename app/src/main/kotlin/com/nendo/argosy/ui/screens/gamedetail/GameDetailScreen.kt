@@ -1,6 +1,8 @@
 package com.nendo.argosy.ui.screens.gamedetail
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -69,6 +71,7 @@ import com.nendo.argosy.ui.components.FooterSpacer
 import com.nendo.argosy.ui.components.InputButton
 import com.nendo.argosy.ui.components.SyncOverlay
 import com.nendo.argosy.ui.input.LocalInputDispatcher
+import com.nendo.argosy.ui.input.DirectionRepeat
 import com.nendo.argosy.ui.input.RightStickStepper
 import com.nendo.argosy.ui.input.ModalInputEffect
 import com.nendo.argosy.ui.navigation.Screen
@@ -254,7 +257,7 @@ fun GameDetailScreen(
                 coroutineScope.launch {
                     scrollState.animateScrollBy(
                         step,
-                        tween(RightStickStepper.STEP_INTERVAL_MS.toInt(), easing = LinearEasing)
+                        tween(DirectionRepeat.FIRST_INTERVAL_MS.toInt(), easing = LinearEasing)
                     )
                 }
                 true
@@ -907,7 +910,9 @@ private fun GameDetailContent(
             visible = uiState.showAchievementList,
             gameTitle = game.title,
             achievements = game.achievements,
-            focusIndex = uiState.achievementListFocusIndex
+            focusIndex = uiState.achievementListFocusIndex,
+            journeyTab = uiState.journeyTab,
+            journey = viewModel.journeyDelegate.journey.collectAsState().value
         )
     }
 }
@@ -922,6 +927,37 @@ private fun GameDetailModals(
     onBack: () -> Unit
 ) {
     val pickerState by viewModel.pickerModalDelegate.state.collectAsState()
+
+    // Edit Game ▸ Jingle: Cocoon's jingle picker over the game page, with the file browser behind
+    // its "Choose a file…" row -- the same pair the game's Y menu opens.
+    if (uiState.showJinglePicker) {
+        val jingleContext = androidx.compose.ui.platform.LocalContext.current
+        val pickingJingleFile = androidx.compose.runtime.remember {
+            androidx.compose.runtime.mutableStateOf(false)
+        }
+        if (pickingJingleFile.value) {
+            com.nendo.argosy.ui.filebrowser.FileBrowserScreen(
+                mode = com.nendo.argosy.ui.filebrowser.FileBrowserMode.FILE_SELECTION,
+                title = stringResource(R.string.cocoon_jingle),
+                fileFilter = com.nendo.argosy.ui.filebrowser.FileFilter.AUDIO,
+                onPathSelected = { path ->
+                    pickingJingleFile.value = false
+                    viewModel.dismissJinglePicker()
+                    com.nendo.argosy.ui.cocoon.CocoonJingles.setGameJingle(jingleContext, game.id, path)
+                    com.nendo.argosy.ui.cocoon.CocoonJingles.play(jingleContext, path)
+                },
+                onDismiss = { pickingJingleFile.value = false }
+            )
+        } else {
+            com.nendo.argosy.ui.cocoon.CocoonJinglePicker(
+                gameId = game.id,
+                platformSlug = game.platformSlug,
+                title = game.title,
+                onPickFile = { pickingJingleFile.value = true },
+                onDismiss = { viewModel.dismissJinglePicker() }
+            )
+        }
+    }
 
     AnimatedVisibility(
         visible = uiState.showMoreOptions,
@@ -943,6 +979,24 @@ private fun GameDetailModals(
         )
     }
 
+    val texturePackPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        viewModel.dismissPerGameTexturePackPicker()
+        if (uri != null) viewModel.importPerGameTexturePack(uri)
+    }
+    LaunchedEffect(uiState.perGameSettings.showTexturePicker) {
+        if (uiState.perGameSettings.showTexturePicker) {
+            texturePackPicker.launch(
+                arrayOf(
+                    "application/zip",
+                    "application/x-zip-compressed",
+                    "application/octet-stream"
+                )
+            )
+        }
+    }
+
     AnimatedVisibility(
         visible = uiState.perGameSettings.visible,
         enter = fadeIn(),
@@ -960,6 +1014,8 @@ private fun GameDetailModals(
             onCycleExtension = viewModel::cyclePerGameExtension,
             onCycleBackend = viewModel::cyclePerGameBackend,
             onOpenGpuDriverPicker = viewModel::openPerGameGpuDriverPicker,
+            onToggleTextures = viewModel::togglePerGameTextures,
+            onImportTextures = viewModel::openPerGameTexturePackPicker,
             onSelectGpuDriverEntry = viewModel::selectPerGameGpuDriverEntry,
             onDismissGpuDriverPicker = viewModel::dismissPerGameGpuDriverPicker,
             onPlatformSettings = {

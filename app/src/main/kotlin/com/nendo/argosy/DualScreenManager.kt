@@ -189,6 +189,41 @@ class DualScreenManager(
         _isRolesSwapped.value = value
     }
 
+    /*
+     * The launcher instance whose Settings screen is drawn on the showcase display, or null while
+     * Settings sits on the interactive one. It belongs to that screen, never to the arrangement,
+     * and survives nothing.
+     */
+    private val _settingsLift = MutableStateFlow<Any?>(null)
+
+    /**
+     * The launcher instance driving Settings from the showcase display, or null. A non-null owner
+     * means the interactive and showcase displays are inverted for as long as the settings screen
+     * that raised it stays in the launcher's back stack.
+     */
+    val settingsLift: StateFlow<Any?> = _settingsLift
+
+    /**
+     * Moves the launcher onto the showcase display for [owner]'s Settings screen, and input with
+     * it. Refused while the launcher already holds the display with the room, which is the case a
+     * role swap has arranged.
+     */
+    fun liftSettingsToShowcase(owner: Any) {
+        if (_settingsLift.value === owner) return
+        if (!companionHoldsPrimary.value) return
+        _settingsLift.value = owner
+        refocusMain()
+    }
+
+    /**
+     * Puts the launcher back on its own display once [owner]'s Settings screen closes.
+     */
+    fun dropSettingsLift(owner: Any) {
+        if (_settingsLift.value !== owner) return
+        _settingsLift.value = null
+        refocusMain()
+    }
+
     private val _hasPresentationScreen = MutableStateFlow(false)
     val hasPresentationScreen: StateFlow<Boolean> = _hasPresentationScreen
 
@@ -428,18 +463,22 @@ class DualScreenManager(
      * The display the viewer is driving right now, or null on a single-screen device.
      *
      * Exactly one screen is interactive at a time and carries Home, Library and Media; the other
-     * describes whatever that screen has focused. A role swap is the only thing that moves them,
-     * so a surface asks which display holds its role rather than naming a display id, and keeps
-     * landing correctly after a swap.
+     * describes whatever that screen has focused. A role swap, or a screen that asks for the
+     * showcase surface for its own duration, is the only thing that moves them, and each surface
+     * asks which display holds its role, never naming a display id.
      */
     fun interactiveDisplayId(): Int? =
-        displayAffinityHelper.getRoleDisplayIds(_isRolesSwapped.value)?.first
+        displayAffinityHelper.getRoleDisplayIds(_isRolesSwapped.value)?.let { roles ->
+            if (_settingsLift.value == null) roles.first else roles.second
+        }
 
     /**
      * The display describing what the interactive one has focused, or null on a single screen.
      */
     fun showcaseDisplayId(): Int? =
-        displayAffinityHelper.getRoleDisplayIds(_isRolesSwapped.value)?.second
+        displayAffinityHelper.getRoleDisplayIds(_isRolesSwapped.value)?.let { roles ->
+            if (_settingsLift.value == null) roles.second else roles.first
+        }
 
     /**
      * Pixel area of the interactive display, then of the showcase display. Each is null while its
@@ -1068,11 +1107,14 @@ class DualScreenManager(
             _isDualScreenDevice,
             _isCompanionActive,
             _isRolesSwapped,
-            _companionGrace
-        ) { dualScreen, companionActive, swapped, grace ->
-            // During sleep / wake the lower screen briefly disappears; the roles hold through it
-            // (grace) instead of the app flashing into single-screen mode and back.
-            !swapped && (grace || (dualScreen && companionActive))
+            _companionGrace,
+            _settingsLift
+        ) { dualScreen, companionActive, swapped, grace, lift ->
+            /*
+             * During sleep / wake the lower screen briefly disappears; the roles hold through it
+             * (grace) and the app does not flash into single-screen mode and back.
+             */
+            !swapped && lift == null && (grace || (dualScreen && companionActive))
         }.stateIn(activityIndependentScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
 
     private var companionGraceJob: kotlinx.coroutines.Job? = null
@@ -1626,12 +1668,13 @@ class DualScreenManager(
             val suspended = flowArray[5] as? com.nendo.argosy.domain.model.multitasking.SuspendedGameSession
 
             val detail = details.lastOrNull()?.second
+            val heroForRunningGame = inGame.externalEmulator && detail?.gameId == inGame.gameId
             when {
                 // A suspended game's card is drawn over the normal top screen (PresentationSlotContent).
                 // While it is suspended (Home pressed), the game's own screen has no game on it any
                 // more: it shows the normal top screen instead of the in-game panel, which on the
                 // game's display draws nothing and left the screen black.
-                gameActive && inGame.isLoaded && suspended == null ->
+                gameActive && inGame.isLoaded && suspended == null && !heroForRunningGame ->
                     com.nendo.argosy.ui.dualscreen.PresentationSlot.InGame(inGame, achievements)
                 slots.isNotEmpty() -> slots.last().second
                 detail != null -> com.nendo.argosy.ui.dualscreen.PresentationSlot.Detail(detail)
@@ -1969,6 +2012,7 @@ class DualScreenManager(
         sessionStateStore.clearSession()
         rederiveRolesFromLayout()
         sessionEndCoordinator.endClosedSession()
+        gameSessionManager?.onSessionEnded()
         if (_swappedIsGameActive.value) onSessionChanged(-1L) else broadcastSessionCleared()
         if (emulatorPackage == null || !_isDualScreenDevice.value) return
         if (emulatorPackage == com.nendo.argosy.data.emulator.EmulatorRegistry.BUILTIN_PACKAGE) return
@@ -1986,6 +2030,8 @@ class DualScreenManager(
     }
 
     private var focusCheck: kotlinx.coroutines.Job? = null
+
+    private var lastGameAttachMs = 0L
 
     /**
      * A launcher window gaining focus on the display its game ran on is the launcher's signal that
@@ -2007,6 +2053,7 @@ class DualScreenManager(
             // A game left suspended in the built-in emulator is still running: never end its
             // session just because the launcher came back to the front.
             if (gameSessionManager?.sessionState?.value?.builtIn == true) return@launch
+            if (System.currentTimeMillis() - lastGameAttachMs < EMULATOR_SETTLE_MS) return@launch
             if (playSessionTracker.activeSession.value == null &&
                 preferencesRepository.getPersistedSession() == null
             ) return@launch
@@ -2034,11 +2081,25 @@ class DualScreenManager(
      */
     suspend fun suspendExternalSession(): Boolean {
         val manager = gameSessionManager ?: return false
+        val restored = manager.restoreSuspendedExternal()
+        if (restored != null && !restored.builtIn) {
+            if (manager.suspendedRestoredFromDisk) playSessionTracker.adoptHeldSession(restored.gameId, restored.packageName)
+            kotlinx.coroutines.withContext(Dispatchers.Main.immediate) {
+                emulatorDisplayId = null
+                if (_swappedIsGameActive.value) onSessionChanged(-1L)
+            }
+            return true
+        }
         val session = playSessionTracker.activeSession.value ?: return false
         val packageName = session.emulatorPackage
         if (packageName == com.nendo.argosy.data.emulator.EmulatorRegistry.BUILTIN_PACKAGE) return false
         if (packageName == appContext.packageName) return false
         if (session.isNetplayGuest) return false
+        val emulatorClosed = runCatching {
+            (appContext.packageManager.getApplicationInfo(packageName, 0).flags and
+                android.content.pm.ApplicationInfo.FLAG_STOPPED) != 0
+        }.getOrDefault(false)
+        if (emulatorClosed) return false
         val alreadySuspended = manager.sessionState.value?.let { it.gameId == session.gameId && !it.builtIn } == true
         if (!alreadySuspended) {
             val (title, platformName) = kotlinx.coroutines.withContext(Dispatchers.IO) {
@@ -2052,6 +2113,12 @@ class DualScreenManager(
             }.getOrNull()
             manager.suspendExternal(session.gameId, title, platformName, packageName, emulatorName)
         }
+        /*
+         * The launcher comes back to the page the game was started from. When that page is the
+         * game's own details, nothing on this screen leaves it. Mark the return here for the
+         * launcher to step off it, the rule the built-in player already follows.
+         */
+        com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.value = session.gameId
         kotlinx.coroutines.withContext(Dispatchers.Main.immediate) {
             emulatorDisplayId = null
             if (_swappedIsGameActive.value) onSessionChanged(-1L)
@@ -2193,9 +2260,16 @@ class DualScreenManager(
             Log.d(TAG, "Companion on display $displayId stopped, cause=$cause, foreign-app flag unchanged")
             return
         }
+        val activityManager = appContext.getSystemService(android.app.ActivityManager::class.java)
+        if (activityManager != null && com.nendo.argosy.hardware.builtInGameTask(activityManager) != null) {
+            Log.i(TAG, "Companion on display $displayId stopped under Argosy's own game; foreign-app flag unchanged")
+            return
+        }
         Log.i(TAG, "Foreign-app flag set: companion on display $displayId stopped under another app")
         sessionStateStore.setForeignAppOnSecondary(true)
     }
+
+    fun releaseForeignAppHoldOnLauncherStart() = clearForeignAppOnSecondary("launcher started")
 
     private fun clearForeignAppOnSecondary(reason: String) {
         if (!sessionStateStore.isForeignAppOnSecondary()) return
@@ -2246,6 +2320,7 @@ class DualScreenManager(
 
     fun onSessionChanged(gameId: Long, isHardcore: Boolean = false, channelName: String? = null) {
         if (gameId > 0) {
+            lastGameAttachMs = System.currentTimeMillis()
             _swappedIsGameActive.value = true
             swappedSessionTimer?.stop(appContext)
             swappedSessionTimer = com.nendo.argosy.hardware.CompanionSessionTimer().also { it.start(appContext) }
@@ -2508,6 +2583,8 @@ class DualScreenManager(
         startupGuardJob = null
     }
 
+    private fun sessionSuspended(): Boolean = gameSessionManager?.sessionState?.value != null
+
     fun ensureCompanionLaunched(allowDuringSession: Boolean = false) {
         if (isKeyguardShowing) return
         Log.d(
@@ -2523,7 +2600,8 @@ class DualScreenManager(
             setSecondaryHomeComponentEnabled(true)
         }
         if (_isCompanionActive.value) return
-        val sessionInTheWay = !allowDuringSession && sessionStateStore.hasActiveSession()
+        val sessionInTheWay = !allowDuringSession && sessionStateStore.hasActiveSession() &&
+            !sessionSuspended()
         if (sessionInTheWay && !sessionStateStore.isArgosyForeground()) return
         if (sessionStateStore.isForeignAppOnSecondary()) return
 
@@ -2533,11 +2611,15 @@ class DualScreenManager(
             delay(COMPANION_LAUNCH_WAIT_MS)
             if (sessionInTheWay) {
                 withTimeoutOrNull(SESSION_CLOSE_WAIT_MS) {
-                    while (sessionStateStore.hasActiveSession()) delay(SESSION_CLOSE_POLL_MS)
+                    while (sessionStateStore.hasActiveSession() && !sessionSuspended()) {
+                        delay(SESSION_CLOSE_POLL_MS)
+                    }
                 }
             }
             if (_isCompanionActive.value) return@launch
-            if (!allowDuringSession && sessionStateStore.hasActiveSession()) return@launch
+            if (!allowDuringSession && sessionStateStore.hasActiveSession() && !sessionSuspended()) {
+                return@launch
+            }
             launchCompanionOnSecondaryDisplay()
         }
     }

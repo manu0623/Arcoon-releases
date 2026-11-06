@@ -39,6 +39,7 @@ object RouteRestore {
                 listOf(Screen.Collections.route)
             }
             Screen.ROUTE_SAVE_TIMELINE -> listOf("${Screen.ROUTE_GAME_DETAIL}/${segments[1]}")
+            Screen.ROUTE_GAME_DETAIL -> listOf(Screen.Home.route)
             Screen.ROUTE_MEDIA_DETAIL -> listOf(Screen.MediaLibrary.route)
             Screen.ROUTE_SOCIAL -> if (segments.size > 1) listOf(Screen.Social.route) else emptyList()
             else -> emptyList()

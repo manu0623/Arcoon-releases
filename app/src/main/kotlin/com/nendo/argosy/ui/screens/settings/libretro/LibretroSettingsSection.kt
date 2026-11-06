@@ -35,7 +35,9 @@ private const val SAVING_SECTION = "saving"
 data class LibretroVisibilityState(
     val platformSlug: String?,
     val canEnableBFI: Boolean,
-    val scope: LibretroSettingsScope = LibretroSettingsScope.VIDEO
+    val scope: LibretroSettingsScope = LibretroSettingsScope.VIDEO,
+    /** In-game only rows: the ones that have no meaning away from a running game. */
+    val inSession: Boolean = false
 )
 
 private val libretroSettingsLayout = SettingsLayout<LibretroSettingDef, LibretroVisibilityState>(
@@ -43,7 +45,10 @@ private val libretroSettingsLayout = SettingsLayout<LibretroSettingDef, Libretro
     isFocusable = { true },
     visibleWhen = { item, state ->
         val inScope = (item.section == SAVING_SECTION) == (state.scope == LibretroSettingsScope.SAVES)
-        inScope && PlatformWeightRegistry.isSettingVisible(item, state.platformSlug, state.canEnableBFI)
+        val inSessionOnly = item != LibretroSettingDef.MatchScreenSizes ||
+            (state.inSession && state.platformSlug == "nds")
+        inScope && inSessionOnly &&
+            PlatformWeightRegistry.isSettingVisible(item, state.platformSlug, state.canEnableBFI)
     },
     sectionOf = { it.section }
 )
@@ -70,8 +75,8 @@ fun LibretroSettingsSection(
     val isPerPlatform = platformSlug != null
     val leadingListCount = if (leadingFocusCount > 0) leadingFocusCount + 1 else 0
 
-    val visibilityState = remember(platformSlug, canEnableBFI, scope) {
-        LibretroVisibilityState(platformSlug, canEnableBFI, scope)
+    val visibilityState = remember(platformSlug, canEnableBFI, scope, inSession) {
+        LibretroVisibilityState(platformSlug, canEnableBFI, scope, inSession)
     }
 
     val visibleSettings = remember(visibilityState) {
@@ -267,9 +272,12 @@ private fun buildFlatItemSections(
 fun libretroSettingsMaxFocusIndex(
     platformSlug: String?,
     canEnableBFI: Boolean,
-    scope: LibretroSettingsScope = LibretroSettingsScope.VIDEO
+    scope: LibretroSettingsScope = LibretroSettingsScope.VIDEO,
+    inSession: Boolean = false
 ): Int =
-    libretroSettingsLayout.maxFocusIndex(LibretroVisibilityState(platformSlug, canEnableBFI, scope))
+    libretroSettingsLayout.maxFocusIndex(
+        LibretroVisibilityState(platformSlug, canEnableBFI, scope, inSession)
+    )
 
 /**
  * Resolves a focus index to a libretro setting. [scope] must match the value the matching
@@ -279,9 +287,10 @@ fun libretroSettingsItemAtFocusIndex(
     index: Int,
     platformSlug: String?,
     canEnableBFI: Boolean,
-    scope: LibretroSettingsScope = LibretroSettingsScope.VIDEO
+    scope: LibretroSettingsScope = LibretroSettingsScope.VIDEO,
+    inSession: Boolean = false
 ): LibretroSettingDef? =
     libretroSettingsLayout.itemAtFocusIndex(
         index,
-        LibretroVisibilityState(platformSlug, canEnableBFI, scope)
+        LibretroVisibilityState(platformSlug, canEnableBFI, scope, inSession)
     )

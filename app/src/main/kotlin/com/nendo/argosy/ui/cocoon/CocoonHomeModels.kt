@@ -16,6 +16,11 @@ sealed interface CocoonTileTarget {
     data class Pod(val kind: CocoonPodKind) : CocoonTileTarget
     data class Widget(val id: String, val kind: CocoonWidgetKind, val value: String?) : CocoonTileTarget
     data class Game(val gameId: Long) : CocoonTileTarget
+    /**
+     * The game left running, as a temporary square on Home: one press back into it, and one press
+     * to quit it. It exists only while that session is suspended.
+     */
+    data class NowPlaying(val gameId: Long) : CocoonTileTarget
     data class Smart(val kind: CocoonSmartKind) : CocoonTileTarget
     /** A deliberately empty space on the board (something was placed further along). */
     data object Gap : CocoonTileTarget
@@ -56,6 +61,7 @@ enum class CocoonWidgetKind(@StringRes val labelRes: Int) {
 enum class CocoonStartRow(@StringRes val labelRes: Int) {
     NEW(R.string.cocoon_start_new),
     NEW_FOLDER(R.string.cocoon_tile_menu_new_folder),
+    NEW_COLLECTION(R.string.cocoon_start_new_collection),
     NEW_HOME_FOLDER(R.string.cocoon_start_new_home_folder),
     ADD_APP(R.string.cocoon_start_add_app),
     ADD_WIDGET(R.string.cocoon_start_add_widget),
@@ -63,22 +69,25 @@ enum class CocoonStartRow(@StringRes val labelRes: Int) {
     ADD_SMART(R.string.cocoon_start_add_smart),
     EDIT_GRID(R.string.cocoon_tile_menu_edit_grid),
     SETTINGS(R.string.cocoon_tile_settings),
-    SEARCH(R.string.cocoon_search_settings),
+    SEARCH(R.string.cocoon_search_game),
     MORE(R.string.cocoon_start_more),
 }
 
 /** Start menu rows: the main list, or the "New ▸" list of things to add. */
 fun cocoonStartRows(newOpen: Boolean): List<CocoonStartRow> =
     if (newOpen) listOf(
-        CocoonStartRow.NEW_FOLDER, CocoonStartRow.NEW_HOME_FOLDER, CocoonStartRow.ADD_APP,
-        CocoonStartRow.ADD_WIDGET, CocoonStartRow.ADD_POD, CocoonStartRow.ADD_SMART
+        CocoonStartRow.NEW_FOLDER, CocoonStartRow.NEW_COLLECTION, CocoonStartRow.NEW_HOME_FOLDER,
+        CocoonStartRow.ADD_APP, CocoonStartRow.ADD_WIDGET, CocoonStartRow.ADD_POD, CocoonStartRow.ADD_SMART
     ) else listOf(
         CocoonStartRow.NEW, CocoonStartRow.EDIT_GRID, CocoonStartRow.SEARCH,
         CocoonStartRow.SETTINGS, CocoonStartRow.MORE
     )
 
 /** Which list the Start menu's second step shows. */
-enum class CocoonChoice { WIDGETS, PODS, SMART, MOVE }
+enum class CocoonChoice { WIDGETS, PODS, SMART, MOVE, COLLECTIONS }
+
+/** One of the user's own RomM collections, offered by Start ▸ New ▸ Collection. */
+data class CocoonCollectionChoice(val id: Long, val name: String)
 
 /** A shortcut saved on Home (apps, Pods, widgets). */
 data class CocoonHomeItem(val id: String, val type: String, val value: String?)
@@ -122,6 +131,9 @@ data class CocoonHomeState(
     /** Cocoon's Y menu on an app in the dock. */
     val dockMenuOpen: Boolean = false,
     val dockMenuIndex: Int = 0,
+    /** Launch ▸: the screens the dock app can be started on (empty unless the picker is open). */
+    val dockLaunchScreens: List<CocoonLaunchScreen> = emptyList(),
+    val dockLaunchScreenIndex: Int = 0,
     /** Cocoon's app picker for an empty dock slot (or Edit App, which swaps the app in a slot). */
     val addAppOpen: Boolean = false,
     val addAppReplacing: String? = null,
@@ -147,21 +159,26 @@ data class CocoonHomeState(
     val namingGroup: Boolean = false,
     /** The tile being moved with Y ▸ Move to Folder. */
     val movingKey: String? = null,
-    val searchOpen: Boolean = false,
-    /** Y ▸ Console Jingle: choosing a default jingle for this platform slug. */
-    val jingleForPlatform: String? = null,
+    /** Start ▸ New ▸ Collection: the user's own RomM collections to put on the board. */
+    val collectionChoices: List<CocoonCollectionChoice> = emptyList(),
     /** Y ▸ Appearance on a folder: the key of the tile being restyled. */
     val appearanceKey: String? = null,
 ) {
     val dockSize: Int get() = COCOON_DOCK_SIZE
     val tileMenuRows: List<CocoonTileMenuRow>
-        get() = withHomeRows(when (focusedTile?.target) {
+        // The game left running is not part of the board's layout, so it gets no Move, no Edit Grid
+        // and no Remove: only the two things it is for.
+        get() = if (focusedTile?.target is CocoonTileTarget.NowPlaying) {
+            listOf(CocoonTileMenuRow.OPEN, CocoonTileMenuRow.CLOSE)
+        } else withHomeRows(when (focusedTile?.target) {
+            // A folder's own rows: Edit opens that platform's settings page, so it says so.
+            // Jingles belong to games, and a folder is not something you file inside another one.
             is CocoonTileTarget.Platform -> listOf(
-                CocoonTileMenuRow.OPEN, CocoonTileMenuRow.EDIT, CocoonTileMenuRow.APPEARANCE, CocoonTileMenuRow.JINGLE,
-                CocoonTileMenuRow.MOVE, CocoonTileMenuRow.NEW_FOLDER, CocoonTileMenuRow.EDIT_GRID
+                CocoonTileMenuRow.OPEN, CocoonTileMenuRow.PLATFORM, CocoonTileMenuRow.APPEARANCE,
+                CocoonTileMenuRow.NEW_FOLDER, CocoonTileMenuRow.EDIT_GRID
             )
             is CocoonTileTarget.Collection -> listOf(
-                CocoonTileMenuRow.OPEN, CocoonTileMenuRow.APPEARANCE, CocoonTileMenuRow.MOVE, CocoonTileMenuRow.NEW_FOLDER,
+                CocoonTileMenuRow.OPEN, CocoonTileMenuRow.APPEARANCE, CocoonTileMenuRow.NEW_FOLDER,
                 CocoonTileMenuRow.EDIT_GRID, CocoonTileMenuRow.DELETE_FOLDER
             )
             is CocoonTileTarget.Smart -> listOf(
@@ -302,6 +319,17 @@ internal fun builtInTiles(): List<CocoonTile> = listOf(
  */
 object CocoonMode {
     val useClassicHome = MutableStateFlow(false)
+
+    /**
+     * Installed where preferences live, so the board's own "use classic home" action is
+     * remembered instead of lasting until the next launch.
+     */
+    var onModeRequested: ((Boolean) -> Unit)? = null
+
+    fun requestClassicHome(classic: Boolean) {
+        useClassicHome.value = classic
+        onModeRequested?.invoke(classic)
+    }
 }
 
 /** One-shot requests the board hands to its screen. */
@@ -319,27 +347,48 @@ enum class CocoonDockMenuRow(@StringRes val labelRes: Int) {
     CLEAR(R.string.cocoon_dock_clear_slot),
 }
 
+/**
+ * One screen a dock app can be started on: the screen key the launch is pinned to, and the number
+ * the user reads. Taken from the attached displays in the order they are numbered, so the picker
+ * never reshuffles between openings.
+ */
+data class CocoonLaunchScreen(val key: String, val number: Int)
+
+/** The screens a dock app can launch on, in display order. */
+internal fun cocoonLaunchScreens(
+    displays: List<com.nendo.argosy.util.AttachedScreen>
+): List<CocoonLaunchScreen> = displays.map { CocoonLaunchScreen(it.key, it.number) }
+
+/**
+ * Whether Launch has a screen to ask about. With one screen there is no choice, so Launch starts
+ * the app straight away and the dock menu shows no picker chevron -- a dead hint is worse than none.
+ */
+internal fun needsCocoonScreenPicker(screens: List<CocoonLaunchScreen>): Boolean = screens.size > 1
+
 /** Rows of the Y menu on a board tile. */
 enum class CocoonTileMenuRow(@StringRes val labelRes: Int) {
     OPEN(R.string.cocoon_tile_menu_open),
-    EDIT(R.string.cocoon_tile_menu_edit),
+    /** A platform folder's rows: Edit here opens the platform's own settings page. */
+    PLATFORM(R.string.cocoon_tile_menu_platform),
     NEW_FOLDER(R.string.cocoon_tile_menu_new_folder),
     EDIT_GRID(R.string.cocoon_tile_menu_edit_grid),
     DELETE_FOLDER(R.string.cocoon_tile_menu_delete_folder),
     REMOVE(R.string.cocoon_tile_menu_remove),
     APPEARANCE(R.string.cocoon_tile_menu_appearance),
     EDIT_APP(R.string.cocoon_dock_edit_app),
-    JINGLE(R.string.cocoon_jingle_platform),
     SIZE(R.string.cocoon_widget_size),
     MOVE(R.string.cocoon_tile_menu_move),
+    /** The game left running: quit it from the board. */
+    CLOSE(R.string.cocoon_close),
     // Home-wide rows (the old Start menu, now part of Y)
     NEW(R.string.cocoon_start_new),
-    SEARCH(R.string.cocoon_search_settings),
+    /** Searches the game library; settings search lives in Settings ▸ Search Settings. */
+    SEARCH(R.string.cocoon_search_game),
     SETTINGS(R.string.cocoon_tile_settings),
 }
 
 /**
- * Y's menu on Home: the item's own rows, then New ▸, Edit Grid, Search Settings and Settings.
+ * Y's menu on Home: the item's own rows, then New ▸, Edit Grid, Search Game and Settings.
  * Remove / Delete stay last so they are never pressed by accident.
  */
 private fun withHomeRows(rows: List<CocoonTileMenuRow>): List<CocoonTileMenuRow> {

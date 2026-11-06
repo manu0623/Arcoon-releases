@@ -279,6 +279,8 @@ data class LibraryUiState(
     val showQuickMenu: Boolean = false,
     val quickMenuFocusIndex: Int = 0,
     val quickMenuHasSiblingGroup: Boolean = false,
+    /** Launch ▸: the menu is showing just the two screen choices. */
+    val quickMenuLaunchOpen: Boolean = false,
     val isCustomGridHome: Boolean = false,
     val gridDensity: GridDensity = GridDensity.NORMAL,
     val libraryLayout: LibraryLayout = LibraryLayout.GRID,
@@ -1978,7 +1980,9 @@ class LibraryViewModel @Inject constructor(
     fun toggleQuickMenu() {
         if (_uiState.value.showQuickMenu) {
             quickMenuOpenJob?.cancel()
-            _uiState.update { it.copy(showQuickMenu = false, quickMenuFocusIndex = 0) }
+            _uiState.update {
+                it.copy(showQuickMenu = false, quickMenuFocusIndex = 0, quickMenuLaunchOpen = false)
+            }
             soundManager.play(SoundType.CLOSE_MODAL)
             return
         }
@@ -1988,18 +1992,37 @@ class LibraryViewModel @Inject constructor(
             val hasChoice = siblingChoice.hasChoice(gameId)
             if (_uiState.value.focusedGame?.id != gameId) return@launch
             _uiState.update {
-                it.copy(showQuickMenu = true, quickMenuFocusIndex = 0, quickMenuHasSiblingGroup = hasChoice)
+                it.copy(
+                    showQuickMenu = true, quickMenuFocusIndex = 0,
+                    quickMenuHasSiblingGroup = hasChoice, quickMenuLaunchOpen = false
+                )
             }
             soundManager.play(SoundType.OPEN_MODAL)
         }
     }
 
-    private fun quickMenuRows(state: LibraryUiState): List<LibraryQuickMenuRow> {
-        val game = state.focusedGame ?: return emptyList()
-        return libraryQuickMenuRows(game, state.isCustomGridHome, state.quickMenuHasSiblingGroup)
+    private fun quickMenuRows(state: LibraryUiState): List<LibraryQuickMenuRow> =
+        state.quickMenuRowList()
+
+    private fun hasLaunchScreenChoice(game: LibraryGameUi): Boolean = launchScreenChoiceFor(game)
+
+    /** Right on Launch: the menu swaps to the two screens, with Launch still where it was. */
+    private fun openQuickMenuLaunchScreens(): Boolean {
+        val state = _uiState.value
+        val game = state.focusedGame ?: return false
+        if (state.quickMenuLaunchOpen) return false
+        if (!hasLaunchScreenChoice(game)) return false
+        val row = quickMenuRows(state).getOrNull(state.quickMenuFocusIndex) ?: return false
+        if (row != LibraryQuickMenuRow.PRIMARY) return false
+        _uiState.update { it.copy(quickMenuLaunchOpen = true, quickMenuFocusIndex = 0) }
+        return true
     }
 
     fun moveQuickMenuFocus(delta: Int) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "quick menu: move delta=$delta repeat=" +
+                com.nendo.argosy.ui.input.InputDispatcher.currentIsRepeat
+        )
         _uiState.update {
             val maxIndex = quickMenuRows(it).lastIndex
             if (maxIndex < 0) return@update it
@@ -2010,9 +2033,6 @@ class LibraryViewModel @Inject constructor(
 
     /** Opens the game page hosting one of Cocoon's sheets ("edit" / "achievements"); set by the screen. */
     var onOpenGameSheet: ((Long, String) -> Unit)? = null
-
-    /** Y ▸ Jingle: the screen shows a file browser for this game's jingle. */
-    var onPickJingle: ((Long) -> Unit)? = null
 
     fun confirmQuickMenuSelection(onGameSelect: (Long) -> Unit): InputResult {
         val state = _uiState.value
@@ -2028,11 +2048,6 @@ class LibraryViewModel @Inject constructor(
                     else -> downloadGame(game.id)
                 }
                 toggleQuickMenu()
-                InputResult.HANDLED
-            }
-            LibraryQuickMenuRow.EDIT -> {
-                toggleQuickMenu()
-                onOpenGameSheet?.invoke(game.id, "edit")
                 InputResult.HANDLED
             }
             LibraryQuickMenuRow.ACHIEVEMENTS -> {
@@ -2065,10 +2080,6 @@ class LibraryViewModel @Inject constructor(
                 openActiveVariant(game.id)
                 InputResult.HANDLED
             }
-            LibraryQuickMenuRow.REFRESH -> {
-                if (game.isAndroidApp) refreshAndroidGameData(game.id) else refreshGameData(game.id)
-                InputResult.HANDLED
-            }
             LibraryQuickMenuRow.RESYNC_PLATFORM -> {
                 syncCurrentPlatform()
                 toggleQuickMenu()
@@ -2087,11 +2098,6 @@ class LibraryViewModel @Inject constructor(
             LibraryQuickMenuRow.HIDE -> {
                 if (game.isHidden) unhideGame(game.id) else hideGame(game.id)
                 toggleQuickMenu()
-                InputResult.HANDLED
-            }
-            LibraryQuickMenuRow.JINGLE -> {
-                toggleQuickMenu()
-                onPickJingle?.invoke(game.id)
                 InputResult.HANDLED
             }
             LibraryQuickMenuRow.LAUNCH_SCREEN_1, LibraryQuickMenuRow.LAUNCH_SCREEN_2 -> {
@@ -2472,7 +2478,9 @@ class LibraryViewModel @Inject constructor(
                     if (movePlatformGridFocus(FocusMove.RIGHT)) InputResult.HANDLED else InputResult.UNHANDLED
                 state.showAddToCollectionModal -> InputResult.HANDLED
                 state.showFilterMenu -> { moveFilterCategoryFocus(1); InputResult.HANDLED }
-                state.showQuickMenu -> InputResult.HANDLED
+                state.showQuickMenu ->
+                    if (openQuickMenuLaunchScreens()) InputResult.handled(SoundType.NAVIGATE)
+                    else InputResult.HANDLED
                 state.isSectionRailFocused -> InputResult.handled(SoundType.BOUNDARY)
                 moveFocus(FocusMove.RIGHT) || enterSectionRail() -> InputResult.HANDLED
                 else -> InputResult.UNHANDLED
@@ -2534,8 +2542,14 @@ class LibraryViewModel @Inject constructor(
                     InputResult.HANDLED
                 }
                 state.showQuickMenu -> {
-                    toggleQuickMenu()
-                    InputResult.HANDLED
+                    if (state.quickMenuLaunchOpen) {
+                        // back to the game's menu with Launch still selected
+                        _uiState.update { it.copy(quickMenuLaunchOpen = false, quickMenuFocusIndex = 0) }
+                        InputResult.handled(SoundType.BACK)
+                    } else {
+                        toggleQuickMenu()
+                        InputResult.HANDLED
+                    }
                 }
                 state.isSectionRailFocused -> {
                     exitSectionRail()

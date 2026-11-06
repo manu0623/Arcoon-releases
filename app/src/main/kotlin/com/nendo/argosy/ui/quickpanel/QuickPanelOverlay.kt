@@ -117,6 +117,13 @@ import javax.inject.Singleton
 private const val TAG = "QuickPanelOverlay"
 private val EXIT_MS = Motion.durationSlide * 2L
 private const val THEME_WAIT_MS = 750L
+/**
+ * True inside the panel's own window. The panel draws its ring from the same primitive the
+ * launcher does, and the launcher's ring is muted while the panel is up, so the panel has to
+ * say who it is or it loses the highlight to its own presence.
+ */
+val LocalQuickPanelSurface = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 private const val WARM_FRAMES = 2
 
 /**
@@ -144,8 +151,8 @@ class QuickPanelOverlay @Inject constructor(
     private val searchSoundtrackGames: SearchSoundtrackGamesUseCase,
     private val resolveMusicQueue: ResolveMusicQueueUseCase
 ) {
-    private val _isOpen = MutableStateFlow(false)
-    val isOpen: StateFlow<Boolean> = _isOpen.asStateFlow()
+    private val _isOpen get() = QuickPanelPresence.open
+    val isOpen: StateFlow<Boolean> = QuickPanelPresence.open.asStateFlow()
 
     private var session: Session? = null
     private val exitScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -158,19 +165,60 @@ class QuickPanelOverlay @Inject constructor(
      * panel's permission requests, such as Bluetooth access on the Connections page; without one,
      * each request answers as declined.
      */
-    fun show(displayId: Int, resultOwner: ActivityResultRegistryOwner?): Boolean {
+    fun show(
+        displayId: Int,
+        resultOwner: ActivityResultRegistryOwner?,
+        page: QuickSettingsPage = QuickSettingsPage.QUICK
+    ): Boolean {
         if (session != null) return true
         if (!canShow()) return false
         val windowContext = windowContextFor(displayId) ?: return false
         val next = Session(windowContext, resultOwner ?: DeclinedResultRegistryOwner())
+        next.startOnPage(page)
+        _isOpen.value = true
         if (!next.attach()) {
+            _isOpen.value = false
             next.detach()
             return false
         }
         session = next
-        _isOpen.value = true
         soundManager.play(SoundType.OPEN_MODAL)
         return true
+    }
+
+    /**
+     * Opens the panel on the device's upper screen: the built-in panel that is not the
+     * presentation-flagged one. On the Thor that is display 0 (1080x1920); display 4 (1080x1240)
+     * carries FLAG_PRESENTATION and sits below it. Input focus moves over with it, because keys
+     * follow the focused display rather than the focused window - without that the pad kept
+     * driving the launcher underneath while the panel sat on the other screen.
+     */
+    fun showOnUpper(
+        resultOwner: ActivityResultRegistryOwner?,
+        page: QuickSettingsPage = QuickSettingsPage.QUICK
+    ): Boolean {
+        val all = context.getSystemService(DisplayManager::class.java)?.displays.orEmpty()
+        val upper = upperScreenId(all) ?: return false
+        val shown = show(upper, resultOwner, page)
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "quick panel: screens=${all.map { it.displayId }} upper=$upper shown=$shown"
+        )
+        if (shown) DualScreenManagerHolder.instance?.focusDisplay(upper)
+        return shown
+    }
+
+    /** The upper screen's display id, or null on a single-screen device. */
+    private fun upperScreenId(all: Array<out android.view.Display>): Int? {
+        if (all.size < 2) return null
+        all.firstOrNull {
+            it.displayId == android.view.Display.DEFAULT_DISPLAY &&
+                it.flags and android.view.Display.FLAG_PRESENTATION == 0
+        }?.let { return it.displayId }
+        // No default display to trust: the biggest panel that is not the companion one.
+        return all
+            .filter { it.flags and android.view.Display.FLAG_PRESENTATION == 0 }
+            .maxByOrNull { it.mode.physicalWidth.toLong() * it.mode.physicalHeight }
+            ?.displayId
     }
 
     fun hide() {
@@ -255,6 +303,11 @@ class QuickPanelOverlay @Inject constructor(
             activePage = { settings.activePage() }
         )
         private val shown = MutableStateFlow(false)
+
+        /** Opens onto [page] instead of the device page (L1 lands on friends). */
+        fun startOnPage(page: QuickSettingsPage) {
+            settings.selectPage(page)
+        }
         private var exiting = false
         private val root = KeyRoot(windowContext)
 
@@ -280,7 +333,9 @@ class QuickPanelOverlay @Inject constructor(
                 setViewTreeLifecycleOwner(owner)
                 setViewTreeSavedStateRegistryOwner(owner)
                 setViewTreeViewModelStoreOwner(owner)
-                setContent { PanelContent() }
+                setContent {
+                    CompositionLocalProvider(LocalQuickPanelSurface provides true) { PanelContent() }
+                }
             }
             root.setViewTreeLifecycleOwner(owner)
             root.setViewTreeSavedStateRegistryOwner(owner)
@@ -471,4 +526,13 @@ private class OverlayWindowOwner : LifecycleOwner, SavedStateRegistryOwner, View
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         viewModelStore.clear()
     }
+}
+
+/**
+ * Whether a quick panel window is up anywhere in the process. The launcher reads it to drop its
+ * own focus ring: while the panel is open the pad is driving that window, so a highlight left on
+ * the other screen points at nothing.
+ */
+object QuickPanelPresence {
+    val open = MutableStateFlow(false)
 }

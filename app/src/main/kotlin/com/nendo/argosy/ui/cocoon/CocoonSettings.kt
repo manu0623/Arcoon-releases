@@ -159,7 +159,9 @@ fun CocoonNavRow(
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
                 color = if (selected) CocoonSurface.TextSecondary else CocoonSurface.TextPrimary,
-                maxLines = 1,
+                // Two lines rather than an ellipsis: a category the player cannot read the end of
+                // is a category they will not find again.
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
             if (selected && category.subtitleRes != null) {

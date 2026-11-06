@@ -860,18 +860,20 @@ private suspend fun routeComputeEvaluatedSavePath(
         ?: return basePathOverride?.let { DisplayedSavePath(it) }
 
     if (basePathOverride == null) {
-        val raConfig = vm.retroArchConfigParser.parse(packageName)
+        val raConfig = runCatching { vm.retroArchConfigParser.parse(packageName) }.getOrNull()
         if (raConfig?.savefilesInContentDir == true) {
             return DisplayedSavePath(vm.context.getString(R.string.settings_shell_router_content_dir_save))
         }
     }
 
-    return vm.retroArchConfigParser.resolveSavePaths(
-        packageName = packageName,
-        contentDirName = null,
-        coreName = emulatorConfig.selectedCore,
-        basePathOverride = basePathOverride
-    ).firstOrNull()?.let { DisplayedSavePath(it) }
+    return runCatching {
+        vm.retroArchConfigParser.resolveSavePaths(
+            packageName = packageName,
+            contentDirName = null,
+            coreName = emulatorConfig.selectedCore,
+            basePathOverride = basePathOverride
+        )
+    }.getOrNull()?.firstOrNull()?.let { DisplayedSavePath(it) }
 }
 
 private fun routeComputeEvaluatedStatePath(vm: SettingsViewModel, platformId: Long, basePathOverride: String?): String? {
@@ -891,7 +893,7 @@ private fun routeComputeEvaluatedStatePath(vm: SettingsViewModel, platformId: Lo
     val packageName = emulatorConfig.effectiveEmulatorPackage ?: return basePathOverride
 
     if (basePathOverride == null) {
-        val raStateConfig = vm.retroArchConfigParser.parseStateConfig(packageName)
+        val raStateConfig = runCatching { vm.retroArchConfigParser.parseStateConfig(packageName) }.getOrNull()
         if (raStateConfig?.savestatesInContentDir == true) {
             return vm.context.getString(R.string.settings_shell_router_content_dir_state)
         }
@@ -899,12 +901,14 @@ private fun routeComputeEvaluatedStatePath(vm: SettingsViewModel, platformId: Lo
 
     val coreName = emulatorConfig.selectedCore
 
-    return vm.retroArchConfigParser.resolveStatePaths(
-        packageName = packageName,
-        contentDirName = null,
-        coreName = coreName,
-        basePathOverride = basePathOverride
-    ).firstOrNull()
+    return runCatching {
+        vm.retroArchConfigParser.resolveStatePaths(
+            packageName = packageName,
+            contentDirName = null,
+            coreName = coreName,
+            basePathOverride = basePathOverride
+        )
+    }.getOrNull()?.firstOrNull()
 }
 
 // --- Section jump ---

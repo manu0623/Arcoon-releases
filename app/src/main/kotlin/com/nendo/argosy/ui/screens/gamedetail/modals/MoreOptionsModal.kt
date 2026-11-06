@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
@@ -140,6 +141,11 @@ private fun MoreOptionAction.toMenuEntry(
     MoreOptionAction.Artwork -> MoreMenuEntry.Option(
         Icons.Default.Image,
         context.getString(R.string.gamedetail_more_options_artwork),
+        action = this
+    )
+    MoreOptionAction.Jingle -> MoreMenuEntry.Option(
+        androidx.compose.material.icons.Icons.Filled.MusicNote,
+        context.getString(R.string.cocoon_jingle),
         action = this
     )
     MoreOptionAction.Delete -> MoreMenuEntry.Option(

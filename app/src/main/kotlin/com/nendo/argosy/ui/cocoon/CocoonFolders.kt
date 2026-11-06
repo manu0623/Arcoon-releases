@@ -82,8 +82,31 @@ object CocoonFolderPalette {
 
     fun drawableFor(index: Int): Int = drawables[index.mod(drawables.size)]
 
-    fun top(index: Int): Color = stops[index.mod(stops.size)].first
-    fun bottom(index: Int): Color = stops[index.mod(stops.size)].second
+    /** The slate stop, which Icon Style ▸ Flat paints every folder with. */
+    private const val SLATE = 4
+
+    private val accentTop: Color
+        get() = com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.colors?.accent ?: Color(0xFF8E7DFF)
+
+    private val accentBottom: Color
+        get() = com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.colors?.accentEnd ?: Color(0xFF5A3BF6)
+
+    /**
+     * Personalization ▸ Icon Style: COLORED keeps each folder's own colour, ACCENT paints them in
+     * the theme's accent, FLAT greys them out. Read by both the board and the settings preview, so
+     * the preview shows the same thing the board will.
+     */
+    fun top(index: Int): Color = when (CocoonHomeStore.iconStyle) {
+        "ACCENT" -> accentTop
+        "FLAT" -> stops[SLATE].first
+        else -> stops[index.mod(stops.size)].first
+    }
+
+    fun bottom(index: Int): Color = when (CocoonHomeStore.iconStyle) {
+        "ACCENT" -> accentBottom
+        "FLAT" -> stops[SLATE].second
+        else -> stops[index.mod(stops.size)].second
+    }
 
     /** A stable colour for a platform slug, so a folder does not change colour between launches. */
     fun indexFor(key: String): Int = (key.hashCode() and 0x7fffffff) % drawables.size
@@ -142,24 +165,8 @@ fun CocoonFolderIcon(
         }
         else -> Unit
     }
-    val drawableRes = CocoonFolderPalette.drawableFor(colorIndex)
-    val tintColor = CocoonFolderPalette.top(colorIndex)
     Box(modifier = modifier.size(size)) {
-        androidx.compose.foundation.Image(
-            painter = androidx.compose.ui.res.painterResource(drawableRes),
-            contentDescription = null,
-            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(tintColor, androidx.compose.ui.graphics.BlendMode.Modulate),
-            modifier = Modifier.fillMaxSize()
-        )
-        val glyphSize = size * 0.54f
-        val glyphModifier = Modifier
-            .align(Alignment.Center)
-            .offset(y = if (showTab) size * 0.05f else size * 0f)
-            .size(glyphSize)
         if (art != null) {
-            // Decoded at one fixed size: when the folder is highlighted it grows, and a request that
-            // followed the on-screen size would reload the icon and blink. This one stays cached.
             val context = androidx.compose.ui.platform.LocalContext.current
             val request = remember(art) {
                 coil.request.ImageRequest.Builder(context).data(art).size(COCOON_FOLDER_ART_PX).build()
@@ -168,36 +175,49 @@ fun CocoonFolderIcon(
                 model = request,
                 contentDescription = null,
                 contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .offset(y = if (showTab) size * 0.05f else 0.dp)
-                    .size(size * 0.66f)
+                modifier = Modifier.fillMaxSize()
             )
-        } else when (glyph) {
-            CocoonGlyph.PLATFORM -> PlatformGlyph(platformSlug, glyphModifier)
-            CocoonGlyph.CUSTOM -> Icon(
-                imageVector = cocoonFolderSymbol(platformSlug.orEmpty().removePrefix("symbol:")),
+        } else {
+            val drawableRes = CocoonFolderPalette.drawableFor(colorIndex)
+            val tintColor = CocoonFolderPalette.top(colorIndex)
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(drawableRes),
                 contentDescription = null,
-                tint = Color.White,
-                modifier = glyphModifier
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(tintColor, androidx.compose.ui.graphics.BlendMode.Modulate),
+                modifier = Modifier.fillMaxSize()
             )
-            CocoonGlyph.SMART -> Icon(
-                imageVector = when (platformSlug) {
-                    CocoonSmartKind.RECENT.name -> androidx.compose.material.icons.Icons.Filled.History
-                    CocoonSmartKind.MOST_PLAYED.name -> androidx.compose.material.icons.Icons.Filled.TrendingUp
-                    CocoonSmartKind.NEWLY_ADDED.name -> androidx.compose.material.icons.Icons.Filled.NewReleases
-                    else -> androidx.compose.material.icons.Icons.Filled.Star
-                },
-                contentDescription = null,
-                tint = Color.White,
-                modifier = glyphModifier
-            )
-            else -> Icon(
-                imageVector = glyph.vector(),
-                contentDescription = null,
-                tint = Color.White,
-                modifier = glyphModifier
-            )
+            val glyphSize = size * 0.54f
+            val glyphModifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = if (showTab) size * 0.05f else size * 0f)
+                .size(glyphSize)
+            when (glyph) {
+                CocoonGlyph.PLATFORM -> PlatformGlyph(platformSlug, glyphModifier)
+                CocoonGlyph.CUSTOM -> Icon(
+                    imageVector = cocoonFolderSymbol(platformSlug.orEmpty().removePrefix("symbol:")),
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = glyphModifier
+                )
+                CocoonGlyph.SMART -> Icon(
+                    imageVector = when (platformSlug) {
+                        CocoonSmartKind.RECENT.name -> androidx.compose.material.icons.Icons.Filled.History
+                        CocoonSmartKind.MOST_PLAYED.name -> androidx.compose.material.icons.Icons.Filled.TrendingUp
+                        CocoonSmartKind.NEWLY_ADDED.name -> androidx.compose.material.icons.Icons.Filled.NewReleases
+                        else -> androidx.compose.material.icons.Icons.Filled.Star
+                    },
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = glyphModifier
+                )
+                else -> Icon(
+                    imageVector = glyph.vector(),
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = glyphModifier
+                )
+            }
         }
     }
 }

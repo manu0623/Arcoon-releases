@@ -439,18 +439,20 @@ private fun CoverContent(
                 .data(com.nendo.argosy.ui.cocoon.CocoonThumbs.model(context, effectiveCoverPath) ?: imageData)
                 .size(fixedSize).build()
         }
-        AsyncImage(
-            model = model,
-            contentDescription = game.title,
-            contentScale = ContentScale.Crop,
-            colorFilter = saturationColorFilter,
-            modifier = Modifier.fillMaxSize(),
-            onSuccess = { state ->
-                val bitmap = (state.result.drawable as? BitmapDrawable)?.bitmap
-                if (bitmap != null) onCoverLoaded?.invoke(game.id, bitmap)
-            },
-            onError = { onCoverLoadFailed(game.id, effectiveCoverPath) }
-        )
+        Box(modifier = Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = model,
+                contentDescription = game.title,
+                contentScale = ContentScale.Crop,
+                colorFilter = saturationColorFilter,
+                modifier = Modifier.fillMaxSize(),
+                onSuccess = { state ->
+                    val bitmap = (state.result.drawable as? BitmapDrawable)?.bitmap
+                    if (bitmap != null) onCoverLoaded?.invoke(game.id, bitmap)
+                },
+                onError = { onCoverLoadFailed(game.id, effectiveCoverPath) }
+            )
+        }
     }
 
     if (!useGlassBorder) return

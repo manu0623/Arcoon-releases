@@ -172,7 +172,9 @@ data class ArtCandidate(
     val width: Int? = null,
     val height: Int? = null,
     @StringRes val originRes: Int? = null,
-    val isRevert: Boolean = false
+    val isRevert: Boolean = false,
+    /** The "Scrape Game" tile: re-fetches this game's info and art from its source. */
+    val isScrape: Boolean = false
 ) {
     val dimensionLabel: String?
         get() = if (width != null && height != null) "$width x $height" else null
@@ -236,6 +238,7 @@ fun buildMoreOptions(ctx: MoreOptionsContext): List<MoreOptionAction> = buildLis
     if (canTrackProgress) add(MoreOptionAction.RefreshData)
     add(MoreOptionAction.AddToCollection)
     add(MoreOptionAction.Artwork)
+    add(MoreOptionAction.Jingle)
     if (ctx.isDownloaded || ctx.isAndroidApp) add(MoreOptionAction.Delete)
     if (ctx.isSteamGame || ctx.canRemoveFromLibrary) add(MoreOptionAction.RemoveFromLibrary)
     add(MoreOptionAction.ToggleHide)
@@ -262,6 +265,7 @@ sealed class MoreOptionAction {
     data object RefreshTitleId : MoreOptionAction()
     data object SpeedrunSplits : MoreOptionAction()
     data object Artwork : MoreOptionAction()
+    data object Jingle : MoreOptionAction()
     data object Delete : MoreOptionAction()
     data object RemoveFromLibrary : MoreOptionAction()
     data object ToggleHide : MoreOptionAction()
@@ -278,6 +282,8 @@ data class GameDetailUiState(
     val menuFocusIndex: Int = 0,
     val showMoreOptions: Boolean = false,
     val moreOptionsFocusIndex: Int = 0,
+    /** Edit Game ▸ Jingle: Cocoon's jingle picker is open for this game. */
+    val showJinglePicker: Boolean = false,
     val documents: List<GameDocument> = emptyList(),
     val documentFocusIndex: Int = 0,
     val launchDisplayNumbers: List<Int> = emptyList(),
@@ -340,6 +346,7 @@ data class GameDetailUiState(
     val showCreateCollectionDialog: Boolean = false,
     val showAchievementList: Boolean = false,
     val achievementListFocusIndex: Int = 0,
+    val journeyTab: Boolean = false,
     val reviewSummary: com.nendo.argosy.data.social.ReviewSummary? = null,
     val friendsActivity: List<com.nendo.argosy.data.social.FriendActivity> = emptyList(),
     val reviewPage: com.nendo.argosy.data.social.GameReviewsPage? = null,

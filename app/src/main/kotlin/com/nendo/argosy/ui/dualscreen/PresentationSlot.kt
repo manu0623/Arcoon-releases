@@ -54,7 +54,9 @@ sealed interface PresentationSlot {
         @androidx.annotation.StringRes val kindRes: Int,
         val glyph: com.nendo.argosy.ui.cocoon.CocoonGlyph,
         val platformSlug: String?,
-        val colorIndex: Int
+        val colorIndex: Int,
+        val artPath: String? = null,
+        val hidesMirror: Boolean = false
     ) : PresentationSlot
 
     data class Breakdown(

@@ -146,7 +146,16 @@ fun ArgosyApp(
     viewModel: ArgosyViewModel = launcherViewModel(),
     quickMenuViewModel: QuickMenuViewModel = launcherViewModel(),
     musicPlayerViewModel: MusicPlayerViewModel = launcherViewModel(),
-    onStartupComplete: () -> Unit = {}
+    onStartupComplete: () -> Unit = {},
+    /**
+     * Opens the quick settings panel in a window of its own on another display (the upper screen
+     * on a dual-screen device). True when it opened there, so the launcher keeps its own copy shut.
+     */
+    openQuickPanelOnTop: ((androidx.activity.result.ActivityResultRegistryOwner?, QuickSettingsPage) -> Boolean)? = null,
+    /** Closes that panel again; a no-op when it is not open. */
+    hideQuickPanel: () -> Unit = {},
+    /** Whether that panel is up, so the same button can close it again. */
+    isQuickPanelOpen: (() -> Boolean)? = null
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -246,6 +255,36 @@ fun ArgosyApp(
         dsm?.setPrimaryOnHome(isOnHomeScreen)
     }
 
+    /*
+     * Settings opens on the showcase screen: that surface has the room, and the board's
+     * presentation moves down to the one the settings list just left. The lift lasts no longer
+     * than the settings screen that raised it; the arrangement itself is left alone.
+     */
+    val settingsLiftOwner by dsm?.settingsLift?.collectAsState()
+        ?: remember { mutableStateOf<Any?>(null) }
+    val launcherSurfaceToken = remember { Any() }
+    var settingsLiftMine by remember { mutableStateOf(false) }
+    val settingsRouteOpen = currentRoute?.startsWith(Screen.Settings.route) == true
+    LaunchedEffect(settingsRouteOpen, isDualActive, settingsLiftOwner) {
+        val owner = settingsLiftOwner
+        val liftMovedThisSurface = owner != null && owner !== launcherSurfaceToken
+        val settingsStillStacked = navController.currentBackStack.value.any {
+            it.destination.route?.startsWith(Screen.Settings.route) == true
+        }
+        when {
+            liftMovedThisSurface && owner != null && !settingsStillStacked ->
+                dsm?.dropSettingsLift(owner)
+            settingsLiftMine && owner == null -> {
+                settingsLiftMine = false
+                if (settingsRouteOpen) navController.popBackStack()
+            }
+            settingsRouteOpen && isDualActive && owner == null -> {
+                settingsLiftMine = true
+                dsm?.liftSettingsToShowcase(launcherSurfaceToken)
+            }
+        }
+    }
+
     val carriedRoute = remember { dsm?.primaryRoute?.value }
     val carriedStack = remember(carriedRoute) {
         carriedRoute?.let(RouteRestore::restoreStack).orEmpty()
@@ -339,6 +378,25 @@ fun ArgosyApp(
     }
     val currentHandleDeepLink by rememberUpdatedState(handleDeepLink)
     val inputLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val launcherReturnGameId by
+        com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.collectAsState()
+    LaunchedEffect(launcherReturnGameId, navController) {
+        if (launcherReturnGameId < 0L) return@LaunchedEffect
+        // A suspend brings the launcher back where the game was started. If that is the game's own
+        // details page, the pad belongs to the other screen and nothing here can leave it, so step
+        // back to the page under it (or Home when there is none).
+        val route = navController.currentDestination?.route
+        val detailRoute = com.nendo.argosy.ui.navigation.Screen.GameDetail.route
+        if (route == detailRoute || route?.startsWith(detailRoute) == true) {
+            if (!navController.popBackStack()) {
+                navController.navigate(com.nendo.argosy.ui.navigation.Screen.Home.route) {
+                    popUpTo(0) { inclusive = true }
+                }
+            }
+        }
+        com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.value = -1L
+    }
+
     LaunchedEffect(dsm, inputLifecycle) {
         val manager = dsm ?: return@LaunchedEffect
         manager.pendingDeepLink.flowWithLifecycle(inputLifecycle).filterNotNull().collect { uri ->
@@ -584,9 +642,23 @@ fun ArgosyApp(
         pageVisible = isQuickSettingsOpen && quickSettingsPage == QuickSettingsPage.CONNECTIONS
     )
 
-    val openQuickSettings = remember(quickSettingsInputHandler) {
+    // Read in composition: the panel's permission dialogs (Bluetooth and friends) run through
+    // this activity's result registry.
+    val quickPanelResultOwner = androidx.activity.compose.LocalActivityResultRegistryOwner.current
+    val openQuickSettings = remember(quickSettingsInputHandler, openQuickPanelOnTop, isQuickPanelOpen) {
         wizardGuard@{
             if (uiState.isFirstRun) return@wizardGuard
+            // On two screens the panel opens on the upper one, over whatever is there: the
+            // board below stays where it is, drawer and all.
+            // The panel is a window of its own, so the launcher's open flag says nothing
+            // about it: the same button has to close it when it is already up.
+            if (isQuickPanelOpen?.invoke() == true) {
+                hideQuickPanel()
+                return@wizardGuard
+            }
+            if (openQuickPanelOnTop?.invoke(quickPanelResultOwner, QuickSettingsPage.QUICK) == true) {
+                return@wizardGuard
+            }
             viewModel.hideNavBar()
             inputDispatcher.subscribeDrawer(quickSettingsInputHandler)
             viewModel.quickSettings.setOpen(true)
@@ -594,9 +666,28 @@ fun ArgosyApp(
         }
     }
 
-    val closeQuickSettings = remember {
+    // L1 opens friends and R1 the device page, so the bumpers pick a page as they open. Same
+    // window path as the plain open: on two screens the page still comes up on the upper one.
+    val openQuickSettingsPage = remember(quickSettingsInputHandler, openQuickPanelOnTop, isQuickPanelOpen) {
+        pageOpen@{ page: QuickSettingsPage ->
+            if (uiState.isFirstRun) return@pageOpen
+            if (isQuickPanelOpen?.invoke() == true) {
+                hideQuickPanel()
+                return@pageOpen
+            }
+            if (openQuickPanelOnTop?.invoke(quickPanelResultOwner, page) == true) return@pageOpen
+            viewModel.quickSettings.selectPage(page)
+            viewModel.hideNavBar()
+            inputDispatcher.subscribeDrawer(quickSettingsInputHandler)
+            viewModel.quickSettings.setOpen(true)
+            viewModel.soundManager.play(SoundType.OPEN_MODAL)
+        }
+    }
+
+    val closeQuickSettings = remember(hideQuickPanel) {
         {
             inputDispatcher.unsubscribeDrawer()
+            hideQuickPanel()
             viewModel.quickSettings.setOpen(false)
         }
     }
@@ -985,6 +1076,13 @@ fun ArgosyApp(
 
     LaunchedEffect(inputLifecycle) {
         viewModel.gamepadInputHandler.eventFlow().flowWithLifecycle(inputLifecycle).collect { input ->            val result = inputDispatcher.dispatch(input)
+            // Temporary: a held direction that does not travel names its own failure here.
+            if (input.isRepeat) {
+                com.nendo.argosy.util.ArcoonTrace.log(
+                    "input repeat ${input.event} handled=${result.handled} route=$currentRoute " +
+                        "modal=${inputDispatcher.hasActiveModal()}"
+                )
+            }
             if (isQuickSettingsOpen && !result.handled) {
                 com.nendo.argosy.util.ArcoonTrace.log(
                     "quick settings did not take ${input.event} (drawer=${inputDispatcher.hasActiveModal()} overlay=${inputDispatcher.hasCapturingOverlay()})"
@@ -1004,9 +1102,7 @@ fun ArgosyApp(
                             if (isQuickSettingsOpen) {
                                 closeQuickSettings()
                             } else {
-                                // pick the page first, so the panel opens on its own side straight away
-                                viewModel.quickSettings.selectPage(page)
-                                openQuickSettings()
+                                openQuickSettingsPage(page)
                             }
                             return@collect
                         }
@@ -1185,6 +1281,7 @@ fun ArgosyApp(
     CompositionLocalProvider(
         LocalInputDispatcher provides inputDispatcher,
         com.nendo.argosy.ui.input.LocalModalPresence provides inputDispatcher,
+        com.nendo.argosy.ui.input.LocalHaptics provides viewModel.hapticManager,
         LocalGamepadInputHandler provides viewModel.gamepadInputHandler,
         LocalABIconsSwapped provides uiState.abIconsSwapped,
         LocalXYIconsSwapped provides uiState.xyIconsSwapped,

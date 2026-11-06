@@ -9,6 +9,7 @@ import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Slideshow
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.nendo.argosy.R
 import com.nendo.argosy.data.preferences.AppLanguage
+import com.nendo.argosy.data.preferences.LauncherUiMode
 import com.nendo.argosy.ui.components.CyclePreference
 import com.nendo.argosy.ui.components.InfoPreference
 import androidx.lifecycle.Lifecycle
@@ -55,6 +57,16 @@ internal sealed class InterfaceItem(
 
     class Header(key: String, section: String, val titleRes: Int) : InterfaceItem(key, section)
 
+    /** Which launcher home runs, and therefore which options below apply. */
+    data object UiMode : InterfaceItem("uiMode", SECTION_LAUNCHER)
+
+    /** Cocoon's own options; there is nothing to personalise on the classic home. */
+    data object Personalization : InterfaceItem(
+        key = "personalization",
+        section = SECTION_LAUNCHER,
+        visibleWhen = { it.display.launcherUiMode == LauncherUiMode.COCOON }
+    )
+
     data object Language : InterfaceItem("language", SECTION_GENERAL)
     data object UiScale : InterfaceItem("uiScale", SECTION_GENERAL)
     data object CompactFooter : InterfaceItem("compactFooter", SECTION_GENERAL)
@@ -62,7 +74,12 @@ internal sealed class InterfaceItem(
     data object HideSystemStatusBar : InterfaceItem("hideSystemStatusBar", SECTION_GENERAL)
     data object QuickPanelInEmulators : InterfaceItem("quickPanelInEmulators", SECTION_GENERAL)
     data object ControllerGrip : InterfaceItem("controllerGrip", SECTION_GENERAL)
-    data object HomeScreen : InterfaceItem("homeScreen", SECTION_SCREENS)
+    /** The original home owns these; Cocoon has its own Personalization page instead. */
+    data object HomeScreen : InterfaceItem(
+        key = "homeScreen",
+        section = SECTION_SCREENS,
+        visibleWhen = { it.display.launcherUiMode == LauncherUiMode.CLASSIC }
+    )
     data object LibraryView : InterfaceItem("libraryView", SECTION_SCREENS)
     data object BoxArt : InterfaceItem("boxArt", SECTION_SCREENS)
     data object Presentation : InterfaceItem(
@@ -99,6 +116,8 @@ internal sealed class InterfaceItem(
          */
         val ALL: List<InterfaceItem>
             get() = listOf(
+                Header("launcherHeader", SECTION_LAUNCHER, R.string.settings_interface_section_launcher),
+                UiMode, Personalization,
                 Header("generalHeader", SECTION_GENERAL, R.string.settings_interface_section_general),
                 Language, UiScale, CompactFooter, HideSystemNavigationBar, HideSystemStatusBar,
                 QuickPanelInEmulators, ControllerGrip,
@@ -113,17 +132,27 @@ internal sealed class InterfaceItem(
     }
 }
 
+private const val SECTION_LAUNCHER = "launcher"
 private const val SECTION_GENERAL = "general"
 private const val SECTION_SCREENS = "screens"
 private const val SECTION_STATUS_BAR = "statusBar"
 private const val SECTION_RECAPS = "recaps"
 
 private fun interfaceSectionTitleRes(section: String): Int? = when (section) {
+    SECTION_LAUNCHER -> R.string.settings_interface_section_launcher
     SECTION_GENERAL -> R.string.settings_interface_section_general
     SECTION_SCREENS -> R.string.settings_interface_section_screens
     SECTION_STATUS_BAR -> R.string.settings_interface_section_status_bar
     SECTION_RECAPS -> R.string.settings_interface_section_recaps
     else -> null
+}
+
+private fun LauncherUiMode.other(): LauncherUiMode =
+    if (this == LauncherUiMode.COCOON) LauncherUiMode.CLASSIC else LauncherUiMode.COCOON
+
+private fun uiModeLabelRes(mode: LauncherUiMode): Int = when (mode) {
+    LauncherUiMode.COCOON -> R.string.settings_interface_ui_mode_cocoon
+    LauncherUiMode.CLASSIC -> R.string.settings_interface_ui_mode_classic
 }
 
 internal fun languageLabelRes(language: AppLanguage): Int = when (language) {
@@ -203,6 +232,30 @@ fun InterfaceSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     ) { item ->
             when (item) {
                 is InterfaceItem.Header -> InterfaceSectionHeader(stringResource(item.titleRes))
+
+                InterfaceItem.UiMode -> CyclePreference(
+                    title = stringResource(R.string.settings_interface_ui_mode_title),
+                    value = stringResource(uiModeLabelRes(display.launcherUiMode)),
+                    subtitle = stringResource(R.string.settings_interface_ui_mode_subtitle),
+                    isFocused = isFocused(item),
+                    onClick = { viewModel.setLauncherUiMode(display.launcherUiMode.other()) },
+                    onPrev = { viewModel.setLauncherUiMode(display.launcherUiMode.other()) },
+                    options = LauncherUiMode.entries.map { stringResource(uiModeLabelRes(it)) },
+                    onSelect = { index -> viewModel.setLauncherUiMode(LauncherUiMode.entries[index]) },
+                    pickerRequestToken = pickerToken(item)
+                )
+
+                InterfaceItem.Personalization -> NavigationPreference(
+                    icon = Icons.Outlined.Tune,
+                    title = stringResource(R.string.cocoon_personal_title),
+                    subtitle = stringResource(R.string.cocoon_personal_subtitle),
+                    isFocused = isFocused(item),
+                    onClick = {
+                        openFrom(item) {
+                            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
+                        }
+                    }
+                )
 
                 InterfaceItem.Language -> CyclePreference(
                     title = stringResource(R.string.settings_main_language_title),

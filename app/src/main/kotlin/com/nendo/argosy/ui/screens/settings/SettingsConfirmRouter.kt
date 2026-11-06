@@ -167,6 +167,8 @@ internal fun routeConfirm(vm: SettingsViewModel): InputResult {
                 MainSettingsItem.ManagedInstallers ->
                     vm.navigateToSection(SettingsSection.MANAGED_INSTALLERS)
                 MainSettingsItem.DeviceSettings -> vm.viewModelScope.launch { vm._openDeviceSettingsEvent.emit(Unit) }
+                MainSettingsItem.SearchSettings ->
+                    com.nendo.argosy.ui.cocoon.CocoonSettingsSearchState.open.value = true
                 MainSettingsItem.RomM -> vm.navigateToSection(SettingsSection.ROMM)
                 MainSettingsItem.Saves -> vm.navigateToSection(SettingsSection.SAVES)
                 MainSettingsItem.RetroAchievements -> vm.navigateToSection(SettingsSection.RETRO_ACHIEVEMENTS)
@@ -184,6 +186,12 @@ internal fun routeConfirm(vm: SettingsViewModel): InputResult {
                 MainSettingsItem.Permissions -> vm.navigateToSection(SettingsSection.PERMISSIONS)
                 MainSettingsItem.About -> vm.navigateToSection(SettingsSection.ABOUT)
                 MainSettingsItem.Social -> vm.navigateToSection(SettingsSection.SOCIAL)
+                MainSettingsItem.Jingles ->
+                    com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
+                MainSettingsItem.SteamGridDb ->
+                    com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value = true
+                MainSettingsItem.RomMedia ->
+                    com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value = true
                 MainSettingsItem.Steam -> vm.navigateToSection(SettingsSection.STEAM_SETTINGS)
                 MainSettingsItem.Jellyfin -> vm.navigateToSection(SettingsSection.JELLYFIN)
                 null -> {}
@@ -752,6 +760,17 @@ private fun routeInterfaceConfirm(vm: SettingsViewModel, state: SettingsUiState)
         InterfaceItem.LibraryView -> vm.navigateToLibraryView()
         InterfaceItem.BoxArt -> vm.navigateToBoxArt()
         InterfaceItem.Presentation -> vm.navigateToPresentation()
+        InterfaceItem.UiMode -> {
+            val current = state.display.launcherUiMode
+            vm.setLauncherUiMode(
+                if (current == com.nendo.argosy.data.preferences.LauncherUiMode.COCOON)
+                    com.nendo.argosy.data.preferences.LauncherUiMode.CLASSIC
+                else com.nendo.argosy.data.preferences.LauncherUiMode.COCOON
+            )
+        }
+        InterfaceItem.Personalization -> {
+            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
+        }
         else -> {}
     }
     return InputResult.HANDLED
@@ -816,10 +835,6 @@ private fun routeThemeConfirm(vm: SettingsViewModel, state: SettingsUiState): In
         ThemeItem.Mode -> return InputResult.handled(SoundType.SILENT)
         ThemeItem.TintBleed -> vm.cycleSurfaceTintBleed()
         ThemeItem.AccentFooter -> vm.setUseAccentColorFooter(!state.display.useAccentColorFooter)
-        ThemeItem.CocoonPersonal -> {
-            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
-            return InputResult.handled(SoundType.OPEN_MODAL)
-        }
         ThemeItem.CocoonThemes -> {
             com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value = true
             return InputResult.handled(SoundType.OPEN_MODAL)

@@ -100,6 +100,8 @@ internal class BuiltinVideoSectionInput(
         setting: LibretroSettingDef,
         videoState: com.nendo.argosy.ui.screens.settings.BuiltinVideoState
     ): InputResult = when (setting) {
+        // In-game only, so this screen never draws it; the in-game handler owns the toggle.
+        LibretroSettingDef.MatchScreenSizes -> InputResult.UNHANDLED
         LibretroSettingDef.Shader,
         LibretroSettingDef.AspectRatio,
         LibretroSettingDef.Rotation,

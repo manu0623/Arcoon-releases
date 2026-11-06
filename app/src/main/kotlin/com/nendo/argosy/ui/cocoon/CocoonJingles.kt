@@ -38,11 +38,9 @@ object CocoonJingles {
     fun setVolume(context: Context, value: Int) { prefs(context).edit().putInt("volume", value.coerceIn(0, 100)).apply(); version.intValue++ }
 
     fun gameJingle(context: Context, gameId: Long) = prefs(context).getString("game_$gameId", null)
-    fun platformJingle(context: Context, slug: String?) = slug?.let { prefs(context).getString("platform_$it", null) }
     fun globalJingle(context: Context) = prefs(context).getString("global", null)
 
     fun setGameJingle(context: Context, gameId: Long, path: String?) = put(context, "game_$gameId", path)
-    fun setPlatformJingle(context: Context, slug: String, path: String?) = put(context, "platform_$slug", path)
     fun setGlobalJingle(context: Context, path: String?) = put(context, "global", path)
 
     /** Clear All Jingles: game assignments go; console and global defaults stay (as in Cocoon). */
@@ -64,18 +62,18 @@ object CocoonJingles {
     private fun embeddedJingle(context: Context, gameId: Long): String? =
         EmbeddedMediaRepository.cachedJingleFile(context, gameId.toString())?.absolutePath
 
-    fun resolve(context: Context, gameId: Long, slug: String?): String? =
+    /** A jingle is the game's own sound, or the one default; consoles have no say in it. */
+    fun resolve(context: Context, gameId: Long): String? =
         listOfNotNull(
             gameJingle(context, gameId),
             embeddedJingle(context, gameId),
-            platformJingle(context, slug),
             globalJingle(context)
         )
             .firstOrNull { java.io.File(it).isFile }
 
-    fun playFor(context: Context, gameId: Long, slug: String?) {
+    fun playFor(context: Context, gameId: Long) {
         if (!enabled(context)) return
-        val path = resolve(context, gameId, slug) ?: return
+        val path = resolve(context, gameId) ?: return
         play(context, path)
     }
 

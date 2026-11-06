@@ -564,6 +564,17 @@ class DisplaySettingsDelegate @Inject constructor(
         }
     }
 
+    fun setLauncherUiMode(scope: CoroutineScope, mode: com.nendo.argosy.data.preferences.LauncherUiMode) {
+        // The home, the library and the bumper handling all read this flow, so the switch lands
+        // without a restart; the write makes it survive one.
+        com.nendo.argosy.ui.cocoon.CocoonMode.useClassicHome.value =
+            mode == com.nendo.argosy.data.preferences.LauncherUiMode.CLASSIC
+        scope.launch {
+            preferencesRepository.setLauncherUiMode(mode)
+            _state.update { it.copy(launcherUiMode = mode) }
+        }
+    }
+
     fun setCompactFooter(scope: CoroutineScope, enabled: Boolean) {
         scope.launch {
             preferencesRepository.setCompactFooter(enabled)

@@ -53,6 +53,7 @@ import com.nendo.argosy.data.social.SocialUser
 import com.nendo.argosy.ui.ACCOUNTS_SECTION_NAME
 import com.nendo.argosy.ui.DRAWER_ACCOUNT_ROW_INDEX
 import com.nendo.argosy.ui.DRAWER_NAV_ITEM_OFFSET
+import com.nendo.argosy.ui.input.revealTicks
 import com.nendo.argosy.ui.DRAWER_RESUME_GAME_ROUTE
 import com.nendo.argosy.ui.DrawerItem
 import com.nendo.argosy.ui.DrawerState
@@ -71,6 +72,16 @@ fun MainDrawer(
     onResumeGame: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val revealHaptics = com.nendo.argosy.ui.input.LocalHaptics.current
+    val wasOpen = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    // The drawer slides in behind this: a light cue travels with the slide, and only on the way
+    // in - a drawer that is already open when the app starts must not tick.
+    LaunchedEffect(isOpen) {
+        if (isOpen && !wasOpen.value) {
+            revealHaptics.revealTicks(com.nendo.argosy.ui.theme.Motion.durationSlide)
+        }
+        wasOpen.value = isOpen
+    }
     // Cocoon's left sheet: a near-black panel with rounded right corners.
     ModalDrawerSheet(
         modifier = modifier.width(Dimens.navDrawerWidth),

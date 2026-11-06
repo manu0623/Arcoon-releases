@@ -98,6 +98,7 @@ private const val AMBIENT_LIBRARY_WIDE = -1L
 class SettingsViewModel @Inject constructor(
     @ApplicationContext internal val context: Context,
     internal val preferencesRepository: UserPreferencesRepository,
+    private val steamGridDbArtScraper: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbArtScraper,
     internal val hapticManager: HapticFeedbackManager,
     internal val platformRepository: PlatformRepository,
     private val reorderPlatforms: com.nendo.argosy.domain.usecase.platform.ReorderPlatformsUseCase,
@@ -530,6 +531,7 @@ class SettingsViewModel @Inject constructor(
     fun clearPlatformArtCache(platformSlug: String) {
         viewModelScope.launch {
             val reclaimed = imageCacheManager.clearPlatformCache(platformSlug)
+            steamGridDbArtScraper.refreshPlatformFromSteamGridDb(platformSlug)
             notificationManager.show(
                 title = NotificationText.Res(R.string.settings_shell_vm_artwork_cache_title),
                 subtitle = if (reclaimed > 0) {
@@ -1180,6 +1182,8 @@ class SettingsViewModel @Inject constructor(
         displayDelegate.setPresentationStyle(viewModelScope, style)
     fun adjustPresentationBackgroundBlur(delta: Int) = routeAdjustPresentationBackgroundBlur(this, delta)
     fun setUseAccentColorFooter(use: Boolean) = displayDelegate.setUseAccentColorFooter(viewModelScope, use)
+    fun setLauncherUiMode(mode: com.nendo.argosy.data.preferences.LauncherUiMode) =
+        displayDelegate.setLauncherUiMode(viewModelScope, mode)
     fun setCompactFooter(enabled: Boolean) = displayDelegate.setCompactFooter(viewModelScope, enabled)
     fun setHideSystemNavigationBar(hide: Boolean) =
         displayDelegate.setHideSystemNavigationBar(viewModelScope, hide)
@@ -2421,10 +2425,6 @@ class SettingsViewModel @Inject constructor(
                 else -> InputResult.HANDLED
             }
         }
-        if (focusedItem is com.nendo.argosy.ui.screens.settings.sections.SocialItem.CocoonJingles) {
-            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
-            return InputResult.handled(SoundType.OPEN_MODAL)
-        }
         return when (state.social.authStatus) {
             SocialAuthStatus.NOT_LINKED -> {
                 startSocialAuth()
@@ -2472,10 +2472,6 @@ class SettingsViewModel @Inject constructor(
                         if (state.social.quayPassEnabled) setQuayPassEnabled(false)
                         else requestEnableQuayPass()
                         InputResult.handled(SoundType.TOGGLE)
-                    }
-                    is com.nendo.argosy.ui.screens.settings.sections.SocialItem.CocoonJingles -> {
-                        com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
-                        InputResult.handled(SoundType.OPEN_MODAL)
                     }
                     is com.nendo.argosy.ui.screens.settings.sections.SocialItem.Unlink -> {
                         logoutSocial()

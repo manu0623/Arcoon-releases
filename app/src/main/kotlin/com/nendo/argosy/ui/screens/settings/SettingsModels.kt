@@ -275,6 +275,8 @@ data class DisplayState(
     val libraryBoxArt3d: Boolean = false,
     val useAccentColorFooter: Boolean = false,
     val compactFooter: Boolean = false,
+    val launcherUiMode: com.nendo.argosy.data.preferences.LauncherUiMode =
+        com.nendo.argosy.data.preferences.LauncherUiMode.COCOON,
     val hideSystemNavigationBar: Boolean = true,
     val hideSystemStatusBar: Boolean = true,
     val quickPanelInEmulators: Boolean = false,

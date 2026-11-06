@@ -116,6 +116,7 @@ class ArgosyActivity : ComponentActivity() {
     @Inject lateinit var downloadQueueDao: DownloadQueueDao
     @Inject lateinit var downloadQueueRepository: com.nendo.argosy.data.repository.DownloadQueueRepository
     @Inject lateinit var gamepadInputHandler: GamepadInputHandler
+    @Inject lateinit var quickPanelOverlay: com.nendo.argosy.ui.quickpanel.QuickPanelOverlay
     @Inject lateinit var connectedControllerTracker: com.nendo.argosy.core.input.ConnectedControllerTracker
     @Inject lateinit var triggerAxisKeyEmitter: com.nendo.argosy.ui.input.TriggerAxisKeyEmitter
     @Inject lateinit var imageCacheManager: ImageCacheManager
@@ -357,6 +358,7 @@ class ArgosyActivity : ComponentActivity() {
         dualScreenManager.onOverlayFocusChanged = { _ -> }
         dualScreenManager.onEmulatorDispatcherChanged = { }
         dualScreenManager.registerReceivers()
+        if (savedInstanceState == null) dualScreenManager.releaseForeignAppHoldOnLauncherStart()
         dualScreenManager.ensureCompanionLaunched()
         dualScreenManager.startStartupGuard()
         dualScreenManager.applyStoredScreenLayout()
@@ -452,7 +454,17 @@ class ArgosyActivity : ComponentActivity() {
                         // (screens that blur, like the board, keep their own).
                         com.nendo.argosy.ui.primitives.CocoonCursorHost(modifier = Modifier.fillMaxSize()) {
                             ArgosyApp(
-                                onStartupComplete = { dualScreenManager.stopStartupGuard() }
+                                onStartupComplete = { dualScreenManager.stopStartupGuard() },
+                                // The right-hand panel belongs on the upper screen: it is the
+                                // surface with room, and the board (with its left drawer) keeps
+                                // the lower one. Falls back to drawing it here when there is no
+                                // second screen or no overlay permission.
+                                openQuickPanelOnTop = { owner, page -> quickPanelOverlay.showOnUpper(owner, page) },
+                                hideQuickPanel = {
+                                    com.nendo.argosy.util.ArcoonTrace.log("quick panel: hide")
+                                    quickPanelOverlay.hideNow()
+                                },
+                                isQuickPanelOpen = { quickPanelOverlay.isOpen.value }
                             )
                         }
                     }
@@ -464,6 +476,19 @@ class ArgosyActivity : ComponentActivity() {
                     com.nendo.argosy.ui.cocoon.CocoonLeaveVeil()
                 }
             }
+        }
+
+        // Debug hook: lets the upper-screen panel be checked without a controller in hand.
+        if (intent?.getBooleanExtra("argosy.swap_roles", false) == true) {
+            android.os.Handler(mainLooper).postDelayed({ dualScreenManager.swapRoles() }, 1200)
+        }
+        intent?.getStringExtra("argosy.ui_mode")?.let { requested ->
+            android.os.Handler(mainLooper).postDelayed({
+                com.nendo.argosy.ui.cocoon.CocoonMode.requestClassicHome(requested == "classic")
+            }, 1500)
+        }
+        if (intent?.getBooleanExtra("argosy.quick_panel", false) == true) {
+            android.os.Handler(mainLooper).postDelayed({ quickPanelOverlay.showOnUpper(null) }, 1500)
         }
 
         if (savedInstanceState == null) {

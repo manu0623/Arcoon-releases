@@ -62,6 +62,7 @@ private enum class PersonalRow(val labelRes: Int) {
     DOCK_POSITION(R.string.cocoon_personal_dock_position),
     DOCK_BACKGROUND(R.string.cocoon_personal_dock_background),
     DOCK_AUTOHIDE(R.string.cocoon_personal_dock_autohide),
+    HANDLE_SIZE(R.string.cocoon_personal_handle_size),
     JINGLES(R.string.cocoon_jingles),
     JINGLE_VOLUME(R.string.cocoon_jingle_volume),
     JINGLE_DEFAULT(R.string.cocoon_jingle_default),
@@ -138,6 +139,14 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
             PersonalRow.DOCK_POSITION -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.let { it.setDock(context, bottom = !it.dockBottom) }
             PersonalRow.DOCK_BACKGROUND -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.let { it.setDock(context, background = !it.dockBackground) }
             PersonalRow.DOCK_AUTOHIDE -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.let { it.setDock(context, autoHide = !it.dockAutoHide) }
+            PersonalRow.HANDLE_SIZE -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.setHandle(
+                context,
+                size = cycle(
+                    listOf("SMALL", "MEDIUM", "LARGE"),
+                    com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleSize,
+                    delta
+                )
+            )
             PersonalRow.JINGLES -> com.nendo.argosy.ui.cocoon.CocoonJingles.setEnabled(
                 context, !com.nendo.argosy.ui.cocoon.CocoonJingles.enabled(context)
             )
@@ -260,6 +269,13 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
         PersonalRow.DOCK_AUTOHIDE -> context.getString(
             if (com.nendo.argosy.ui.cocoon.CocoonHomeStore.dockAutoHide) R.string.cocoon_on else R.string.cocoon_off
         )
+        PersonalRow.HANDLE_SIZE -> context.getString(
+            when (com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleSize) {
+                "LARGE" -> R.string.cocoon_size_large
+                "MEDIUM" -> R.string.cocoon_size_medium
+                else -> R.string.cocoon_size_small
+            }
+        )
         PersonalRow.JINGLES -> context.getString(
             if (com.nendo.argosy.ui.cocoon.CocoonJingles.enabled(context)) R.string.cocoon_on else R.string.cocoon_off
         )
@@ -318,6 +334,7 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
             val previewKind = when (rows.getOrNull(focus)) {
                 PersonalRow.HERO_STYLE, PersonalRow.HERO_SIZE, PersonalRow.NOW_PLAYING -> CocoonPreviewKind.TOP
                 PersonalRow.SURFACE -> CocoonPreviewKind.SURFACE
+                PersonalRow.HANDLE_SIZE -> CocoonPreviewKind.HANDLE
                 else -> CocoonPreviewKind.HOME
             }
             val personalList: @Composable (Modifier) -> Unit = { listModifier ->
