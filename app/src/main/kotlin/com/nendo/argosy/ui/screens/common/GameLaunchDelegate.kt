@@ -124,7 +124,8 @@ class GameLaunchDelegate @Inject constructor(
     private val resolveSnapshotConflict: com.nendo.argosy.domain.usecase.savechannel.ResolveSnapshotConflictUseCase,
     private val connectedControllerTracker: com.nendo.argosy.core.input.ConnectedControllerTracker,
     private val preLaunchRecapStep: PreLaunchRecapStep,
-    private val gameSessionManager: com.nendo.argosy.data.emulator.GameSessionManager
+    private val gameSessionManager: com.nendo.argosy.data.emulator.GameSessionManager,
+    private val launchTargetResolver: EmulatorLaunchTargetResolver? = null
 ) {
     companion object {
         private const val EMULATOR_KILL_DELAY_MS = 500L
@@ -228,6 +229,13 @@ class GameLaunchDelegate @Inject constructor(
         start: GameStart,
         onLaunchFailed: () -> Unit = {}
     ) {
+        android.util.Log.d(
+            "GameLaunchDelegate",
+            "launchGame: gameId=$gameId origin=$origin caller=" +
+                Throwable().stackTrace.drop(1).take(4).joinToString(" <- ") {
+                    it.className.substringAfterLast('.') + "." + it.methodName + ":" + it.lineNumber
+                }
+        )
         if (isSyncing) {
             notificationManager.showError(NotificationText.Res(R.string.notif_gamelaunch_busy_syncing))
             onLaunchFailed()
@@ -265,9 +273,12 @@ class GameLaunchDelegate @Inject constructor(
 
                 val resolvedVariantId = variantResolver.resolveVariant(game)?.id
 
-                // A game suspended in its external emulator is resumed however long it has waited.
+                gameSessionManager.restoreSuspendedExternal()
                 val suspendedExternal = gameSessionManager.sessionState.value
-                    ?.takeIf { !it.builtIn && it.gameId == gameId && activeSession?.gameId == gameId }
+                    ?.takeIf {
+                        !it.builtIn && it.gameId == gameId &&
+                            (activeSession == null || activeSession.gameId == gameId)
+                    }
                 val canResume = !sessionRequiresKill && (
                     suspendedExternal != null || playSessionTracker.canResumeSession(gameId, resolvedVariantId)
                 )
@@ -293,10 +304,26 @@ class GameLaunchDelegate @Inject constructor(
                 }
 
                 if (canResume) {
-                    if (suspendedExternal != null && activeSession != null) {
+                    if (suspendedExternal != null) {
+                        val resumePlacement = launchTargetResolver?.launchOptionsFor(
+                            gameId = gameId,
+                            overrideDisplayId = start.overrideDisplayId,
+                            emulatorPackage = suspendedExternal.packageName
+                        )
+                        if (gameSessionManager.bringExternalToFront(resumePlacement)) {
+                            android.util.Log.d("GameLaunchDelegate", "Resumed '${game.title}' in its own emulator task")
+                            playSessionTracker.adoptHeldSession(gameId, suspendedExternal.packageName)
+                            gameSessionManager.onExternalResumed(gameId)
+                            com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
+                                gameId, activeSession?.isHardcore ?: false, activeSession?.channelName
+                            )
+                            launchProgressTracker.finish(ticket, launched = true)
+                            return@launch
+                        }
+                        android.util.Log.d("GameLaunchDelegate", "No emulator activity on record; delivering the ROM again")
                         gameSessionManager.onExternalResumed(gameId)
                         com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
-                            gameId, activeSession.isHardcore, activeSession.channelName
+                            gameId, activeSession?.isHardcore ?: false, activeSession?.channelName
                         )
                     }
                     val result = launchGameUseCase(gameId, discId, forResume = true, variantFileId = resolvedVariantId, allowVariantPrompt = false, prefetchedGame = game, sessionAtWindow = true)
@@ -466,12 +493,15 @@ class GameLaunchDelegate @Inject constructor(
         onLaunchFailed: () -> Unit
     ) {
         when (result) {
-            is LaunchResult.Success -> launchHandoff.handOff(
-                ticket,
-                applyLaunchExtras(result.intent, launchMode, origin),
-                start,
-                result.session
-            )
+            is LaunchResult.Success -> {
+                gameSessionManager.noteExternalLaunch(result.intent)
+                launchHandoff.handOff(
+                    ticket,
+                    applyLaunchExtras(result.intent, launchMode, origin),
+                    start,
+                    result.session
+                )
+            }
             is LaunchResult.SelectDisc -> {
                 _discPickerState.value = DiscPickerState(
                     gameId = result.gameId,
@@ -763,12 +793,15 @@ class GameLaunchDelegate @Inject constructor(
         callbacks: LaunchResultCallbacks
     ) {
         when (result) {
-            is LaunchResult.Success -> launchHandoff.handOff(
-                ticket,
-                applyLaunchExtras(result.intent, launchMode, origin),
-                callbacks.start,
-                result.session
-            )
+            is LaunchResult.Success -> {
+                gameSessionManager.noteExternalLaunch(result.intent)
+                launchHandoff.handOff(
+                    ticket,
+                    applyLaunchExtras(result.intent, launchMode, origin),
+                    callbacks.start,
+                    result.session
+                )
+            }
             is LaunchResult.SelectDisc -> {
                 val handler = callbacks.onSelectDisc
                 if (handler != null) handler(result.discs)

@@ -100,7 +100,6 @@ internal sealed class DisplaysItem(
         section = "displays",
         visibleWhen = { it.display.ambientLedAvailable }
     )
-
     data object GamesTarget : DisplaysItem(
         key = "gamesTarget",
         section = DISPLAY_TARGETS_SECTION,
@@ -140,7 +139,7 @@ internal sealed class DisplaysItem(
                 ScreenSafetyHeader,
                 ScreenDimmer, DimAfter, DimLevel, LidSleep,
                 DisplaysSpacer, DisplaysHeader,
-                DualScreenEnabled, DisplayRoles, DualScreenMatchSize, ScreenLayout,
+                DualScreenEnabled, DisplayRoles, ScreenLayout,
                 AmbientLedSettings,
                 DisplayTargetsSpacer, DisplayTargetsHeader,
                 GamesTarget, AppsTarget, ByPlatformAndApp

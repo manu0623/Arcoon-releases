@@ -32,6 +32,7 @@ class CocoonHomeViewModel @Inject constructor(
     private val gameDao: com.nendo.argosy.data.local.dao.GameDao,
     private val imageCacheManager: com.nendo.argosy.data.cache.ImageCacheManager,
     private val playSessionDao: com.nendo.argosy.data.local.dao.PlaySessionDao,
+    private val gameLaunchDelegate: com.nendo.argosy.ui.screens.common.GameLaunchDelegate,
 ) : ViewModel() {
 
     private var coverPrefetch: kotlinx.coroutines.Job? = null
@@ -141,8 +142,6 @@ class CocoonHomeViewModel @Inject constructor(
         if (index >= 0) _state.update { it.copy(focusedIndex = index) }
         return true
     }
-
-    fun closeSearch() { _state.update { it.copy(searchOpen = false) } }
 
     fun openNameGroup() { _state.update { it.copy(namingGroup = true, startMenuOpen = false) } }
     fun closeNameGroup() { _state.update { it.copy(namingGroup = false) } }
@@ -476,13 +475,20 @@ class CocoonHomeViewModel @Inject constructor(
         launchPackage(packageName)
     }
 
-    fun launchPackage(packageName: String) {
+    /**
+     * Starts [packageName]. A pinned screen key is saved as the app's target, so the next plain
+     * launch from the dock opens there too, exactly as the app menus on Argosy's own home do.
+     */
+    fun launchPackage(packageName: String, pinnedScreenKey: String? = null) {
         val intent = appsRepository.getLaunchIntent(packageName) ?: return
         CocoonAppStore.onLaunched(packageName)
         viewModelScope.launch {
+            if (pinnedScreenKey != null) {
+                runCatching { preferencesRepository.setAppDisplayTarget(packageName, pinnedScreenKey) }
+            }
             val prefs = preferencesRepository.preferences.first()
             val options = displayAffinityHelper.getAppLaunchOptions(
-                preferredScreenKey = prefs.appDisplayTargets[packageName],
+                preferredScreenKey = pinnedScreenKey ?: prefs.appDisplayTargets[packageName],
                 rolesSwapped = sessionStateStore.isRolesSwapped(),
                 occupiedDisplayId = com.nendo.argosy.DualScreenManagerHolder.instance?.emulatorDisplayId,
                 defaultTarget = prefs.appsDisplayTarget
@@ -497,12 +503,54 @@ class CocoonHomeViewModel @Inject constructor(
 
     fun closeDockMenu() { _state.update { it.copy(dockMenuOpen = false) } }
 
+    /**
+     * Launch ▸ screen. False when the device has one screen and there is nothing to choose, so
+     * Launch goes straight to the app; otherwise the picker takes the dock menu's place.
+     */
+    private fun openDockLaunchScreens(): Boolean {
+        val screens = cocoonLaunchScreens(
+            com.nendo.argosy.DualScreenManagerHolder.instance?.focusableDisplays().orEmpty()
+        )
+        if (!needsCocoonScreenPicker(screens)) return false
+        // The menu stays up and swaps its rows: a second panel with its own header was a
+        // heavier screen than choosing between two lines needs.
+        _state.update {
+            it.copy(dockLaunchScreens = screens, dockLaunchScreenIndex = 0, dockMenuOpen = true)
+        }
+        return true
+    }
+
+    fun focusDockLaunchScreen(index: Int) {
+        _state.update { state ->
+            if (state.dockLaunchScreens.isEmpty()) state
+            else state.copy(dockLaunchScreenIndex = index.coerceIn(0, state.dockLaunchScreens.lastIndex))
+        }
+    }
+
+    /** B returns to the dock menu with Launch still selected, as Cocoon's nested menus do. */
+    fun closeDockLaunchScreens() {
+        _state.update {
+            it.copy(
+                dockLaunchScreens = emptyList(),
+                dockLaunchScreenIndex = 0,
+                dockMenuOpen = true,
+                dockMenuIndex = CocoonDockMenuRow.LAUNCH.ordinal
+            )
+        }
+    }
+
+    /** Starts the dock app on the picked screen. */
+    fun launchDockAppOnScreen(index: Int) {
+        val packageName = dockApp() ?: return
+        val screen = _state.value.dockLaunchScreens.getOrNull(index) ?: return
+        _state.update { it.copy(dockLaunchScreens = emptyList(), dockLaunchScreenIndex = 0) }
+        launchPackage(packageName, pinnedScreenKey = screen.key)
+    }
+
     /** Y ▸ Edit App: Cocoon's app sheet (name, icon, treat as game, screen). */
     fun openAppEdit(packageName: String) {
         _state.update { it.copy(appEditPackage = packageName, dockMenuOpen = false, tileMenuOpen = false) }
     }
-    fun closePlatformJingle() { _state.update { it.copy(jingleForPlatform = null) } }
-
     fun closeAppEdit() {
         _state.update { it.copy(appEditPackage = null) }
         rebuildHomeTiles()
@@ -578,9 +626,10 @@ class CocoonHomeViewModel @Inject constructor(
     }
 
     private fun runDockMenuRow(row: CocoonDockMenuRow, onEditApp: () -> Unit) {
-        val packageName = dockApp()
+        val packageName = dockApp() ?: return
+        // Launch asks which screen first when there is a choice; the picker replaces the menu.
+        if (row == CocoonDockMenuRow.LAUNCH && openDockLaunchScreens()) return
         closeDockMenu()
-        if (packageName == null) return
         when (row) {
             CocoonDockMenuRow.LAUNCH -> launchDockApp(_state.value.dockIndex - 1)
             CocoonDockMenuRow.EDIT -> openAppEdit(packageName)
@@ -660,6 +709,7 @@ class CocoonHomeViewModel @Inject constructor(
         CocoonChoice.PODS -> CocoonPodKind.entries.size
         CocoonChoice.SMART -> CocoonSmartKind.entries.size
         CocoonChoice.MOVE -> moveTargets().size
+        CocoonChoice.COLLECTIONS -> _state.value.collectionChoices.size
     }
 
     /** A in the second step of Start ▸ Add Widget / Add Pod. */
@@ -687,6 +737,7 @@ class CocoonHomeViewModel @Inject constructor(
                 val targets = moveTargets()
                 if (index in targets.indices) moveInto(targets[index].first)
             }
+            CocoonChoice.COLLECTIONS -> pickCollection(index)
         }
     }
 
@@ -728,6 +779,7 @@ class CocoonHomeViewModel @Inject constructor(
             is CocoonTileTarget.Game -> viewModelScope.launch {
                 _events.emit(CocoonHomeEvent.Navigate(com.nendo.argosy.ui.navigation.Screen.GameDetail.createRoute(target.gameId)))
             }
+            is CocoonTileTarget.NowPlaying -> resumeNowPlaying()
             is CocoonTileTarget.Smart -> viewModelScope.launch {
                 val filters = when (target.kind) {
                     CocoonSmartKind.FAVORITES -> com.nendo.argosy.domain.model.LibraryLinkFilters(
@@ -755,6 +807,66 @@ class CocoonHomeViewModel @Inject constructor(
         }
     }
 
+    // ---- The game left running ----
+
+    private var suspendedSession: com.nendo.argosy.domain.model.multitasking.SuspendedGameSession? = null
+
+    /**
+     * The launcher's suspended game, pushed in by the board, which owns the square it draws for it.
+     * Only the identity is compared: the session carries a live timer, and republishing the board
+     * every second would relayout it under the cursor.
+     */
+    fun setSuspendedSession(session: com.nendo.argosy.domain.model.multitasking.SuspendedGameSession?) {
+        val current = suspendedSession
+        if (current?.gameId == session?.gameId &&
+            current?.builtIn == session?.builtIn &&
+            current?.title == session?.title
+        ) return
+        suspendedSession = session
+        publish()
+    }
+
+    /**
+     * The temporary square for the game left running. Home only: inside a folder the board is that
+     * folder's own contents. It is never written to the board cache, so a cold start cannot show a
+     * game that is no longer suspended.
+     */
+    private fun nowPlayingTile(): CocoonTile? {
+        val session = suspendedSession ?: return null
+        if (groupPath.isNotEmpty()) return null
+        if (CocoonSuspendTest.resumeInProgress.value) return null
+        return CocoonTile(
+            key = "now-playing-${session.gameId}",
+            target = CocoonTileTarget.NowPlaying(session.gameId),
+            title = session.title,
+            titleRes = null,
+            kindRes = R.string.cocoon_kind_game,
+            glyph = CocoonGlyph.GAME,
+            platformSlug = session.platformName.ifBlank { null },
+            colorIndex = CocoonFolderPalette.indexFor("now-playing-${session.gameId}")
+        )
+    }
+
+    /** A, or a tap on the square: back into the game, exactly where it was left. */
+    private fun resumeNowPlaying() {
+        val session = com.nendo.argosy.DualScreenManagerHolder.instance
+            ?.gameSessionManager?.sessionState?.value ?: return
+        gameLaunchDelegate.launchGame(
+            scope = viewModelScope,
+            gameId = session.gameId,
+            allowVariantPrompt = false,
+            start = com.nendo.argosy.ui.screens.common.GameStart(gameId = session.gameId)
+        )
+    }
+
+    /** The square's close badge, and Y ▸ Close: the game quits through its normal shutdown. */
+    fun closeNowPlayingTile() {
+        val manager = com.nendo.argosy.DualScreenManagerHolder.instance?.gameSessionManager ?: return
+        viewModelScope.launch {
+            runCatching { manager.closeAndWait() }
+        }
+    }
+
     fun openTileMenu() { _state.update { it.copy(tileMenuOpen = true, tileMenuIndex = 0, deleteArmed = false) } }
     fun closeTileMenu() { _state.update { it.copy(tileMenuOpen = false, deleteArmed = false) } }
     fun focusTileMenu(index: Int) {
@@ -778,7 +890,13 @@ class CocoonHomeViewModel @Inject constructor(
         viewModelScope.launch {
             val collections = runCatching { collectionRepository.getAllCollections() }.getOrDefault(emptyList())
             collectionTiles = collections
-                .filter { it.type == CollectionType.REGULAR || it.type == CollectionType.SMART }
+                // The board carries the user's own collections, not the ones RomM derives from
+                // genres and modes. Owning one means RomM has it, or it was made here while
+                // offline; a smart collection is one the user built from a rule.
+                .filter {
+                    (it.type == CollectionType.REGULAR || it.type == CollectionType.SMART) &&
+                        (it.rommId != null || it.isUserCreated)
+                }
                 .map { collection ->
                     CocoonTile(
                         key = "collection-${collection.id}",
@@ -813,8 +931,10 @@ class CocoonHomeViewModel @Inject constructor(
         }
         ordered += byKey.values
         while (ordered.lastOrNull()?.target is CocoonTileTarget.Gap) ordered.removeAt(ordered.lastIndex)
-        val tiles: List<CocoonTile> = layout(ordered)
-        if (current == null) CocoonBoardCache.tiles = tiles
+        val tiles: List<CocoonTile> = layout(listOfNotNull(nowPlayingTile()) + ordered)
+        if (current == null) {
+            CocoonBoardCache.tiles = tiles.filter { it.target !is CocoonTileTarget.NowPlaying }
+        }
         if (_state.value.tiles == tiles) {
             if (_state.value.isLoading) _state.update { it.copy(isLoading = false) }
             return
@@ -898,6 +1018,49 @@ class CocoonHomeViewModel @Inject constructor(
     }
 
     fun openNewFolder() { _state.update { it.copy(newFolderOpen = true, tileMenuOpen = false) } }
+
+    /**
+     * Start ▸ New ▸ Collection: the user's own RomM collections only. Collections RomM derives
+     * (genres, series, smart lists) are not theirs to put on the board.
+     */
+    fun openCollectionChooser() {
+        closeStartMenu()
+        viewModelScope.launch {
+            suspend fun mine(): List<CocoonCollectionChoice> =
+                runCatching { collectionRepository.getAllCollections() }.getOrDefault(emptyList())
+                    // RomM's own collections: they are the user's because RomM holds them, not
+                    // because a local flag says so (the sync never set that flag for them).
+                    // Smart collections count too: RomM lets you build them yourself.
+                    .filter {
+                        (it.type == CollectionType.REGULAR || it.type == CollectionType.SMART) &&
+                            (it.rommId != null || it.isUserCreated)
+                    }
+                    .sortedBy { it.name.lowercase() }
+                    .map { CocoonCollectionChoice(it.id, it.name) }
+            // Show what we already know, then refresh from RomM: a collection made in RomM's web
+            // UI only reaches this table when the startup sync happens to run.
+            _state.update { it.copy(choice = CocoonChoice.COLLECTIONS, choiceIndex = 0, collectionChoices = mine()) }
+            runCatching { romMRepository.syncCollections() }
+            // Smart collections arrive from their own endpoint: without this pass the user's
+            // smart collections are not in the table at all, whatever the filter says.
+            runCatching { romMRepository.syncAutoCollections() }
+            val refreshed = mine()
+            _state.update { if (it.choice == CocoonChoice.COLLECTIONS) it.copy(collectionChoices = refreshed) else it }
+        }
+    }
+
+    /** Puts the chosen RomM collection on the board, in the empty space New was opened from. */
+    private fun pickCollection(index: Int) {
+        val picked = _state.value.collectionChoices.getOrNull(index) ?: return
+        val key = "collection-${picked.id}"
+        val slot = _state.value.pendingSlot
+        closeChoice()
+        _state.update { it.copy(pendingSlot = null) }
+        if (_state.value.tiles.none { it.key == key }) refreshCollections()
+        placeAt(key, slot ?: _state.value.tiles.size)
+        val at = _state.value.tiles.indexOfFirst { it.key == key }
+        if (at >= 0) setFocus(at)
+    }
     fun closeNewFolder() { _state.update { it.copy(newFolderOpen = false) } }
 
     /** Creates the folder as an Argosy collection (synced to RomM when connected) and lands on it. */
@@ -1042,17 +1205,20 @@ class CocoonHomeViewModel @Inject constructor(
             closeTileMenu()
             when (row) {
                 CocoonTileMenuRow.OPEN -> onOpen(tile)
-                CocoonTileMenuRow.EDIT -> onEditTile(tile)
+                CocoonTileMenuRow.CLOSE -> closeNowPlayingTile()
+                CocoonTileMenuRow.PLATFORM -> onEditTile(tile)
                 CocoonTileMenuRow.EDIT_GRID -> startEditGrid()
                 CocoonTileMenuRow.APPEARANCE -> openAppearance()
                 CocoonTileMenuRow.EDIT_APP -> (tile.target as? CocoonTileTarget.App)?.let { openAppEdit(it.packageName) }
                 CocoonTileMenuRow.SIZE -> cycleWidgetSize(tile)
                 CocoonTileMenuRow.MOVE -> startMove(tile)
-                CocoonTileMenuRow.JINGLE -> platformTiles.firstOrNull { it.key == tile.key }?.platformSlug
-                    ?.let { slug -> _state.update { it.copy(jingleForPlatform = slug) } }
                 CocoonTileMenuRow.NEW_FOLDER -> openNewFolder()
                 CocoonTileMenuRow.NEW -> openStartMenu()
-                CocoonTileMenuRow.SEARCH -> _state.update { it.copy(searchOpen = true) }
+                CocoonTileMenuRow.SEARCH -> viewModelScope.launch {
+                    _events.emit(
+                        CocoonHomeEvent.Navigate(com.nendo.argosy.ui.navigation.Screen.Search.route)
+                    )
+                }
                 CocoonTileMenuRow.SETTINGS -> onOpenSettings()
                 CocoonTileMenuRow.DELETE_FOLDER -> deleteFolder(tile)
                 CocoonTileMenuRow.REMOVE -> removeHomeTile(tile)
@@ -1068,6 +1234,7 @@ class CocoonHomeViewModel @Inject constructor(
         }
 
         private val dockMenu get() = _state.value.dockMenuOpen
+        private val launchScreens get() = _state.value.dockLaunchScreens.isNotEmpty()
         private val adding get() = _state.value.addAppOpen
         private val starting get() = _state.value.startMenuOpen
         private val choosing get() = _state.value.choice != null
@@ -1095,8 +1262,13 @@ class CocoonHomeViewModel @Inject constructor(
             closeStartMenu()
             when (row) {
                 CocoonStartRow.NEW_FOLDER -> openNewFolder()
+                CocoonStartRow.NEW_COLLECTION -> openCollectionChooser()
                 CocoonStartRow.NEW_HOME_FOLDER -> openNameGroup()
-                CocoonStartRow.SEARCH -> _state.update { it.copy(searchOpen = true) }
+                CocoonStartRow.SEARCH -> viewModelScope.launch {
+                    _events.emit(
+                        CocoonHomeEvent.Navigate(com.nendo.argosy.ui.navigation.Screen.Search.route)
+                    )
+                }
                 CocoonStartRow.ADD_APP -> openAddApp(replacing = null, toHome = true)
                 CocoonStartRow.ADD_WIDGET -> openChoice(CocoonChoice.WIDGETS)
                 CocoonStartRow.ADD_POD -> openChoice(CocoonChoice.PODS)
@@ -1129,7 +1301,20 @@ class CocoonHomeViewModel @Inject constructor(
             return InputResult.HANDLED
         }
 
+        private fun launchScreenStep(delta: Int): InputResult {
+            val next = _state.value.dockLaunchScreenIndex + delta
+            if (next !in _state.value.dockLaunchScreens.indices) {
+                return InputResult.handled(com.nendo.argosy.core.input.SoundType.BOUNDARY)
+            }
+            focusDockLaunchScreen(next)
+            return InputResult.HANDLED
+        }
+
         override fun onSecondaryAction(): InputResult {
+            if (launchScreens) {
+                closeDockLaunchScreens()
+                return InputResult.HANDLED
+            }
             if (adding || starting || choosing) return InputResult.HANDLED
             if (editing) {
                 // Cocoon: Y in Edit Grid resizes the lifted widget
@@ -1152,7 +1337,7 @@ class CocoonHomeViewModel @Inject constructor(
             val state = _state.value
             if (state.tileMenuOpen) {
                 // Y again follows the Edit row's shortcut, as in Cocoon.
-                if (CocoonTileMenuRow.EDIT in state.tileMenuRows) runMenuRow(CocoonTileMenuRow.EDIT) else closeTileMenu()
+                if (CocoonTileMenuRow.PLATFORM in state.tileMenuRows) runMenuRow(CocoonTileMenuRow.PLATFORM) else closeTileMenu()
                 return InputResult.HANDLED
             }
             if (state.inDock) return InputResult.HANDLED
@@ -1165,6 +1350,10 @@ class CocoonHomeViewModel @Inject constructor(
         }
 
         override fun onBack(): InputResult {
+            if (launchScreens) {
+                closeDockLaunchScreens()
+                return InputResult.HANDLED
+            }
             if (choosing) {
                 // back to the Start menu, still aiming at the same empty space
                 _state.update { it.copy(choice = null, startMenuOpen = true) }
@@ -1200,6 +1389,7 @@ class CocoonHomeViewModel @Inject constructor(
             if (move(dRow, dCol)) { rememberFocus(); InputResult.HANDLED } else InputResult.handled(com.nendo.argosy.core.input.SoundType.BOUNDARY)
 
         override fun onUp(): InputResult = when {
+            launchScreens -> launchScreenStep(-1)
             choosing -> choiceStep(-1)
             starting -> startStep(-1)
             adding -> addStep(-COCOON_PICK_COLUMNS)
@@ -1209,6 +1399,7 @@ class CocoonHomeViewModel @Inject constructor(
             else -> step(-1, 0)
         }
         override fun onDown(): InputResult = when {
+            launchScreens -> launchScreenStep(1)
             choosing -> choiceStep(1)
             starting -> startStep(1)
             adding -> addStep(COCOON_PICK_COLUMNS)
@@ -1218,7 +1409,7 @@ class CocoonHomeViewModel @Inject constructor(
             else -> step(1, 0)
         }
         override fun onLeft(): InputResult = when {
-            choosing || starting -> InputResult.HANDLED
+            launchScreens || choosing || starting -> InputResult.HANDLED
             adding -> addStep(-1)
             dockMenu -> InputResult.HANDLED
             editing -> lift(0, -1)
@@ -1226,15 +1417,27 @@ class CocoonHomeViewModel @Inject constructor(
             else -> step(0, -1)
         }
         override fun onRight(): InputResult = when {
-            choosing || starting -> InputResult.HANDLED
+            launchScreens || choosing || starting -> InputResult.HANDLED
             adding -> addStep(1)
-            dockMenu -> InputResult.HANDLED
+            // the chevron beside Launch: right opens the screen picker
+            dockMenu -> if (
+                CocoonDockMenuRow.entries.getOrNull(_state.value.dockMenuIndex) == CocoonDockMenuRow.LAUNCH &&
+                openDockLaunchScreens()
+            ) {
+                InputResult.handled(com.nendo.argosy.core.input.SoundType.OPEN_MODAL)
+            } else {
+                InputResult.handled(com.nendo.argosy.core.input.SoundType.BOUNDARY)
+            }
             editing -> lift(0, 1)
             _state.value.tileMenuOpen -> InputResult.HANDLED
             else -> step(0, 1)
         }
 
         override fun onConfirm(): InputResult {
+            if (launchScreens) {
+                launchDockAppOnScreen(_state.value.dockLaunchScreenIndex)
+                return InputResult.handled(com.nendo.argosy.core.input.SoundType.SELECT)
+            }
             if (choosing) {
                 pickChoice()
                 return InputResult.handled(com.nendo.argosy.core.input.SoundType.SELECT)
@@ -1292,13 +1495,18 @@ class CocoonHomeViewModel @Inject constructor(
             return InputResult.handled(com.nendo.argosy.core.input.SoundType.OPEN_MODAL)
         }
 
-        // Cocoon: X on Home swaps which screen shows Home and which shows the preview.
+        // Cocoon: X opens the same tile menu as Y. Swapping screens is Select's job, so no button
+        // here is spent on it and a now-playing square can be closed from either side button.
         override fun onContextMenu(): InputResult {
             val state = _state.value
             if (editing || adding || starting || choosing || dockMenu || state.tileMenuOpen) return InputResult.HANDLED
-            val manager = com.nendo.argosy.DualScreenManagerHolder.instance ?: return InputResult.UNHANDLED
-            manager.swapRoles()
-            return InputResult.handled(com.nendo.argosy.core.input.SoundType.TOGGLE)
+            if (state.inDock) return InputResult.HANDLED
+            if (state.focusedTile == null) {
+                openStartMenu(fromEmptySlot = true)
+                return InputResult.handled(com.nendo.argosy.core.input.SoundType.OPEN_MODAL)
+            }
+            openTileMenu()
+            return InputResult.handled(com.nendo.argosy.core.input.SoundType.OPEN_MODAL)
         }
 
         override fun onLeftStickClick(): InputResult {

@@ -50,6 +50,14 @@ import com.nendo.argosy.ui.screens.settings.SettingsSection
 import com.nendo.argosy.ui.theme.CocoonSurface
 import com.nendo.argosy.ui.util.clickableNoFocus
 
+/**
+ * Settings search is modal: its row in Settings and the A-press on that row both open it through
+ * this flag, so touch and gamepad reach the same overlay.
+ */
+object CocoonSettingsSearchState {
+    val open = kotlinx.coroutines.flow.MutableStateFlow(false)
+}
+
 /** One place Settings search can take you. */
 private data class SearchEntry(val label: String, val keywords: String, val open: () -> Unit)
 
@@ -83,30 +91,28 @@ private val KEYWORDS = mapOf(
 private val HIDDEN = setOf(SettingsSection.MAIN, SettingsSection.PLATFORM_DETAIL, SettingsSection.FRAME_PICKER)
 
 /**
- * Cocoon's Settings search (Start ▸ Search Settings): type a word, pick a page. ↑/↓ move through
- * the results, A opens one, B closes.
+ * Cocoon's Settings search (Settings ▸ Search Settings): type a word, pick a page. ↑/↓ move through
+ * the results, A opens one, B closes. It lives in Settings, not on Home: Home's Search searches
+ * games.
  */
 @Composable
-fun CocoonSettingsSearch(onNavigate: (String) -> Unit, onDismiss: () -> Unit) {
+fun CocoonSettingsSearch(onOpenSection: (SettingsSection) -> Unit, onDismiss: () -> Unit) {
     val themesLabel = stringResource(R.string.cocoon_themes_title)
     val personalLabel = stringResource(R.string.cocoon_personal_title)
-    val navigate by rememberUpdatedState(onNavigate)
+    val open by rememberUpdatedState(onOpenSection)
     val dismiss by rememberUpdatedState(onDismiss)
     val entries = remember(themesLabel, personalLabel) {
-        val themeRoute = com.nendo.argosy.ui.navigation.Screen.Settings.createRoute(SettingsSection.THEME.name)
         listOf(
             SearchEntry(themesLabel, "theme cocoon silk import zip wallpaper icons pack") {
                 com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value = true
-                navigate(themeRoute)
+                open(SettingsSection.THEME)
             },
             SearchEntry(personalLabel, "cursor highlight dock grid rows jingles glass now playing") {
                 com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
-                navigate(themeRoute)
+                open(SettingsSection.THEME)
             },
         ) + SettingsSection.entries.filter { it !in HIDDEN }.map { section ->
-            SearchEntry(humanize(section), KEYWORDS[section].orEmpty()) {
-                navigate(com.nendo.argosy.ui.navigation.Screen.Settings.createRoute(section.name))
-            }
+            SearchEntry(humanize(section), KEYWORDS[section].orEmpty()) { open(section) }
         }
     }
     var query by remember { mutableStateOf("") }

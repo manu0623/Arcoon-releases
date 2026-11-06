@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.snap
+import com.nendo.argosy.ui.input.revealTicks
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -102,6 +103,7 @@ fun QuickSettingsPanel(
 ) {
     val theme = LocalArgosyTheme.current
     val reduced = LocalMotionTier.current == MotionTier.Reduced
+    val revealHaptics = com.nendo.argosy.ui.input.LocalHaptics.current
     val pages = remember(state) { quickSettingsVisiblePages(state) }
     val activePage = remember(page, state) { quickSettingsEffectivePage(page, state) }
 
@@ -127,6 +129,11 @@ fun QuickSettingsPanel(
         if (isVisible) {
             runCatching { focusRequester.requestFocus() }
         }
+    }
+    // The slide is what the hand should follow: a light cue as the panel comes in. Reduced motion
+    // makes [phase] zero, and a zero-length reveal has nothing to ride, so it stays silent.
+    LaunchedEffect(isVisible, phase) {
+        if (isVisible) revealHaptics.revealTicks(phase)
     }
     Box(
         modifier = modifier.fillMaxSize().focusRequester(focusRequester).focusable(),

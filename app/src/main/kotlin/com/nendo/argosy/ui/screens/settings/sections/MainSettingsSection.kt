@@ -25,9 +25,11 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Timer
@@ -39,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.remember
@@ -164,6 +167,27 @@ internal sealed class MainSettingsItem(
     data object Social :
         MainSettingsItem("social", Icons.Default.Group, R.string.settings_main_social_title, "connections")
 
+    /**
+     * Jingles: the home board's sounds. An Integrations row of its own, directly under Social,
+     * because nothing about it is social and a page reached from inside Social reads as one.
+     */
+    data object Jingles :
+        MainSettingsItem("jingles", Icons.Default.MusicNote, R.string.cocoon_jingles, "connections")
+
+    data object SteamGridDb : MainSettingsItem(
+        "steamGridDb",
+        Icons.Default.Movie,
+        R.string.cocoon_steamgriddb_title,
+        "connections"
+    )
+
+    data object RomMedia : MainSettingsItem(
+        "romMedia",
+        Icons.Default.Storage,
+        R.string.cocoon_rom_media_title,
+        "connections"
+    )
+
     data object Permissions : MainSettingsItem(
         "permissions",
         Icons.Default.Security,
@@ -179,19 +203,27 @@ internal sealed class MainSettingsItem(
     data object About :
         MainSettingsItem("about", Icons.Default.Info, R.string.settings_main_about_title, "about")
 
+    /** Opens Cocoon's settings search; it belongs here rather than on Home, which searches games. */
+    data object SearchSettings : MainSettingsItem(
+        "searchSettings",
+        Icons.Default.Search,
+        R.string.cocoon_search_settings,
+        "launcher"
+    )
+
     companion object {
         val ALL: List<MainSettingsItem>
             // Grouped in the order of Cocoon's settings navigation: Personalization, Library & data,
             // Argosy's own Gameplay & saves, Integrations, System & Advance, About.
             get() = listOf(
                 Header("launcherHeader", "launcher", R.string.settings_main_section_launcher),
-                Theme, Interface, Navigation, Audio, Displays,
+                SearchSettings, Theme, Interface, Navigation, Audio, Displays,
                 Header("libraryHeader", "library", R.string.settings_main_section_library),
                 Platforms, Storage, PlayTime,
                 Header("gameplayHeader", "gameplay", R.string.settings_main_section_gameplay),
                 BuiltinEmulator, Saves, Bios, Drivers,
                 Header("connectionsHeader", "connections", R.string.settings_main_section_connections),
-                RomM, RetroAchievements, Steam, Jellyfin, Social,
+                RomM, RetroAchievements, Steam, Jellyfin, Social, Jingles, SteamGridDb, RomMedia,
                 Header("systemHeader", "system", R.string.settings_main_section_system),
                 Permissions, ManagedInstallers, DeviceSettings,
                 Header("aboutHeader", "about", R.string.cocoon_settings_about),
@@ -248,6 +280,9 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
 
     fun isFocused(item: MainSettingsItem): Boolean =
         uiState.focusedIndex == mainSettingsLayout.focusIndexOf(item, controls)
+
+    // Settings search: opened from its own row (or A on it), closed with B.
+    val searchOpen by com.nendo.argosy.ui.cocoon.CocoonSettingsSearchState.open.collectAsState()
 
     fun getSubtitle(item: MainSettingsItem): String = when (item) {
         is MainSettingsItem.Header -> ""
@@ -329,6 +364,9 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
             SocialAuthStatus.CONNECTING -> context.getString(R.string.settings_main_social_subtitle_connecting)
             else -> context.getString(R.string.settings_main_social_subtitle_unlinked)
         }
+        MainSettingsItem.Jingles -> context.getString(R.string.cocoon_jingles_subtitle)
+        MainSettingsItem.SteamGridDb -> context.getString(R.string.cocoon_steamgriddb_subtitle)
+        MainSettingsItem.RomMedia -> context.getString(R.string.cocoon_rom_media_subtitle)
         MainSettingsItem.Permissions -> if (uiState.permissions.allGranted) {
             context.getString(R.string.settings_main_permissions_subtitle_all)
         } else {
@@ -339,6 +377,7 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
             )
         }
         MainSettingsItem.About -> context.getString(R.string.settings_main_about_subtitle, uiState.appVersion)
+        MainSettingsItem.SearchSettings -> context.getString(R.string.cocoon_search_settings_sub)
     }
 
     fun handleClick(item: MainSettingsItem) {
@@ -347,6 +386,8 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
         }
         when (item) {
             is MainSettingsItem.Header -> Unit
+            MainSettingsItem.SearchSettings ->
+                com.nendo.argosy.ui.cocoon.CocoonSettingsSearchState.open.value = true
             MainSettingsItem.ManagedInstallers ->
                 viewModel.navigateToSection(SettingsSection.MANAGED_INSTALLERS)
             MainSettingsItem.DeviceSettings -> context.startActivity(Intent(Settings.ACTION_SETTINGS))
@@ -367,6 +408,12 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
             MainSettingsItem.Steam -> viewModel.navigateToSection(SettingsSection.STEAM_SETTINGS)
             MainSettingsItem.Jellyfin -> viewModel.navigateToSection(SettingsSection.JELLYFIN)
             MainSettingsItem.Social -> viewModel.navigateToSection(SettingsSection.SOCIAL)
+            MainSettingsItem.Jingles ->
+                com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
+            MainSettingsItem.SteamGridDb ->
+                com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value = true
+            MainSettingsItem.RomMedia ->
+                com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value = true
             MainSettingsItem.Permissions -> viewModel.navigateToSection(SettingsSection.PERMISSIONS)
             MainSettingsItem.About -> viewModel.navigateToSection(SettingsSection.ABOUT)
         }
@@ -386,13 +433,16 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
     }
 
     // Cocoon's settings root: categories on the left, the open category's rows on the right.
+    Box(modifier = Modifier.fillMaxSize()) {
     Row(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = Dimens.spacingMd, vertical = Dimens.spacingSm)
     ) {
+        // Wide enough for a category's whole name: a truncated "Personaliz…" is not a menu item
+        // a player can read, and the pane's left column is the only place those names appear.
         Column(
-            modifier = Modifier.fillMaxWidth(0.34f),
+            modifier = Modifier.fillMaxWidth(0.42f),
             verticalArrangement = Arrangement.spacedBy(Dimens.spacingXs)
         ) {
             ranges.forEachIndexed { index, (key, range) ->
@@ -431,6 +481,16 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
                     isLast = focusIndex == activeRange.last
                 )
             }
+        }
+    }
+        if (searchOpen) {
+            com.nendo.argosy.ui.cocoon.CocoonSettingsSearch(
+                onOpenSection = { section ->
+                    com.nendo.argosy.ui.cocoon.CocoonSettingsSearchState.open.value = false
+                    viewModel.navigateToSection(section)
+                },
+                onDismiss = { com.nendo.argosy.ui.cocoon.CocoonSettingsSearchState.open.value = false }
+            )
         }
     }
 }

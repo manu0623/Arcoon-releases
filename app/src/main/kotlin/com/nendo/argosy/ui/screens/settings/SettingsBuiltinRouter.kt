@@ -767,6 +767,7 @@ internal fun routeUpdatePlatformLibretroSetting(vm: SettingsViewModel, setting: 
             LibretroSettingDef.AutoRestoreState -> current.copy(autoRestoreState = value?.toBooleanStrictOrNull())
             LibretroSettingDef.PreferNewerServerSave -> current.copy(preferNewerServerSave = value?.toBooleanStrictOrNull())
             LibretroSettingDef.HwCoreSaveStates -> current.copy(hwCoreSaveStates = value?.toBooleanStrictOrNull())
+            LibretroSettingDef.MatchScreenSizes -> current
         }
 
         if (updated.hasAnyOverrides()) {

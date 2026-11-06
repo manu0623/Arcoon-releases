@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.nendo.argosy.ui.primitives.cocoonBrackets
 import com.nendo.argosy.ui.theme.CocoonSurface
 import com.nendo.argosy.ui.util.clickableNoFocus
@@ -53,7 +54,14 @@ fun CocoonMenuRow(
         bottomStart = if (isLast) r else 0.dp,
         bottomEnd = if (isLast) r else 0.dp
     )
-    Box(modifier = Modifier.fillMaxWidth().cocoonBrackets(focused = focused, outset = 6.dp)) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            // The cursor is drawn outside the row. Without this the next row's card, painted
+            // after it, covers the bottom arms and the brackets look cut off.
+            .zIndex(if (focused) 1f else 0f)
+            .cocoonBrackets(focused = focused, outset = 6.dp)
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

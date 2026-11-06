@@ -1,13 +1,13 @@
 package com.nendo.argosy.ui.cocoon
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -15,10 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.nendo.argosy.R
 import com.nendo.argosy.ui.util.clickableNoFocus
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,11 @@ object CocoonSuspendTest {
 
     /** A press of the test button; the game screen answers it. */
     val requests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * The game id the launcher is being brought back to, or -1 while none is pending.
+     */
+    val launcherReturn = MutableStateFlow(-1L)
 
     /** The picture handed from the game to the launcher, for one suspend. */
     class Handoff(val gameId: Long, val picture: ImageBitmap, val aspect: Float, val at: Long)
@@ -105,23 +111,30 @@ object CocoonSuspendTest {
     const val GAME_HOLD_MS = 40L
 }
 
-/** TEST: the round suspend button in the lower screen's corner while a game runs. */
 @Composable
 fun CocoonSuspendTestButton(modifier: Modifier = Modifier) {
     val available by CocoonSuspendTest.available.collectAsState()
     if (!available) return
-    Box(modifier = modifier.fillMaxSize()) {
+    val size = com.nendo.argosy.ui.cocoon.cocoonHandleTargetDp().dp
+    val glyph = com.nendo.argosy.ui.cocoon.cocoonHandleIconDp().dp
+    val x = CocoonHomeStore.handleX
+    val y = CocoonHomeStore.handleY
+    val clarity = CocoonHomeStore.handleClarity
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(18.dp)
-                .size(56.dp)
-                .shadow(10.dp, CircleShape)
-                .background(Color(0xFFF2A33A), CircleShape)
+                .offset(x = (maxWidth - size) * x, y = (maxHeight - size) * y)
+                .size(size)
                 .clickableNoFocus { CocoonSuspendTest.requests.tryEmit(Unit) },
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Filled.Pause, contentDescription = "Suspend (test)", tint = Color.Black, modifier = Modifier.size(28.dp))
+            Icon(
+                imageVector = Icons.Filled.Home,
+                contentDescription = stringResource(R.string.ingame_suspend_handle),
+                tint = Color.White.copy(alpha = clarity),
+                modifier = Modifier.size(glyph)
+            )
         }
     }
 }
+

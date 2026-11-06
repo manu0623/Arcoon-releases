@@ -943,6 +943,7 @@ private suspend fun updateDisplaySettings(
         libraryBoxArt3d = prefs.libraryBoxArt3d,
         useAccentColorFooter = prefs.useAccentColorFooter,
         compactFooter = prefs.compactFooter,
+        launcherUiMode = prefs.launcherUiMode,
         hideSystemNavigationBar = prefs.hideSystemNavigationBar,
         hideSystemStatusBar = prefs.hideSystemStatusBar,
         quickPanelInEmulators = prefs.quickPanelInEmulators,

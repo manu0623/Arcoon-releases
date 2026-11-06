@@ -10,7 +10,6 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Texture
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,7 +51,6 @@ internal sealed class ThemeItem(val key: String, val section: String) {
     data object TintBleed : ThemeItem("tintBleed", "appearance")
 
     data object CocoonThemes : ThemeItem("cocoonThemes", "identity")
-    data object CocoonPersonal : ThemeItem("cocoonPersonal", "identity")
     data object Backdrop : ThemeItem("backdrop", "identity")
     data object Fonts : ThemeItem("fonts", "identity")
     data object IconPack : ThemeItem("iconPack", "identity")
@@ -69,7 +67,7 @@ internal sealed class ThemeItem(val key: String, val section: String) {
                 AppearanceHeader,
                 Mode, AccentColor, AccentFooter, SecondaryColor, TintBleed,
                 IdentitySpacer, IdentityHeader,
-                CocoonThemes, CocoonPersonal, Backdrop, Fonts, IconPack
+                CocoonThemes, Backdrop, Fonts, IconPack
             )
     }
 }
@@ -202,13 +200,6 @@ fun ThemeSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
                 onClick = { openFrom(item) { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value = true } }
             )
 
-            ThemeItem.CocoonPersonal -> NavigationPreference(
-                icon = Icons.Outlined.Tune,
-                title = stringResource(R.string.cocoon_personal_title),
-                subtitle = stringResource(R.string.cocoon_personal_subtitle),
-                isFocused = isFocused(item),
-                onClick = { openFrom(item) { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true } }
-            )
 
             ThemeItem.Backdrop -> NavigationPreference(
                 icon = Icons.Outlined.Texture,

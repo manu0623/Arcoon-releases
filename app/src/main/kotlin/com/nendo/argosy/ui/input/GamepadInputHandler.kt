@@ -124,8 +124,7 @@ class GamepadInputHandler @Inject constructor(
         emitWithDebounce(event, isRepeat)
     }
 
-    private val lastInputTimes = mutableMapOf<GamepadEvent, Long>()
-    private val inputDebounceMs = 140L
+    private val repeatGate = DirectionRepeatGate()
     private var inputBlockedUntil = 0L
 
     fun blockInputFor(durationMs: Long) {
@@ -167,8 +166,6 @@ class GamepadInputHandler @Inject constructor(
     private var heldDeviceId: Int? = null
     private var heldDirection: GamepadEvent? = null
     private var directionRepeatJob: Job? = null
-    private val directionRepeatDelayMs = 400L
-    private val directionRepeatIntervalMs = 150L
 
     /**
      * Left-stick sample to directional event conversion once a raw motion listener declines it.
@@ -224,10 +221,12 @@ class GamepadInputHandler @Inject constructor(
             null
         } else {
             scope.launch {
-                delay(directionRepeatDelayMs)
+                delay(DirectionRepeat.START_DELAY_MS)
+                var repeatIndex = 0
                 while (isActive) {
                     deliver(direction, true)
-                    delay(directionRepeatIntervalMs)
+                    delay(DirectionRepeat.intervalMs(repeatIndex))
+                    repeatIndex++
                 }
             }
         }
@@ -427,9 +426,7 @@ class GamepadInputHandler @Inject constructor(
     ) {
         val currentTime = System.currentTimeMillis()
         if (currentTime < inputBlockedUntil) return
-        val lastTime = lastInputTimes[event] ?: 0L
-        if (currentTime - lastTime < inputDebounceMs) return
-        lastInputTimes[event] = currentTime
+        if (!repeatGate.accepts(event, isRepeat, currentTime)) return
         _events.tryEmit(GamepadInput(event, isRepeat, signature))
     }
 

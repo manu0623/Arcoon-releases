@@ -19,8 +19,9 @@ internal fun rightStickHorizontalStepFor(axisValue: Float): GamepadEvent? = when
 
 /**
  * Steps from one axis of the right stick, the vertical one unless [stepFor] maps another. Crossing
- * [DEADZONE] emits one step at once, holding past it emits a repeat every [STEP_INTERVAL_MS] at a
- * constant rate, and returning inside it stops the repeats.
+ * [DEADZONE] emits one step at once, and a hold past it repeats on the shared [DirectionRepeat]
+ * schedule: nothing for the hold pause, then the ramp, fast enough to travel a grid without
+ * feeling like a crawl. Returning inside the deadzone stops the repeats.
  */
 class RightStickStepper(
     private val scope: CoroutineScope,
@@ -39,9 +40,14 @@ class RightStickStepper(
         if (step == null) return
         emit(step, false)
         repeatJob = scope.launch {
+            // Crossing the deadzone already stepped once. Wait out the hold pause before repeating
+            // so a flick lands a single step and does not run past the item that was meant.
+            delay(DirectionRepeat.START_DELAY_MS)
+            var repeatIndex = 0
             while (true) {
-                delay(STEP_INTERVAL_MS)
                 emit(step, true)
+                delay(DirectionRepeat.intervalMs(repeatIndex))
+                repeatIndex++
             }
         }
     }
@@ -52,6 +58,5 @@ class RightStickStepper(
 
     companion object {
         const val DEADZONE = 0.5f
-        const val STEP_INTERVAL_MS = 350L
     }
 }

@@ -13,11 +13,15 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,7 +50,7 @@ import com.nendo.argosy.ui.primitives.cocoonBrackets
 import com.nendo.argosy.ui.theme.CocoonSurface
 
 /** Which screen a setting changes, so its preview shows that screen. */
-enum class CocoonPreviewKind { HOME, TOP, SURFACE }
+enum class CocoonPreviewKind { HOME, TOP, SURFACE, HANDLE }
 
 private val PREVIEW_SLUGS = listOf("snes", "gba", "psx", "n64", "nds", "genesis", "psp", "gb", "ps2", "gc", "3ds", "nes")
 
@@ -65,8 +69,11 @@ fun CocoonSettingsPreview(kind: CocoonPreviewKind, modifier: Modifier = Modifier
         Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = androidx.compose.ui.res.stringResource(
-                    if (kind == CocoonPreviewKind.TOP) com.nendo.argosy.R.string.cocoon_preview_top
-                    else com.nendo.argosy.R.string.cocoon_preview_home
+                    when (kind) {
+                        CocoonPreviewKind.TOP -> com.nendo.argosy.R.string.cocoon_preview_top
+                        CocoonPreviewKind.HANDLE -> com.nendo.argosy.R.string.cocoon_preview_game
+                        else -> com.nendo.argosy.R.string.cocoon_preview_home
+                    }
                 ),
                 style = MaterialTheme.typography.labelMedium,
                 color = CocoonSurface.TextSecondary
@@ -74,6 +81,7 @@ fun CocoonSettingsPreview(kind: CocoonPreviewKind, modifier: Modifier = Modifier
             Spacer(Modifier.height(8.dp))
             when (kind) {
                 CocoonPreviewKind.TOP -> TopScreenPreview(Modifier.fillMaxWidth())
+                CocoonPreviewKind.HANDLE -> HandlePreview(Modifier.fillMaxWidth())
                 else -> HomePreview(Modifier.fillMaxWidth(), showPanel = kind == CocoonPreviewKind.SURFACE)
             }
         }
@@ -98,10 +106,15 @@ private fun HomePreview(modifier: Modifier, showPanel: Boolean) {
     val count = rows * columns
     // The cursor hops from folder to folder so the cursor style, thickness and motion speed show.
     var cursor by remember { mutableIntStateOf(0) }
-    LaunchedEffect(rows) {
+    // Animation Style sets how fast the cursor hops, and Reduced stops hopping altogether — the
+    // same tiers the real board animates with.
+    val motion = CocoonHomeStore.motion
+    LaunchedEffect(rows, motion) {
         cursor = 0
+        if (motion == "REDUCED") return@LaunchedEffect
+        val stepMs = if (motion == "SNAPPY") 600L else 1100L
         while (true) {
-            kotlinx.coroutines.delay(1100)
+            kotlinx.coroutines.delay(stepMs)
             cursor = (cursor + rows).let { if (it >= count) (it % rows + 1) % rows else it }
         }
     }
@@ -171,7 +184,8 @@ private fun HomePreview(modifier: Modifier, showPanel: Boolean) {
                 modifier = Modifier
                     .align(Alignment.Center)
                     .fillMaxWidth(0.62f)
-                    .background(CocoonSurface.Panel, RoundedCornerShape(14.dp))
+                    // the same fill Cocoon's pop-up menus use, so Solid and Glass compare honestly
+                    .background(com.nendo.argosy.ui.cocoon.CocoonMenuPanel, RoundedCornerShape(14.dp))
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
@@ -183,6 +197,41 @@ private fun HomePreview(modifier: Modifier, showPanel: Boolean) {
                             .background(CocoonSurface.TextPrimary.copy(alpha = if (i == 0) 0.85f else 0.35f), RoundedCornerShape(50))
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * On Screen Home Menu: the handle drawn on a stand-in game frame, at the size and in the corner
+ * the setting picks. It reads the same store as the real handle, so every press redraws it.
+ */
+@Composable
+private fun HandlePreview(modifier: Modifier) {
+    val x = CocoonHomeStore.handleX
+    val y = CocoonHomeStore.handleY
+    val clarity = CocoonHomeStore.handleClarity
+    val box = com.nendo.argosy.ui.cocoon.cocoonHandleTargetDp().dp
+    val glyph = com.nendo.argosy.ui.cocoon.cocoonHandleIconDp().dp
+    PreviewFrame(16f / 9f, modifier) {
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.linearGradient(listOf(Color(0xFF1B2A4A), Color(0xFF35607A), Color(0xFF7FA98C)))
+            )
+        )
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .offset(x = (maxWidth - box) * x, y = (maxHeight - box) * y)
+                    .size(box),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Home,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = clarity),
+                    modifier = Modifier.size(glyph)
+                )
             }
         }
     }

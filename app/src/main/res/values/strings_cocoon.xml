@@ -47,7 +47,10 @@
     <!-- Board folder menu: open the folder. -->
     <string name="cocoon_tile_menu_open">Open</string>
     <!-- Board folder menu: edit the folder's platform settings (emulator, paths). -->
-    <string name="cocoon_tile_menu_edit">Edit</string>
+    <string name="cocoon_tile_menu_platform">Platform Settings</string>
+    <string name="cocoon_start_new_collection">RomM Collection</string>
+    <string name="cocoon_choose_collection">Your RomM collections</string>
+    <string name="cocoon_no_collections">No custom RomM collections yet</string>
     <!-- Dock button that opens the list of all installed apps. -->
     <string name="cocoon_dock_all_apps">All apps</string>
     <string name="cocoon_quit_game">Quit game</string>
@@ -58,6 +61,8 @@
     <string name="cocoon_closing_game">Closing game…</string>
     <string name="cocoon_switch_body">%1$s is currently running in %2$s. You must quit the current session before launching a new game.</string>
     <string name="cocoon_resume">Resume</string>
+    <!-- Square on Home for the game left running: it is still suspended and can be gone back to. -->
+    <string name="cocoon_now_playing">Now playing</string>
     <string name="cocoon_close">Close</string>
     <string name="cocoon_tile_menu_edit_grid">Edit Grid</string>
     <string name="cocoon_edit_grid_hint">Edit Grid · move the folder with the D-pad · A to finish</string>
@@ -65,7 +70,7 @@
     <string name="cocoon_menu_launch">Launch</string>
     <string name="cocoon_menu_edit">Edit</string>
     <string name="cocoon_menu_achievements">Achievements</string>
-    <string name="cocoon_tile_menu_new_folder">New Folder</string>
+    <string name="cocoon_tile_menu_new_folder">New Game Folder</string>
     <string name="cocoon_tile_menu_delete_folder">Delete Folder</string>
     <string name="cocoon_tile_menu_delete_confirm">Press A again to delete</string>
     <string name="cocoon_back">Back</string>
@@ -82,6 +87,7 @@
     <string name="cocoon_kind_widget">Widget</string>
     <string name="cocoon_tile_menu_remove">Remove from Home</string>
     <string name="cocoon_tile_menu_move">Move to Folder</string>
+    <!-- A folder of Home tiles (apps, widgets, shortcuts), unlike a game folder which is a collection. -->
     <string name="cocoon_start_new_home_folder">New Home Folder</string>
     <string name="cocoon_home">Home</string>
     <string name="cocoon_tile_menu_appearance">Appearance</string>
@@ -136,9 +142,23 @@
     <string name="cocoon_jingle_add_collection">Add jingles from GitHub…</string>
     <string name="cocoon_jingle_volume">Jingle Volume</string>
     <string name="cocoon_jingle_default">Default Jingle</string>
-    <string name="cocoon_jingle_platform">Console Jingle</string>
     <string name="cocoon_jingle_none">None</string>
     <string name="cocoon_jingle_clear">Clear All Game Jingles</string>
+    <!-- Settings ▸ Displays ▸ Home Symbol: the in-game handle that suspends the running game.
+         Noun: the icon itself, not the page it opens. -->
+    <string name="cocoon_home_symbol_title">Home Symbol</string>
+    <string name="cocoon_home_symbol_subtitle">Position, size and clarity of the in-game Home symbol</string>
+    <!-- Row titles on the Home Symbol page. -->
+    <string name="cocoon_home_symbol_position">Position</string>
+    <string name="cocoon_home_symbol_size">Size</string>
+    <string name="cocoon_home_symbol_clarity">Clarity</string>
+    <!-- The placed position, as percentages of the screen measured from its top left. -->
+    <string name="cocoon_home_symbol_value_position">%1$d%% across, %2$d%% down</string>
+    <!-- Instruction while the symbol can be moved. Verb phrase. -->
+    <string name="cocoon_home_symbol_place_hint">Move the symbol with the stick · A places it</string>
+    <string name="cocoon_home_symbol_clarity_faint">Faint</string>
+    <string name="cocoon_home_symbol_clarity_normal">Normal</string>
+    <string name="cocoon_home_symbol_clarity_clear">Clear</string>
     <string name="cocoon_pod_log">Log</string>
     <string name="cocoon_log_this_week">This week</string>
     <string name="cocoon_log_top">Most played · last 30 days</string>
@@ -221,6 +241,10 @@
     <string name="cocoon_np_off">Screen Off</string>
     <string name="cocoon_np_playing">Now playing</string>
     <string name="cocoon_search_settings">Search Settings</string>
+    <!-- Subtitle of Start ▸ Search: opens settings search. -->
+    <string name="cocoon_search_settings_sub">Find a setting by name</string>
+    <!-- Home Start / folder menu: search the game library (settings search lives in Settings). -->
+    <string name="cocoon_search_game">Search Game</string>
     <string name="cocoon_search_hint">Type to search…</string>
     <string name="cocoon_search_none">No matches</string>
     <string name="cocoon_personal_dock_background">Dock Background</string>
@@ -266,4 +290,49 @@
     <string name="cocoon_on">On</string>
     <string name="cocoon_off">Off</string>
     <string name="cocoon_dock_clear_slot">Clear Slot</string>
+    <!-- Row title. Noun phrase: the in-game home handle. -->
+    <string name="cocoon_personal_handle_size">On Screen Home Menu</string>
+    <!-- Row title. Noun phrase: which corner the handle sits in. -->
+    <string name="cocoon_personal_handle_position">Home Menu Corner</string>
+    <!-- Value: the handle sits in the lower-left corner. -->
+    <string name="cocoon_handle_bottom_left">Bottom Left</string>
+    <!-- Value: the handle sits in the lower-right corner. -->
+    <string name="cocoon_handle_bottom_right">Bottom Right</string>
+    <!-- Value: the handle sits in the upper-left corner. -->
+    <string name="cocoon_handle_top_left">Top Left</string>
+    <!-- Value: the handle sits in the upper-right corner. -->
+    <string name="cocoon_handle_top_right">Top Right</string>
+    <!-- Caption above the preview of the in-game home handle. -->
+    <string name="cocoon_preview_game">In-game</string>
+    <!-- Value: the handle sits in the middle of the lower edge. -->
+    <string name="cocoon_handle_bottom_center">Bottom Center</string>
+    <!-- Integrations row. SteamGridDB is a game art database, keyed by the user's own API key. -->
+    <string name="cocoon_steamgriddb_title">SteamGridDB</string>
+    <string name="cocoon_steamgriddb_subtitle">Cover art from SteamGridDB</string>
+    <string name="cocoon_steamgriddb_toggle">Use SteamGridDB</string>
+    <string name="cocoon_steamgriddb_toggle_subtitle">Offers SteamGridDB covers when you pick a game\'s artwork</string>
+    <!-- Row that opens the API key entry. -->
+    <string name="cocoon_steamgriddb_key">API Key</string>
+    <string name="cocoon_steamgriddb_key_set">Saved</string>
+    <string name="cocoon_steamgriddb_key_unset">Not set</string>
+    <string name="cocoon_steamgriddb_key_hint">SteamGridDB API key</string>
+    <string name="cocoon_steamgriddb_key_save">Save Key</string>
+    <!-- Integrations row. Walks the library and fetches a cover for every game that has none. -->
+    <string name="cocoon_steamgriddb_scrape">Scrape Library</string>
+    <string name="cocoon_steamgriddb_scrape_stop">Stop Scraping</string>
+    <string name="cocoon_steamgriddb_rescan">Start Over</string>
+    <string name="cocoon_steamgriddb_rescan_subtitle">Scrapes every game again from the first to the last, covers included</string>
+    <string name="cocoon_steamgriddb_scrape_subtitle">Replaces covers with SteamGridDB art, one game at a time</string>
+    <string name="cocoon_steamgriddb_scrape_running">Scraping art, %1$d of %2$d checked</string>
+    <string name="cocoon_steamgriddb_scrape_parked">Rate limit reached, resuming in %1$d min</string>
+    <string name="cocoon_steamgriddb_scrape_done">Filled %1$d covers</string>
+    <string name="cocoon_steamgriddb_scrape_needs_key">Turn on SteamGridDB and add an API key first</string>
+    <!-- Swap request shown when a search hit's title is not the game's own. -->
+    <!-- Integrations row. The 3DS tool that reads an icon, a banner and a jingle out of a ROM. -->
+    <string name="cocoon_rom_media_title">ROM Media</string>
+    <string name="cocoon_rom_media_subtitle">Icons, banner art and jingles from a ROM</string>
+    <string name="cocoon_rom_media_extract">Extract ROM Media</string>
+    <string name="cocoon_rom_media_extract_subtitle">Reads the icon, the banner and the jingle out of a decrypted NDS or 3DS ROM</string>
+    <string name="cocoon_rom_media_banner">3DS Banner Art</string>
+    <string name="cocoon_rom_media_banner_subtitle">Uses a 3DS banner as the game\'s hero art</string>
 </resources>

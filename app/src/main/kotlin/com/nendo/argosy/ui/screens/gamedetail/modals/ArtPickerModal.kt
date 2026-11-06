@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -264,7 +265,26 @@ private fun ArtTile(
                 )
                 .clickableNoFocus(onClick = onClick)
         ) {
-            if (candidate.isRevert) {
+            if (candidate.isScrape) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Dimens.spacingXs),
+                    modifier = Modifier.align(Alignment.Center).padding(Dimens.spacingSm)
+                ) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Filled.Refresh,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(Dimens.iconMd)
+                    )
+                    Text(
+                        text = stringResource(R.string.cocoon_scrape_game),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else if (candidate.isRevert) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(Dimens.spacingXs),

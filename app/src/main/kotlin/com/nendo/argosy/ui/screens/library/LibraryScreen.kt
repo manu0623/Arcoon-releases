@@ -41,6 +41,7 @@ import com.nendo.argosy.ui.screens.library.components.LibraryPlatformGridEmpty
 import com.nendo.argosy.ui.screens.library.components.LibraryPlatformGridHeaderHeight
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -201,15 +202,12 @@ fun LibraryScreen(
     val backdropScope = androidx.compose.runtime.rememberCoroutineScope()
     // Jingles: a short sound when the cursor rests on a game; Y ▸ Jingle picks one per game.
     val jingleContext = androidx.compose.ui.platform.LocalContext.current
-    var jinglePickFor by remember { mutableStateOf<Long?>(null) }
-    var jinglePickerFor by remember { mutableStateOf<Long?>(null) }
-    viewModel.onPickJingle = { id -> jinglePickerFor = id }
     val restingGame = uiState.focusedGame
     LaunchedEffect(restingGame?.id) {
         com.nendo.argosy.ui.cocoon.CocoonJingles.stop(jingleContext)
         val game = restingGame ?: return@LaunchedEffect
         kotlinx.coroutines.delay(650)
-        com.nendo.argosy.ui.cocoon.CocoonJingles.playFor(jingleContext, game.id, game.platformSlug)
+        com.nendo.argosy.ui.cocoon.CocoonJingles.playFor(jingleContext, game.id)
     }
     DisposableEffect(Unit) { onDispose { com.nendo.argosy.ui.cocoon.CocoonJingles.stop(jingleContext) } }
     viewModel.onOpenGameSheet = { id, sheet ->
@@ -462,6 +460,7 @@ fun LibraryScreen(
     }
     val cocoonMenuOpen by viewModel.cocoonMenu.open.collectAsState()
     val cocoonRows by com.nendo.argosy.ui.cocoon.CocoonFolderGrid.rows.collectAsState()
+    val folderHaptics = com.nendo.argosy.ui.input.LocalHaptics.current
     // Cocoon's folder entrance: header and covers rise a short way into place as they fade in;
     // the dock above them stays still.
     val folderEnter = remember { androidx.compose.animation.core.Animatable(1f) }
@@ -482,7 +481,17 @@ fun LibraryScreen(
             if (reducedMotion || coverWaveShown.value) coverWave.skipIn()
             else {
                 coverWaveShown.value = true
-                coverWave.playIn()
+                // A soft tick under each column as the covers populate, so the population is felt
+                // in the order it is seen. Reduced motion skips it: the covers are already there,
+                // so there is no wave to ride.
+                val columns = if (cocoonRows <= 0) {
+                    1
+                } else {
+                    (uiState.games.size + cocoonRows - 1) / cocoonRows
+                }
+                coverWave.playInReportingColumns(columns) {
+                    folderHaptics?.vibrate(com.nendo.argosy.ui.input.HapticPattern.FOCUS_CHANGE)
+                }
             }
         }
     }
@@ -884,11 +893,7 @@ fun LibraryScreen(
             uiState.focusedGame?.let { game ->
                 QuickMenuOverlay(
                     game = game,
-                    rows = libraryQuickMenuRows(
-                        game = game,
-                        isCustomGridHome = uiState.isCustomGridHome,
-                        hasSiblingGroup = uiState.quickMenuHasSiblingGroup
-                    ),
+                    rows = uiState.quickMenuRowList(),
                     focusIndex = uiState.quickMenuFocusIndex,
                     onDismiss = { viewModel.toggleQuickMenu() },
                     onPrimaryAction = {
@@ -901,10 +906,6 @@ fun LibraryScreen(
                         }
                     },
                     onFavorite = { viewModel.toggleFavorite(game.id) },
-                    onJingle = {
-                        viewModel.toggleQuickMenu()
-                        viewModel.onPickJingle?.invoke(game.id)
-                    },
                     onLaunchOnScreen = { index ->
                         viewModel.toggleQuickMenu()
                         viewModel.launchOnScreen(game.id, index)
@@ -1088,32 +1089,6 @@ fun LibraryScreen(
 
         com.nendo.argosy.ui.cocoon.CocoonSessionDialogHost()
         com.nendo.argosy.ui.cocoon.CocoonPodsOverlay(onNavigate = onNavigate)
-        jinglePickerFor?.let { pickId ->
-            val pickGame = uiState.games.firstOrNull { it.id == pickId }
-            com.nendo.argosy.ui.cocoon.CocoonJinglePicker(
-                gameId = pickId,
-                platformSlug = pickGame?.platformSlug,
-                title = pickGame?.title.orEmpty(),
-                onPickFile = {
-                    jinglePickerFor = null
-                    jinglePickFor = pickId
-                },
-                onDismiss = { jinglePickerFor = null }
-            )
-        }
-        jinglePickFor?.let { pickId ->
-            com.nendo.argosy.ui.filebrowser.FileBrowserScreen(
-                mode = com.nendo.argosy.ui.filebrowser.FileBrowserMode.FILE_SELECTION,
-                title = stringResource(R.string.cocoon_jingle),
-                fileFilter = com.nendo.argosy.ui.filebrowser.FileFilter.AUDIO,
-                onPathSelected = { path ->
-                    jinglePickFor = null
-                    com.nendo.argosy.ui.cocoon.CocoonJingles.setGameJingle(jingleContext, pickId, path)
-                    com.nendo.argosy.ui.cocoon.CocoonJingles.play(jingleContext, path)
-                },
-                onDismiss = { jinglePickFor = null }
-            )
-        }
         DisposableEffect(Unit) {
             onDispose { com.nendo.argosy.ui.cocoon.CocoonSessionDialog.reset() }
         }
@@ -2027,7 +2002,6 @@ private fun QuickMenuOverlay(
     onFavorite: () -> Unit,
     onDetails: () -> Unit,
     onLaunchOnScreen: (Int) -> Unit = {},
-    onJingle: () -> Unit = {},
     onAddToCollection: () -> Unit,
     onAddToGrid: () -> Unit,
     onActiveVariant: () -> Unit,
@@ -2054,6 +2028,8 @@ private fun QuickMenuOverlay(
         val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
         val label: String,
         val isDangerous: Boolean = false,
+        /** Right opens another step of rows (Launch ▸ the two screens). */
+        val hasSubmenu: Boolean = false,
         val onClick: () -> Unit
     )
 
@@ -2085,10 +2061,16 @@ private fun QuickMenuOverlay(
     val launchScreen1Label = stringResource(R.string.cocoon_launch_on_screen, 1)
     val jingleLabel = stringResource(R.string.cocoon_jingle)
     val launchScreen2Label = stringResource(R.string.cocoon_launch_on_screen, 2)
+    // Launch can only offer a screen when the game is here and the device has two of them.
+    val launchScreenChoice = launchScreenChoiceFor(game)
 
     fun LibraryQuickMenuRow.toEntry(): MenuEntry = when (this) {
-        LibraryQuickMenuRow.PRIMARY -> MenuEntry(primaryIcon, primaryLabel, onClick = onPrimaryAction)
-        LibraryQuickMenuRow.JINGLE -> MenuEntry(Icons.Outlined.MusicNote, jingleLabel, onClick = onJingle)
+        LibraryQuickMenuRow.PRIMARY -> MenuEntry(
+            primaryIcon,
+            primaryLabel,
+            hasSubmenu = launchScreenChoice,
+            onClick = onPrimaryAction
+        )
         LibraryQuickMenuRow.LAUNCH_SCREEN_1 -> MenuEntry(Icons.Outlined.Tv, launchScreen1Label, onClick = { onLaunchOnScreen(0) })
         LibraryQuickMenuRow.LAUNCH_SCREEN_2 -> MenuEntry(Icons.Outlined.Tv, launchScreen2Label, onClick = { onLaunchOnScreen(1) })
         LibraryQuickMenuRow.FAVORITE -> MenuEntry(
@@ -2108,7 +2090,6 @@ private fun QuickMenuOverlay(
             activeVariantLabel,
             onClick = onActiveVariant
         )
-        LibraryQuickMenuRow.REFRESH -> MenuEntry(Icons.Default.Refresh, refreshLabel, onClick = onRefresh)
         LibraryQuickMenuRow.RESYNC_PLATFORM -> MenuEntry(Icons.Outlined.Refresh, resyncLabel, onClick = onResyncPlatform)
         LibraryQuickMenuRow.DELETE -> MenuEntry(
             Icons.Default.DeleteOutline,
@@ -2127,7 +2108,6 @@ private fun QuickMenuOverlay(
             hideLabel,
             onClick = onHide
         )
-        LibraryQuickMenuRow.EDIT -> MenuEntry(Icons.Outlined.Edit, editLabel, onClick = onEdit)
         LibraryQuickMenuRow.ACHIEVEMENTS -> MenuEntry(
             Icons.Outlined.EmojiEvents,
             achievementsLabel,
@@ -2206,7 +2186,18 @@ private fun QuickMenuOverlay(
                         isLast = index == all.lastIndex,
                         onClick = entry.onClick,
                         color = if (entry.isDangerous) LocalArgosyTheme.current.destructive
-                            else com.nendo.argosy.ui.theme.CocoonSurface.TextPrimary
+                            else com.nendo.argosy.ui.theme.CocoonSurface.TextPrimary,
+                        // The chevron is the same right-press hint the dock app's Launch carries.
+                        trailing = if (entry.hasSubmenu) {
+                            {
+                                androidx.compose.material3.Icon(
+                                    androidx.compose.material.icons.Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = com.nendo.argosy.ui.theme.CocoonSurface.TextSecondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        } else null
                     )
                 }
             }

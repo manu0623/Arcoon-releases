@@ -62,6 +62,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.zIndex
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
@@ -118,6 +119,9 @@ internal fun preferenceModifier(
     return Modifier
         .fillMaxWidth()
         .heightIn(min = Dimens.settingsItemMinHeight)
+        // Grouped rows sit edge to edge, and the cursor is drawn outside the row: without this
+        // the next row's card paints over the arms and the brackets look like a ghost.
+        .then(if (isFocused) Modifier.zIndex(1f) else Modifier)
         .cocoonBrackets(focused = isFocused, outset = 3.dp)
         .clip(preferenceShape)
         .background(background)

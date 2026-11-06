@@ -122,6 +122,9 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
     lateinit var playSessionTracker: PlaySessionTracker
 
     @Inject
+    lateinit var steamGridDbArtScraper: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbArtScraper
+
+    @Inject
     lateinit var coreCrashController: CoreCrashController
 
     @Inject
@@ -228,6 +231,7 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
             }
         }
         lockScreenArtManager.start()
+        steamGridDbArtScraper.autoStart()
         appScope.launch {
             val storedOverride = builtinPrefs.getArchitectureOverride().first()
             if (storedOverride != null) {

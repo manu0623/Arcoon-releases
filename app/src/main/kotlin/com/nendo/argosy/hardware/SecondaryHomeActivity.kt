@@ -62,6 +62,9 @@ class SecondaryHomeActivity :
     ComponentActivity(),
     DualScreenManager.CompanionHost {
 
+    @javax.inject.Inject
+    lateinit var quickPanelOverlay: com.nendo.argosy.ui.quickpanel.QuickPanelOverlay
+
     private lateinit var dsm: DualScreenManager
 
     @javax.inject.Inject
@@ -238,7 +241,17 @@ class SecondaryHomeActivity :
         } == true
         val dashboardTransitionActive = showsDashboard
         val rolesSwapped by dsm.isRolesSwapped.collectAsState()
-        val launcherShown = !rolesSwapped && !dashboardTransitionActive
+        val settingsLifted by dsm.settingsLift.collectAsState()
+        val launcherShown = !rolesSwapped && !dashboardTransitionActive && settingsLifted == null
+        androidx.compose.runtime.LaunchedEffect(
+            launcherShown, rolesSwapped, settingsLifted, gameActive, showsDashboard, suspendedSession
+        ) {
+            com.nendo.argosy.util.ArcoonTrace.log(
+                "companion role: launcherShown=$launcherShown swapped=$rolesSwapped " +
+                    "lifted=${settingsLifted != null} gameActive=$gameActive " +
+                    "dashboard=$showsDashboard suspended=${suspendedSession?.gameId}"
+            )
+        }
         val resumeScreenShown = resumeTargetsDashboard &&
             !showsDashboard &&
             resumeSession != null
@@ -312,7 +325,10 @@ class SecondaryHomeActivity :
                 // it every item drew its own corners, which lists cut off at their edges.
                 com.nendo.argosy.ui.primitives.CocoonCursorHost(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
                     com.nendo.argosy.ui.ArgosyApp(
-                        onStartupComplete = { dsm.stopStartupGuard() }
+                        onStartupComplete = { dsm.stopStartupGuard() },
+                        openQuickPanelOnTop = { owner, page -> quickPanelOverlay.showOnUpper(owner, page) },
+                        hideQuickPanel = { quickPanelOverlay.hideNow() },
+                        isQuickPanelOpen = { quickPanelOverlay.isOpen.value }
                     )
                 }
             }
@@ -344,7 +360,7 @@ class SecondaryHomeActivity :
                  * showing the game panel as it fades. Switching it to the top screen's content
                  * for that moment flashed a small copy of the top screen on the lower one.
                  */
-                CompanionPresentation(dashboardTransitionActive || launcherShown)
+                CompanionPresentation(dashboardTransitionActive)
             }
             if (resumeScreenShown) {
                 resumeSession.let { session ->
@@ -382,6 +398,7 @@ class SecondaryHomeActivity :
     @androidx.compose.runtime.Composable
     private fun CompanionPresentation(showsDashboard: Boolean) {
         val slot by dsm.presentationSlot.collectAsState()
+        val suspendedSession = dsm.gameSessionManager?.sessionState?.collectAsState()?.value
         val presentationSink = androidx.compose.runtime.remember {
             androidx.compose.ui.focus.FocusRequester()
         }
@@ -399,6 +416,12 @@ class SecondaryHomeActivity :
                 showsDashboard,
                 slot.onDisplay(ownDisplay, gameDisplay)
             )
+            androidx.compose.runtime.LaunchedEffect(rendered, showsDashboard, slot) {
+                com.nendo.argosy.util.ArcoonTrace.log(
+                    "companion presentation slot: ${rendered?.let { it::class.simpleName }} " +
+                        "dashboard=$showsDashboard slot=${slot::class.simpleName}"
+                )
+            }
             val arrivalMs = com.nendo.argosy.ui.dualscreen.dashboardArrivalMs(
                 showsDashboard = showsDashboard,
                 reduced = com.nendo.argosy.ui.theme.LocalMotionTier.current ==
@@ -416,10 +439,15 @@ class SecondaryHomeActivity :
                 if (rendered != null) {
                     // Cocoon's Now Playing Style picks what this screen shows during a game.
                     val nowPlaying = com.nendo.argosy.ui.cocoon.CocoonHomeStore.nowPlaying
-                    if (showsDashboard && nowPlaying != com.nendo.argosy.ui.cocoon.CocoonNowPlayingStyle.DASHBOARD) {
+                    if (showsDashboard && suspendedSession == null &&
+                        nowPlaying != com.nendo.argosy.ui.cocoon.CocoonNowPlayingStyle.DASHBOARD
+                    ) {
                         com.nendo.argosy.ui.cocoon.CocoonNowPlaying(nowPlaying)
                     } else {
-                        com.nendo.argosy.ui.dualscreen.PresentationSlotContent(rendered)
+                        com.nendo.argosy.ui.dualscreen.PresentationSlotContent(
+                            rendered,
+                            suspendedCard = false
+                        )
                     }
                 }
             }

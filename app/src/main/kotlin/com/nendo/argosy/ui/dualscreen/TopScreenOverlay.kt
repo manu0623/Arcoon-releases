@@ -118,6 +118,8 @@ private fun SuspendedGameCard(
     isCenteredStateA: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val art = com.nendo.argosy.ui.common.rememberResolvedArt(session.gameId)
+    val image = session.screenshotPath ?: art?.backgroundPath ?: art?.coverPath
     // Smooth Interpolation Specifications
     val cardWidth: Dp by animateDpAsState(
         targetValue = if (isCenteredStateA) 640.dp else 220.dp,
@@ -167,7 +169,7 @@ private fun SuspendedGameCard(
                             .background(Color.Black)
                     ) {
                         AsyncImage(
-                            model = session.screenshotPath,
+                            model = image,
                             contentDescription = "Emulator Snapshot",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
@@ -256,7 +258,7 @@ private fun SuspendedGameCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     AsyncImage(
-                        model = session.screenshotPath,
+                        model = image,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier

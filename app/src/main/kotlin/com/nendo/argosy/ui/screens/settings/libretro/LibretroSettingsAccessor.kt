@@ -71,6 +71,7 @@ class GlobalLibretroSettingsAccessor(
         LibretroSettingDef.Shader -> state.shader
         LibretroSettingDef.Filter -> state.filter
         LibretroSettingDef.AspectRatio -> state.aspectRatio
+        LibretroSettingDef.MatchScreenSizes -> "false"
         LibretroSettingDef.PortraitPosition -> state.portraitPosition
         LibretroSettingDef.Rotation -> state.rotation
         LibretroSettingDef.OverscanCrop -> state.overscanCrop
@@ -165,6 +166,7 @@ class PlatformLibretroSettingsAccessor(
         LibretroSettingDef.Shader -> globalState.shader
         LibretroSettingDef.Filter -> globalState.filter
         LibretroSettingDef.AspectRatio -> globalState.aspectRatio
+        LibretroSettingDef.MatchScreenSizes -> "false"
         LibretroSettingDef.PortraitPosition -> globalState.portraitPosition
         LibretroSettingDef.Rotation -> globalState.rotation
         LibretroSettingDef.OverscanCrop -> globalState.overscanCrop
@@ -224,6 +226,7 @@ class PlatformLibretroSettingsAccessor(
             LibretroSettingDef.Shader -> ps.shader
             LibretroSettingDef.Filter -> ps.filter
             LibretroSettingDef.AspectRatio -> ps.aspectRatio
+            LibretroSettingDef.MatchScreenSizes -> null
             LibretroSettingDef.PortraitPosition -> ps.portraitPosition
             LibretroSettingDef.Rotation -> ps.rotation?.toRotationString()
             LibretroSettingDef.OverscanCrop -> ps.overscanCrop?.toOverscanString()

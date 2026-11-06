@@ -3,8 +3,10 @@ package com.nendo.argosy.ui.cocoon
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.wrapContentSize
 import kotlinx.coroutines.launch
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.verticalScroll
 import com.nendo.argosy.ui.cocoon.theme.cocoonDockIconClip
@@ -83,6 +86,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
@@ -120,6 +124,16 @@ fun CocoonHomeScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val manager by com.nendo.argosy.DualScreenManagerHolder.instanceFlow.collectAsState()
+    // The game left running keeps a square on the board. It is read from the session itself, so it
+    // goes the moment that game is resumed or quits.
+    val suspended by (
+        manager?.gameSessionManager?.sessionState
+            ?: remember {
+                kotlinx.coroutines.flow.MutableStateFlow<
+                    com.nendo.argosy.domain.model.multitasking.SuspendedGameSession?>(null)
+            }
+        ).collectAsState()
+    LaunchedEffect(suspended) { viewModel.setSuspendedSession(suspended) }
     val hasPresentation by (
         manager?.hasPresentationScreen ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }
         ).collectAsState()
@@ -159,7 +173,8 @@ fun CocoonHomeScreen(
                 CocoonTileTarget.Emulators -> onOpenEmulators()
                 CocoonTileTarget.Settings -> onOpenSettings()
                 is CocoonTileTarget.App, is CocoonTileTarget.Pod, is CocoonTileTarget.Widget,
-                is CocoonTileTarget.Game, is CocoonTileTarget.Group -> viewModel.openHomeTile(tile)
+                is CocoonTileTarget.Game, is CocoonTileTarget.Group,
+                is CocoonTileTarget.NowPlaying -> viewModel.openHomeTile(tile)
                 CocoonTileTarget.Gap, is CocoonTileTarget.Covered -> Unit
             }
         }
@@ -184,7 +199,7 @@ fun CocoonHomeScreen(
         viewModel.createInputHandler(
             onOpen = open,
             onOpenSettings = onOpenSettings,
-            onUseClassicHome = { CocoonMode.useClassicHome.value = true },
+            onUseClassicHome = { CocoonMode.requestClassicHome(true) },
             onOpenAllApps = onOpenAndroidGames,
             onEditTile = { tile ->
                 (tile.target as? CocoonTileTarget.Platform)?.let { onEditPlatform(it.platformId) }
@@ -207,6 +222,9 @@ fun CocoonHomeScreen(
 
     val focused = state.focusedTile
     if (focused != null) {
+        val artGameId = (focused.target as? CocoonTileTarget.NowPlaying)?.gameId
+            ?: (focused.target as? CocoonTileTarget.Game)?.gameId
+        val art = artGameId?.let { com.nendo.argosy.ui.common.rememberResolvedArt(it) }
         PresentOnCompanion(
             BOARD_OWNER,
             PresentationSlot.CocoonHero(
@@ -216,6 +234,8 @@ fun CocoonHomeScreen(
                 glyph = focused.glyph,
                 platformSlug = focused.platformSlug,
                 colorIndex = focused.colorIndex,
+                artPath = art?.backgroundPath ?: art?.coverPath,
+                hidesMirror = focused.target is CocoonTileTarget.NowPlaying
             )
         )
     }
@@ -308,8 +328,15 @@ fun CocoonHomeScreen(
             if (packageName != null) CocoonDockMenu(
                 packageName = packageName,
                 focusedIndex = state.dockMenuIndex,
+                showLaunchPicker = needsCocoonScreenPicker(rememberDockLaunchScreens()),
+                launchScreens = state.dockLaunchScreens,
+                launchScreenIndex = state.dockLaunchScreenIndex,
                 onRow = { index ->
                     viewModel.focusDockMenu(index)
+                    inputHandler.onConfirm()
+                },
+                onLaunchScreen = { index ->
+                    viewModel.focusDockLaunchScreen(index)
                     inputHandler.onConfirm()
                 },
                 onDismiss = { viewModel.closeDockMenu() }
@@ -341,6 +368,7 @@ fun CocoonHomeScreen(
                     Pair(when (row) {
                         CocoonStartRow.NEW -> androidx.compose.material.icons.Icons.Outlined.Add
                         CocoonStartRow.NEW_FOLDER -> androidx.compose.material.icons.Icons.Outlined.CreateNewFolder
+                        CocoonStartRow.NEW_COLLECTION -> androidx.compose.material.icons.Icons.Outlined.Folder
                         CocoonStartRow.NEW_HOME_FOLDER -> androidx.compose.material.icons.Icons.Outlined.FolderSpecial
                         CocoonStartRow.ADD_APP -> androidx.compose.material.icons.Icons.Outlined.AddBox
                         CocoonStartRow.ADD_WIDGET -> androidx.compose.material.icons.Icons.Outlined.Widgets
@@ -360,13 +388,19 @@ fun CocoonHomeScreen(
                 onDismiss = { viewModel.closeStartMenu() }
             )
         }
-        // Start ▸ Add Widget / Add Pod: the second step.
+        // Start ▸ Add Widget / Add Pod: the second step. The list keeps drawing for the length of
+        // its exit fade after B closes it, so it remembers what was open; falling back to the
+        // first choice for that beat flashed the widget list on the way out.
+        var lastChoice by androidx.compose.runtime.remember {
+            androidx.compose.runtime.mutableStateOf(CocoonChoice.WIDGETS)
+        }
+        state.choice?.let { lastChoice = it }
         androidx.compose.animation.AnimatedVisibility(
             visible = state.choice != null,
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(120)),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))
         ) {
-            val choice = state.choice ?: CocoonChoice.WIDGETS
+            val choice = lastChoice
             CocoonListMenu(
                 title = stringResource(
                     when (choice) {
@@ -374,6 +408,7 @@ fun CocoonHomeScreen(
                         CocoonChoice.PODS -> R.string.cocoon_start_add_pod
                         CocoonChoice.SMART -> R.string.cocoon_start_add_smart
                         CocoonChoice.MOVE -> R.string.cocoon_tile_menu_move
+                        CocoonChoice.COLLECTIONS -> R.string.cocoon_choose_collection
                     }
                 ),
                 headerIcon = when (choice) {
@@ -381,6 +416,7 @@ fun CocoonHomeScreen(
                     CocoonChoice.PODS -> androidx.compose.material.icons.Icons.Outlined.Apps
                     CocoonChoice.SMART -> androidx.compose.material.icons.Icons.Outlined.AutoAwesome
                     CocoonChoice.MOVE -> androidx.compose.material.icons.Icons.Outlined.DriveFileMove
+                    CocoonChoice.COLLECTIONS -> androidx.compose.material.icons.Icons.Outlined.Folder
                 },
                 rows = if (choice == CocoonChoice.MOVE) {
                     viewModel.moveTargets().map { (id, name) ->
@@ -389,6 +425,13 @@ fun CocoonHomeScreen(
                             else androidx.compose.material.icons.Icons.Outlined.Folder,
                             name
                         )
+                    }
+                } else if (choice == CocoonChoice.COLLECTIONS) {
+                    val mine = state.collectionChoices
+                    if (mine.isEmpty()) {
+                        listOf(androidx.compose.material.icons.Icons.Outlined.Folder to stringResource(R.string.cocoon_no_collections))
+                    } else {
+                        mine.map { androidx.compose.material.icons.Icons.Outlined.Folder to it.name }
                     }
                 } else if (choice == CocoonChoice.SMART) {
                     CocoonSmartKind.entries.map { kind ->
@@ -439,9 +482,6 @@ fun CocoonHomeScreen(
             )
         }
         CocoonPodsOverlay(onNavigate = onNavigate)
-        if (state.searchOpen) {
-            CocoonSettingsSearch(onNavigate = onNavigate, onDismiss = { viewModel.closeSearch() })
-        }
         if (state.namingGroup) {
             com.nendo.argosy.ui.screens.collections.dialogs.CollectionNameDialog(
                 title = stringResource(R.string.cocoon_start_new_home_folder),
@@ -451,20 +491,6 @@ fun CocoonHomeScreen(
                 gamepadInput = true,
                 onDismiss = { viewModel.closeNameGroup() },
                 onSubmit = { name -> viewModel.createGroup(name) }
-            )
-        }
-        state.jingleForPlatform?.let { slug ->
-            val jingleContext = androidx.compose.ui.platform.LocalContext.current
-            com.nendo.argosy.ui.filebrowser.FileBrowserScreen(
-                mode = com.nendo.argosy.ui.filebrowser.FileBrowserMode.FILE_SELECTION,
-                title = stringResource(R.string.cocoon_jingle_platform),
-                fileFilter = com.nendo.argosy.ui.filebrowser.FileFilter.AUDIO,
-                onPathSelected = { path ->
-                    viewModel.closePlatformJingle()
-                    CocoonJingles.setPlatformJingle(jingleContext, slug, path)
-                    CocoonJingles.play(jingleContext, path)
-                },
-                onDismiss = { viewModel.closePlatformJingle() }
             )
         }
         state.appEditPackage?.let { pkg ->
@@ -565,26 +591,35 @@ private fun CocoonBoard(
         // Cocoon keeps the cursor in the middle: once it reaches the centre column the board
         // slides under it instead. The slide uses the cursor's own 150 ms ease-out, so the board
         // arriving and the corners arriving land together and the cursor holds still.
+        //
+        // Only the first placement after the board appears is instant, so a cold start or a return
+        // does not play a long slide to the folder that already holds the cursor. Everything after
+        // it slides, the way a cover slides into view inside a folder - see [boardSlide].
         val density = androidx.compose.ui.platform.LocalDensity.current
         val pitchPx = with(density) { (tileSize + gap).toPx() }
-        val shownAt = androidx.compose.runtime.remember { android.os.SystemClock.uptimeMillis() }
+        val firstPlacement = androidx.compose.runtime.remember {
+            androidx.compose.runtime.mutableStateOf(true)
+        }
         LaunchedEffect(state.focusedIndex, visibleColumns, state.slotCount, animateReturnJourney) {
             if (state.tiles.isEmpty() || state.inDock) return@LaunchedEffect
-            val settling = android.os.SystemClock.uptimeMillis() - shownAt < 1_500
-            val column = state.focusedIndex / COCOON_BOARD_ROWS
-            val lastColumn = (state.slotCount - 1) / COCOON_BOARD_ROWS
-            val maxFirst = (lastColumn - visibleColumns + 1).coerceAtLeast(0)
-            val targetFirst = (column - visibleColumns / 2).coerceIn(0, maxFirst)
-            val currentPx = gridState.firstVisibleItemIndex / COCOON_BOARD_ROWS * pitchPx +
-                gridState.firstVisibleItemScrollOffset
-            val delta = targetFirst * pitchPx - currentPx
-            if (kotlin.math.abs(delta) < 1f) return@LaunchedEffect
-            if (settling && !animateReturnJourney) {
-                gridState.scrollBy(delta)
+            val initial = firstPlacement.value
+            firstPlacement.value = false
+            val move = boardSlide(
+                focusedIndex = state.focusedIndex,
+                rows = COCOON_BOARD_ROWS,
+                slotCount = state.slotCount,
+                visibleColumns = visibleColumns,
+                firstVisibleItemIndex = gridState.firstVisibleItemIndex,
+                firstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset,
+                pitchPx = pitchPx,
+                firstPlacement = initial
+            ) ?: return@LaunchedEffect
+            if (move.instant) {
+                gridState.scrollBy(move.deltaPx)
                 return@LaunchedEffect
             }
             gridState.animateScrollBy(
-                delta,
+                move.deltaPx,
                 androidx.compose.animation.core.tween(150, easing = androidx.compose.animation.core.CubicBezierEasing(0.33f, 1f, 0.68f, 1f))
             )
         }
@@ -702,8 +737,8 @@ private fun CocoonBoard(
                                     )
                                 )
                             } else if (reflowing) {
-                                // no fade-in: folders newly in view during the reflow appeared from
-                                // nothing, which read as a flash
+                                // Placement animates for the tiles that were already on screen;
+                                // the ones newly in view come in with their own slide (below).
                                 Modifier.animateItem(
                                     fadeInSpec = null,
                                     placementSpec = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(
@@ -711,6 +746,13 @@ private fun CocoonBoard(
                                     ),
                                     fadeOutSpec = null
                                 )
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .then(
+                            if (reflowing && !state.editingGrid) {
+                                Modifier.cocoonReflowSlide(tile.key)
                             } else {
                                 Modifier
                             }
@@ -731,6 +773,19 @@ private fun CocoonBoard(
                                 .then(if (lifted) Modifier.cocoonLifted() else Modifier)
                                 .graphicsLayer { alpha = if (state.editingGrid && !lifted) 0.55f else 1f }
                                 .cocoonBrackets(focused = isFocusedTile && !lifted, outset = 1.dp)
+                                .clickableNoFocus { onTap(index, tile) }
+                        )
+                        return@Box
+                    }
+                    if (tile.target is CocoonTileTarget.NowPlaying) {
+                        // The game left running: a square among the folders, one press from being back.
+                        CocoonNowPlayingTile(
+                            gameId = tile.target.gameId,
+                            title = tile.title.orEmpty(),
+                            size = tileSize,
+                            focused = !state.inDock && index == state.focusedIndex && !lifted,
+                            modifier = Modifier
+                                .then(if (lifted) Modifier.cocoonLifted() else Modifier)
                                 .clickableNoFocus { onTap(index, tile) }
                         )
                         return@Box
@@ -782,29 +837,51 @@ fun CocoonDock(
         verticalAlignment = Alignment.CenterVertically
     ) {
         val size = 34.dp
+        // Personalization ▸ Dock icon shape: every slot sits on a plate of that shape, which is
+        // what the settings preview draws. With no shape chosen the icons keep Cocoon's bare look
+        // (app icons alone were clipped before, and a launcher icon's own rounded art made that
+        // change all but invisible).
+        val dockShape = com.nendo.argosy.ui.cocoon.theme.cocoonDockIconShape()
         for (slot in 0 until COCOON_DOCK_SIZE) {
             val slotModifier = Modifier
                 .size(size)
                 .cocoonBrackets(focused = focusedIndex == slot, outset = 4.dp)
                 .clickableNoFocus { onTap(slot) }
-            when (val target = cocoonDockTarget(slot, apps)) {
-                CocoonDockTarget.AllApps -> Box(modifier = slotModifier, contentAlignment = Alignment.Center) {
-                    CocoonDockGlyph(ring = false, modifier = Modifier.size(28.dp))
-                }
-                CocoonDockTarget.Pods -> Box(modifier = slotModifier, contentAlignment = Alignment.Center) {
-                    CocoonDockGlyph(ring = true, modifier = Modifier.size(28.dp))
-                }
-                is CocoonDockTarget.App -> CocoonAppIcon(
-                    packageName = target.packageName,
-                    modifier = slotModifier.cocoonDockIconClip()
-                )
-                CocoonDockTarget.AddApp -> Box(modifier = slotModifier, contentAlignment = Alignment.Center) {
-                    if (focusedIndex == slot) {
-                        Text(
-                            text = "+",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = CocoonSurface.TextSecondary.copy(alpha = 0.7f)
+            Box(modifier = slotModifier, contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (dockShape == null) Modifier
+                            else Modifier
+                                .clip(dockShape)
+                                .background(CocoonSurface.Chip.copy(alpha = 0.5f))
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when (val target = cocoonDockTarget(slot, apps)) {
+                        CocoonDockTarget.AllApps -> CocoonDockGlyph(
+                            ring = false,
+                            modifier = Modifier.size(if (dockShape == null) 28.dp else 20.dp)
                         )
+                        CocoonDockTarget.Pods -> CocoonDockGlyph(
+                            ring = true,
+                            modifier = Modifier.size(if (dockShape == null) 28.dp else 20.dp)
+                        )
+                        is CocoonDockTarget.App -> CocoonAppIcon(
+                            packageName = target.packageName,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(if (dockShape == null) 0.dp else 3.dp)
+                                .cocoonDockIconClip()
+                        )
+                        CocoonDockTarget.AddApp -> if (focusedIndex == slot) {
+                            Text(
+                                text = "+",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = CocoonSurface.TextSecondary.copy(alpha = 0.7f)
+                            )
+                        }
                     }
                 }
             }
@@ -825,6 +902,12 @@ private fun CocoonTileMenu(
     onDismiss: () -> Unit,
 ) {
     com.nendo.argosy.ui.input.ModalPresenceEffect()
+    // One progress drives the whole summon: the tile leaves its board slot and travels left
+    // into place while the rows open beside it, rather than both simply fading in.
+    val enter = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(tile.key) {
+        enter.animateTo(1f, androidx.compose.animation.core.tween(230, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -839,16 +922,31 @@ private fun CocoonTileMenu(
                 modifier = Modifier.weight(0.45f),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                val grow = remember { androidx.compose.animation.core.Animatable(0.55f) }
-                LaunchedEffect(tile.key) {
-                    grow.animateTo(1f, androidx.compose.animation.core.tween(220, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
-                }
+                // Where the tile sits on the board when Y is pressed: the icon starts there
+                // and travels to this column, which is the "item moves left" half of the summon.
+                var startDx by remember(tile.key) { androidx.compose.runtime.mutableStateOf<Float?>(null) }
                 CocoonFolderIcon(
                     colorIndex = tile.colorIndex,
                     glyph = tile.glyph,
                     platformSlug = tile.platformSlug,
                     size = 120.dp,
-                    modifier = Modifier.graphicsLayer { scaleX = grow.value; scaleY = grow.value }
+                    modifier = Modifier
+                        .onGloballyPositioned { coords ->
+                            if (startDx == null) {
+                                val pos = coords.positionInRoot()
+                                val centre = pos.x + coords.size.width / 2f
+                                val from = CocoonFolderZoom.tile.center.x.takeIf { CocoonFolderZoom.tile.width > 0f } ?: centre
+                                startDx = from - centre
+                            }
+                        }
+                        .graphicsLayer {
+                            val settle = 1f - enter.value
+                            translationX = (startDx ?: 0f) * settle
+                            val grow = 0.55f + 0.45f * enter.value
+                            scaleX = grow
+                            scaleY = grow
+                            alpha = 0.35f + 0.65f * enter.value
+                        }
                 )
                 androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(10.dp))
                 Text(
@@ -866,27 +964,36 @@ private fun CocoonTileMenu(
                 menuScroll.animateScrollTo(target)
             }
             Column(
-                modifier = Modifier.weight(0.55f).padding(horizontal = 8.dp)
+                modifier = Modifier
+                    .weight(0.55f)
+                    .padding(horizontal = 8.dp)
                     .verticalScroll(menuScroll)
+                    // The inset sits inside the scroll viewport: a focused row draws its brackets
+                    // outside its bounds, and the viewport's clip was cutting the first one off.
+                    .padding(vertical = 8.dp)
+                    .graphicsLayer {
+                        translationX = (1f - enter.value) * 64.dp.toPx()
+                        alpha = 0.15f + 0.85f * enter.value
+                    }
             ) {
                 rows.forEachIndexed { index, row ->
                     val danger = row == CocoonTileMenuRow.DELETE_FOLDER || row == CocoonTileMenuRow.REMOVE
                     CocoonMenuRow(
                         icon = when (row) {
                             CocoonTileMenuRow.OPEN -> androidx.compose.material.icons.Icons.Outlined.PlayArrow
-                            CocoonTileMenuRow.EDIT -> androidx.compose.material.icons.Icons.Outlined.Edit
+                            CocoonTileMenuRow.PLATFORM -> androidx.compose.material.icons.Icons.Outlined.Settings
                             CocoonTileMenuRow.EDIT_GRID -> androidx.compose.material.icons.Icons.Outlined.GridView
                             CocoonTileMenuRow.NEW_FOLDER -> androidx.compose.material.icons.Icons.Outlined.CreateNewFolder
                             CocoonTileMenuRow.DELETE_FOLDER -> androidx.compose.material.icons.Icons.Outlined.Delete
                             CocoonTileMenuRow.REMOVE -> androidx.compose.material.icons.Icons.Outlined.RemoveCircleOutline
                             CocoonTileMenuRow.APPEARANCE -> androidx.compose.material.icons.Icons.Outlined.Palette
                             CocoonTileMenuRow.EDIT_APP -> androidx.compose.material.icons.Icons.Outlined.Edit
-                            CocoonTileMenuRow.JINGLE -> androidx.compose.material.icons.Icons.Outlined.MusicNote
                             CocoonTileMenuRow.SIZE -> androidx.compose.material.icons.Icons.Outlined.AspectRatio
                             CocoonTileMenuRow.MOVE -> androidx.compose.material.icons.Icons.Outlined.DriveFileMove
                             CocoonTileMenuRow.NEW -> androidx.compose.material.icons.Icons.Outlined.Add
                             CocoonTileMenuRow.SEARCH -> androidx.compose.material.icons.Icons.Outlined.Search
                             CocoonTileMenuRow.SETTINGS -> androidx.compose.material.icons.Icons.Outlined.Settings
+                            CocoonTileMenuRow.CLOSE -> androidx.compose.material.icons.Icons.Filled.Close
                         },
                         label = if (danger && deleteArmed) {
                             stringResource(R.string.cocoon_tile_menu_delete_confirm)
@@ -900,15 +1007,7 @@ private fun CocoonTileMenu(
                         isLast = index == rows.lastIndex,
                         onClick = { onRow(index) },
                         color = if (danger) androidx.compose.ui.graphics.Color(0xFFFF6B6B) else CocoonSurface.TextPrimary,
-                        trailing = if (row == CocoonTileMenuRow.EDIT) {
-                            {
-                                com.nendo.argosy.ui.primitives.InputGlyph(
-                                    button = com.nendo.argosy.ui.components.InputButton.Y,
-                                    size = 20.dp,
-                                    tint = CocoonSurface.TextSecondary
-                                )
-                            }
-                        } else null
+                        trailing = null
                     )
                 }
             }
@@ -916,6 +1015,30 @@ private fun CocoonTileMenu(
     }
 }
 
+
+/**
+ * A tile that was off the right edge before the row count changed is composed fresh at its new
+ * place. Without this it simply appeared; it slides in from the right instead.
+ */
+@Composable
+private fun Modifier.cocoonReflowSlide(key: Any?): Modifier {
+    val arrive = androidx.compose.runtime.remember(key) {
+        androidx.compose.animation.core.Animatable(0f)
+    }
+    androidx.compose.runtime.LaunchedEffect(key) {
+        arrive.animateTo(
+            1f,
+            androidx.compose.animation.core.tween(
+                260,
+                easing = com.nendo.argosy.ui.theme.Motion.argosyEase
+            )
+        )
+    }
+    return this.graphicsLayer {
+        alpha = 0.25f + 0.75f * arrive.value
+        translationX = (1f - arrive.value) * 56.dp.toPx()
+    }
+}
 
 /** Edit Grid: the lifted tile sits a little larger and rocks gently while it is being moved. */
 @Composable
@@ -972,12 +1095,27 @@ private fun CocoonDockGlyph(ring: Boolean, modifier: Modifier = Modifier) {
 }
 
 
-/** Cocoon's Y menu on a dock app: the app's icon and name, then Launch / Edit App / App Info / Clear Slot. */
+/** The screens a dock app can start on, read once per menu: displays do not change mid-menu. */
+@Composable
+private fun rememberDockLaunchScreens(): List<CocoonLaunchScreen> = remember {
+    cocoonLaunchScreens(
+        com.nendo.argosy.DualScreenManagerHolder.instance?.focusableDisplays().orEmpty()
+    )
+}
+
+/**
+ * Cocoon's Y menu on a dock app: the app's icon and name, then Launch / Edit App / App Info / Clear
+ * Slot. Launch carries the chevron to the screen picker when the device has more than one screen.
+ */
 @Composable
 private fun CocoonDockMenu(
     packageName: String,
     focusedIndex: Int,
+    showLaunchPicker: Boolean,
+    launchScreens: List<CocoonLaunchScreen>,
+    launchScreenIndex: Int,
     onRow: (Int) -> Unit,
+    onLaunchScreen: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     com.nendo.argosy.ui.input.ModalPresenceEffect()
@@ -1023,6 +1161,21 @@ private fun CocoonDockMenu(
                 )
             }
             Column(modifier = Modifier.weight(0.55f).padding(horizontal = 8.dp)) {
+                if (launchScreens.isNotEmpty()) {
+                    // Launch ▸ the two screens replace the menu's rows: no second panel, no
+                    // header of its own, just the choice the chevron promised.
+                    launchScreens.forEachIndexed { index, screen ->
+                        CocoonMenuRow(
+                            icon = androidx.compose.material.icons.Icons.Filled.Tv,
+                            label = stringResource(R.string.cocoon_launch_on_screen, screen.number),
+                            focused = index == launchScreenIndex,
+                            isFirst = index == 0,
+                            isLast = index == launchScreens.lastIndex,
+                            onClick = { onLaunchScreen(index) },
+                        )
+                    }
+                    return@Column
+                }
                 val rows = CocoonDockMenuRow.entries
                 rows.forEachIndexed { index, row ->
                     val danger = row == CocoonDockMenuRow.CLEAR
@@ -1040,17 +1193,10 @@ private fun CocoonDockMenu(
                         isLast = index == rows.lastIndex,
                         onClick = { onRow(index) },
                         color = if (danger) androidx.compose.ui.graphics.Color(0xFFFF6B6B) else CocoonSurface.TextPrimary,
+                        // No button glyph on Edit App: Y is what opened this menu, so a Y
+                        // beside the row read as "press Y" over the very row Y cannot press.
                         trailing = when (row) {
-                            CocoonDockMenuRow.EDIT -> {
-                                {
-                                    com.nendo.argosy.ui.primitives.InputGlyph(
-                                        button = com.nendo.argosy.ui.components.InputButton.Y,
-                                        size = 20.dp,
-                                        tint = CocoonSurface.TextSecondary
-                                    )
-                                }
-                            }
-                            CocoonDockMenuRow.LAUNCH -> {
+                            CocoonDockMenuRow.LAUNCH -> if (showLaunchPicker) {
                                 {
                                     androidx.compose.material3.Icon(
                                         androidx.compose.material.icons.Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -1059,7 +1205,7 @@ private fun CocoonDockMenu(
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
-                            }
+                            } else null
                             else -> null
                         }
                     )
@@ -1187,6 +1333,8 @@ private fun CocoonListMenu(
                     .weight(0.6f)
                     .padding(horizontal = 8.dp)
                     .verticalScroll(scroll)
+                    // same inset as the tile menu: brackets must not be clipped by the viewport
+                    .padding(vertical = 8.dp)
             ) {
                 rows.forEachIndexed { index, (icon, label) ->
                     CocoonMenuRow(

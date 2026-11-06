@@ -59,6 +59,7 @@ import com.nendo.argosy.core.event.GameUpdateBus
 import com.nendo.argosy.ui.screens.gamedetail.delegates.AchievementDelegate
 import com.nendo.argosy.ui.screens.gamedetail.delegates.ArtworkDelegate
 import com.nendo.argosy.ui.screens.gamedetail.delegates.DownloadDelegate
+import com.nendo.argosy.ui.screens.gamedetail.delegates.JourneyDelegate
 import com.nendo.argosy.ui.screens.gamedetail.delegates.MoreOptionsDelegate
 import com.nendo.argosy.ui.screens.gamedetail.delegates.PerGameSettingsDelegate
 import com.nendo.argosy.ui.screens.gamedetail.delegates.PerGameSettingsRow
@@ -108,6 +109,7 @@ class GameDetailViewModel @Inject constructor(
     private val gameNavigationContext: GameNavigationContext,
     private val configureEmulatorUseCase: ConfigureEmulatorUseCase,
     private val romMRepository: RomMRepository,
+    private val steamGridDbClient: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbClient,
     private val soundManager: SoundFeedbackManager,
     private val gameActions: GameActionsDelegate,
     private val gameLaunchDelegate: GameLaunchDelegate,
@@ -124,6 +126,7 @@ class GameDetailViewModel @Inject constructor(
     private val documentHighlightStore: com.nendo.argosy.data.repository.DocumentHighlightStore,
     val pickerModalDelegate: PickerModalDelegate,
     private val achievementDelegate: AchievementDelegate,
+    val journeyDelegate: JourneyDelegate,
     private val downloadDelegate: DownloadDelegate,
     private val saveManagement: SaveManagementDelegate,
     private val screenshotDelegate: ScreenshotDelegate,
@@ -1535,6 +1538,10 @@ class GameDetailViewModel @Inject constructor(
             }
             MoreOptionAction.AddToCollection -> showAddToCollectionModal()
             MoreOptionAction.Artwork -> showArtwork()
+            MoreOptionAction.Jingle -> {
+                toggleMoreOptions()
+                _uiState.update { it.copy(showJinglePicker = true) }
+            }
             MoreOptionAction.Delete -> {
                 toggleMoreOptions()
                 val gameUi = _uiState.value.game
@@ -1845,6 +1852,18 @@ class GameDetailViewModel @Inject constructor(
         viewModelScope.launch { perGameSettingsDelegate.cycleGpuDriver(currentGameId, direction) }
     }
 
+    fun togglePerGameTextures() {
+        viewModelScope.launch { perGameSettingsDelegate.toggleTextures(currentGameId) }
+    }
+
+    fun openPerGameTexturePackPicker() = perGameSettingsDelegate.openTexturePicker()
+
+    fun dismissPerGameTexturePackPicker() = perGameSettingsDelegate.dismissTexturePicker()
+
+    fun importPerGameTexturePack(uri: android.net.Uri) {
+        viewModelScope.launch { perGameSettingsDelegate.importTexturePack(currentGameId, uri) }
+    }
+
     fun cyclePerGameBackend(direction: Int) {
         viewModelScope.launch { perGameSettingsDelegate.cycleBackend(currentGameId, direction) }
     }
@@ -1892,6 +1911,8 @@ class GameDetailViewModel @Inject constructor(
             PerGameSettingsRow.EXTENSION -> cyclePerGameExtension(1)
             PerGameSettingsRow.BACKEND -> cyclePerGameBackend(1)
             PerGameSettingsRow.GPU_DRIVER -> openPerGameGpuDriverPicker()
+            PerGameSettingsRow.TEXTURES -> togglePerGameTextures()
+            PerGameSettingsRow.TEXTURE_PACK -> openPerGameTexturePackPicker()
             PerGameSettingsRow.PLATFORM_SETTINGS -> {
                 dismissPerGameSettings()
                 _uiState.value.game?.platformId?.let(onNavigateToPlatformSettings)
@@ -1908,6 +1929,7 @@ class GameDetailViewModel @Inject constructor(
             PerGameSettingsRow.EXTENSION -> cyclePerGameExtension(direction)
             PerGameSettingsRow.BACKEND -> cyclePerGameBackend(direction)
             PerGameSettingsRow.GPU_DRIVER -> cyclePerGameGpuDriver(direction)
+            PerGameSettingsRow.TEXTURES -> togglePerGameTextures()
             else -> {}
         }
     }
@@ -2075,13 +2097,14 @@ class GameDetailViewModel @Inject constructor(
         pickerModalDelegate.setArtPickerSearching()
         viewModelScope.launch {
             val onServer = offlineArtCandidates(slot)
+            val steamGridDb = steamGridDbCandidates(term, slot)
             val result = romMRepository.searchCovers(term, artType)
             val current = pickerModalDelegate.state.value
             if (!current.showArtPicker || current.artPickerSlot != slot) return@launch
             when (result) {
                 is RomMResult.Success -> showArtCandidates(
                     slot,
-                    serverArtCandidates + result.data.mapNotNull { resource ->
+                    serverArtCandidates + steamGridDb + result.data.mapNotNull { resource ->
                         resource.url?.let { url ->
                             ArtCandidate(
                                 source = url,
@@ -2095,16 +2118,43 @@ class GameDetailViewModel @Inject constructor(
                 )
                 is RomMResult.Error -> showArtCandidates(
                     slot,
-                    onServer,
+                    onServer + steamGridDb,
                     error = context.getString(R.string.gamedetail_art_picker_error, result.message)
                 )
             }
         }
     }
 
+    private suspend fun steamGridDbCandidates(term: String, slot: ArtSlot): List<ArtCandidate> {
+        if (slot != ArtSlot.COVER) return emptyList()
+        val prefs = preferencesRepository.userPreferences.first()
+        if (!prefs.steamGridDbEnabled) return emptyList()
+        val apiKey = prefs.steamGridDbApiKey ?: return emptyList()
+        return steamGridDbClient.searchGrids(term, apiKey)
+            .getOrElse { return emptyList() }
+            .grids
+            .map { grid ->
+                ArtCandidate(
+                    source = grid.url,
+                    thumbUrl = grid.thumb,
+                    width = grid.width,
+                    height = grid.height,
+                    originRes = R.string.gamedetail_art_picker_origin_steamgriddb
+                )
+            }
+    }
+
     fun selectArtCandidate(candidate: ArtCandidate) {
         val slot = pickerModalDelegate.state.value.artPickerSlot
-        if (candidate.isRevert) revertArtwork(slot) else applyArtwork(slot, candidate.source)
+        when {
+            candidate.isScrape -> {
+                closeArtwork()
+                moreOptionsDelegate.reset()
+                refreshAndroidOrRommData()
+            }
+            candidate.isRevert -> revertArtwork(slot)
+            else -> applyArtwork(slot, candidate.source)
+        }
     }
 
     fun selectArtFile(path: String) {
@@ -2123,6 +2173,11 @@ class GameDetailViewModel @Inject constructor(
         closeArtwork()
         moreOptionsDelegate.toggleMoreOptions()
     }
+
+    /**
+     * Edit Game ▸ Jingle: the sheet closes into Cocoon's jingle picker.
+     */
+    fun dismissJinglePicker() = _uiState.update { it.copy(showJinglePicker = false) }
 
     private fun closeArtwork() = pickerModalDelegate.dismissArtPicker()
 
@@ -2523,19 +2578,38 @@ class GameDetailViewModel @Inject constructor(
     }
 
     fun showAchievementList() {
-        _uiState.update { it.copy(showAchievementList = true, achievementListFocusIndex = 0) }
+        _uiState.update {
+            it.copy(showAchievementList = true, achievementListFocusIndex = 0, journeyTab = false)
+        }
+        val gameId = currentGameId
+        if (gameId != 0L) {
+            journeyDelegate.load(viewModelScope, gameId, _uiState.value.game?.platformName)
+        }
     }
 
     fun hideAchievementList() {
-        _uiState.update { it.copy(showAchievementList = false, achievementListFocusIndex = 0) }
+        _uiState.update {
+            it.copy(showAchievementList = false, achievementListFocusIndex = 0, journeyTab = false)
+        }
+    }
+
+    fun selectJourneyTab(journeyTab: Boolean) {
+        _uiState.update {
+            it.copy(journeyTab = journeyTab, achievementListFocusIndex = 0)
+        }
     }
 
     fun moveAchievementListFocus(delta: Int) {
-        val achievements = _uiState.value.game?.achievements ?: return
-        if (achievements.isEmpty()) return
-        _uiState.update { state ->
-            val newIndex = (state.achievementListFocusIndex + delta).coerceIn(0, achievements.size - 1)
-            state.copy(achievementListFocusIndex = newIndex)
+        val state = _uiState.value
+        val count = if (state.journeyTab) {
+            journeyDelegate.rowCount()
+        } else {
+            state.game?.achievements?.size ?: 0
+        }
+        if (count <= 0) return
+        _uiState.update { current ->
+            val newIndex = (current.achievementListFocusIndex + delta).coerceIn(0, count - 1)
+            current.copy(achievementListFocusIndex = newIndex)
         }
     }
 
@@ -2721,7 +2795,7 @@ class GameDetailViewModel @Inject constructor(
                 state.showRatingPicker -> { changeRatingValue(-1); return InputResult.HANDLED }
                 state.showPermissionModal -> return InputResult.HANDLED
                 state.showStatusPicker -> return InputResult.HANDLED
-                state.showAchievementList -> return InputResult.HANDLED
+                state.showAchievementList -> { selectJourneyTab(false); return InputResult.HANDLED }
                 state.showExtractionFailedPrompt -> { moveExtractionPromptFocus(-1); return InputResult.HANDLED }
                 pickerState.showFilePicker -> {
                     if (!pickerModalDelegate.moveFilePickerButtonFocus(-1)) {
@@ -2758,7 +2832,7 @@ class GameDetailViewModel @Inject constructor(
                 state.showRatingPicker -> { changeRatingValue(1); return InputResult.HANDLED }
                 state.showPermissionModal -> return InputResult.HANDLED
                 state.showStatusPicker -> return InputResult.HANDLED
-                state.showAchievementList -> return InputResult.HANDLED
+                state.showAchievementList -> { selectJourneyTab(true); return InputResult.HANDLED }
                 state.showExtractionFailedPrompt -> { moveExtractionPromptFocus(1); return InputResult.HANDLED }
                 pickerState.showFilePicker -> {
                     if (!pickerModalDelegate.moveFilePickerButtonFocus(1)) {
@@ -2839,7 +2913,7 @@ class GameDetailViewModel @Inject constructor(
                 saveState.showScreenshotPreview -> dismissScreenshotPreview()
                 saveState.isVisible -> confirmSaveCacheSelection()
                 state.showScreenshotViewer -> closeScreenshotViewer()
-                state.showAchievementList -> {}
+                state.showAchievementList -> selectJourneyTab(!state.journeyTab)
                 state.showReviewList -> confirmReviewListSelection()
                 state.showPermissionModal -> return InputResult.HANDLED
                 state.showRatingPicker -> confirmRating()

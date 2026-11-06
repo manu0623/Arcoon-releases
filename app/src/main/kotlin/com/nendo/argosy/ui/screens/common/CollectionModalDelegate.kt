@@ -36,8 +36,9 @@ class CollectionModalDelegate @Inject constructor(
 
     fun show(scope: CoroutineScope, gameId: Long) {
         scope.launch {
+            // Games join RomM's own collections; a folder invented on Home is not one of them.
             val userCollections = collectionRepository.getAllByType(CollectionType.REGULAR)
-                .filter { it.name.isNotBlank() }
+                .filter { it.name.isNotBlank() && it.rommId != null }
             val gameCollectionIds = collectionRepository.getCollectionIdsForGame(gameId)
 
             val collectionItems = userCollections.map { collection ->
@@ -151,8 +152,9 @@ class CollectionModalDelegate @Inject constructor(
             )
             romMRepository.addGameToCollectionWithSync(gameId, collectionId)
 
+            // Games join RomM's own collections; a folder invented on Home is not one of them.
             val userCollections = collectionRepository.getAllByType(CollectionType.REGULAR)
-                .filter { it.name.isNotBlank() }
+                .filter { it.name.isNotBlank() && it.rommId != null }
             val gameCollectionIds = collectionRepository.getCollectionIdsForGame(gameId)
 
             val collectionItems = userCollections.map { collection ->

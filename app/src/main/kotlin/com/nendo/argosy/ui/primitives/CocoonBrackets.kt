@@ -1,4 +1,5 @@
 package com.nendo.argosy.ui.primitives
+import androidx.compose.runtime.collectAsState
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -47,19 +48,26 @@ fun Modifier.cocoonBrackets(
     outset: Dp = 4.dp,
     color: Color = CocoonBracketSpec.color,
 ): Modifier = composed {
+    // While a quick panel window is up the pad drives that window, so the ring here would
+    // point at nothing: the launcher draws no highlight at all until the panel closes.
+    val panelOpen = com.nendo.argosy.ui.quickpanel.QuickPanelPresence.open.collectAsState()
+    // Only the surface underneath the panel goes dark: the panel window still needs its ring,
+    // because the pad is driving that menu and the ring is where the focus is.
+    val inPanel = com.nendo.argosy.ui.quickpanel.LocalQuickPanelSurface.current
+    val lit = focused && !(panelOpen.value && !inPanel)
     val cursor = LocalCocoonCursor.current
     if (cursor != null && cursor.view === androidx.compose.ui.platform.LocalView.current) {
-        return@composed cocoonCursorTarget(cursor, focused, outset)
+        return@composed cocoonCursorTarget(cursor, lit, outset)
     }
     val reduced = LocalMotionTier.current == MotionTier.Reduced
     val progress = animateFloatAsState(
-        targetValue = if (focused) 1f else 0f,
+        targetValue = if (lit) 1f else 0f,
         animationSpec = if (reduced) spring(stiffness = 4000f) else spring(dampingRatio = 0.72f, stiffness = 520f),
         label = "cocoon-brackets",
     )
     // "Corners (Animated)": while focused the brackets breathe gently in and out. The animated
     // values are read only while drawing, so the breathing never recomposes the element.
-    val breath: androidx.compose.runtime.State<Float>? = if (focused && !reduced) {
+    val breath: androidx.compose.runtime.State<Float>? = if (lit && !reduced) {
         val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "cocoon-breath")
         transition.animateFloat(
             initialValue = 0f,
@@ -284,6 +292,7 @@ fun CocoonCursorHost(
             }
         }
         val alpha by animateFloatAsState(if (hasTarget) 1f else 0f, label = "cocoon-cursor-alpha")
+        val glides = !com.nendo.argosy.ui.quickpanel.LocalQuickPanelSurface.current
         // Cocoon's "Corners (Animated)": the brackets breathe gently in and out.
         val breath by androidx.compose.animation.core.rememberInfiniteTransition(label = "cocoon-cursor-breath").animateFloat(
             initialValue = 0f,
@@ -315,7 +324,7 @@ fun CocoonCursorHost(
                 follower.reset()
                 return@Canvas
             }
-            val r = goal?.let { follower.place(it, activeKey) }
+            val r = if (glides) goal?.let { follower.place(it, activeKey) } else goal
             if (alpha > 0.01f && r != null) {
                 val b = if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.settings.cursorAnimated) {
                     breath * CocoonBracketSpec.breath.toPx()

@@ -34,6 +34,7 @@ import com.nendo.argosy.ui.screens.settings.components.PathConfigItem
 import com.nendo.argosy.ui.screens.settings.sections.formatStoragePath
 import com.nendo.argosy.ui.theme.Dimens
 import com.nendo.argosy.ui.util.clickableNoFocus
+import com.nendo.argosy.util.formatBytes
 
 @Composable
 fun PerGameSettingsModal(
@@ -48,6 +49,8 @@ fun PerGameSettingsModal(
     onCycleExtension: (Int) -> Unit,
     onCycleBackend: (Int) -> Unit,
     onOpenGpuDriverPicker: () -> Unit,
+    onToggleTextures: () -> Unit,
+    onImportTextures: () -> Unit,
     onSelectGpuDriverEntry: (Int) -> Unit,
     onDismissGpuDriverPicker: () -> Unit,
     onPlatformSettings: () -> Unit,
@@ -69,6 +72,7 @@ fun PerGameSettingsModal(
     val openHint = stringResource(R.string.gamedetail_per_game_footer_open)
     val backHint = stringResource(R.string.gamedetail_per_game_footer_back)
     val optionsHint = stringResource(R.string.gamedetail_per_game_footer_gpu_driver_options)
+    val importHint = stringResource(R.string.gamedetail_per_game_footer_import)
 
     Modal(
         title = stringResource(R.string.gamedetail_per_game_title),
@@ -82,6 +86,7 @@ fun PerGameSettingsModal(
                     add(InputButton.DPAD_HORIZONTAL to adjustHint)
                 PerGameSettingsRow.GPU_DRIVER ->
                     if (gpuDriverAdjustable) add(InputButton.DPAD_HORIZONTAL to adjustHint)
+                PerGameSettingsRow.TEXTURES -> add(InputButton.DPAD_HORIZONTAL to adjustHint)
                 PerGameSettingsRow.SAVE_PATH ->
                     if (state.isSavePathOverride) {
                         add(InputButton.DPAD_HORIZONTAL to changeResetHint)
@@ -95,6 +100,8 @@ fun PerGameSettingsModal(
                 PerGameSettingsRow.MEMCARD -> changeMemcardHint
                 PerGameSettingsRow.DISPLAY_TARGET, PerGameSettingsRow.EXTENSION, PerGameSettingsRow.BACKEND -> cycleHint
                 PerGameSettingsRow.GPU_DRIVER -> optionsHint.takeIf { gpuDriverAdjustable }
+                PerGameSettingsRow.TEXTURES -> cycleHint
+                PerGameSettingsRow.TEXTURE_PACK -> importHint
                 PerGameSettingsRow.PLATFORM_SETTINGS, null -> openHint
             }
             if (aHint != null) add(InputButton.A to aHint)
@@ -212,6 +219,35 @@ fun PerGameSettingsModal(
                     onClick = onOpenGpuDriverPicker
                 )
 
+                PerGameSettingsRow.TEXTURES -> ValueConfigItem(
+                    label = stringResource(R.string.gamedetail_per_game_textures_label),
+                    value = if (state.texturesEnabled) {
+                        stringResource(R.string.gamedetail_per_game_textures_enabled)
+                    } else {
+                        stringResource(R.string.gamedetail_per_game_textures_disabled)
+                    },
+                    isOverride = state.texturesEnabled,
+                    isFocused = isFocused(row),
+                    onClick = onToggleTextures
+                )
+
+                PerGameSettingsRow.TEXTURE_PACK -> ValueConfigItem(
+                    label = stringResource(R.string.gamedetail_per_game_texture_pack_label),
+                    value = if (state.textureFileCount > 0) {
+                        stringResource(
+                            R.string.gamedetail_per_game_texture_pack_summary,
+                            state.textureFileCount,
+                            formatBytes(state.textureBytes)
+                        )
+                    } else {
+                        stringResource(R.string.gamedetail_per_game_texture_pack_none)
+                    },
+                    isOverride = state.textureFileCount > 0 && state.texturesEnabled,
+                    isFocused = isFocused(row),
+                    onClick = onImportTextures,
+                    hint = state.textureDirectory
+                )
+
                 PerGameSettingsRow.PLATFORM_SETTINGS -> {
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = Dimens.spacingSm),
@@ -285,7 +321,8 @@ private fun ValueConfigItem(
     value: String,
     isOverride: Boolean,
     isFocused: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    hint: String? = null
 ) {
     val contentColor = if (isFocused) {
         MaterialTheme.colorScheme.onPrimaryContainer
@@ -340,5 +377,15 @@ private fun ValueConfigItem(
             color = valueColor,
             modifier = Modifier.padding(top = Dimens.spacingXs)
         )
+        if (hint != null) {
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = secondaryColor,
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = Dimens.spacingXs)
+            )
+        }
     }
 }

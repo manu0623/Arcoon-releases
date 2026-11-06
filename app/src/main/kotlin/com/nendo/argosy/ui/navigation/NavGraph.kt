@@ -358,7 +358,7 @@ fun NavGraph(
                 gameId = gameId,
                 cocoonSheet = backStackEntry.arguments?.getString("sheet"),
                 argosyViewModel = argosyViewModel,
-                onBack = { navController.popBackStack() },
+                onBack = { if (!navController.popBackStack()) navigateToDefault() },
                 onNavigateToPlatformSettings = { platformId ->
                     navController.navigate(
                         Screen.Settings.createRoute(section = "platform_detail", platformId = platformId)

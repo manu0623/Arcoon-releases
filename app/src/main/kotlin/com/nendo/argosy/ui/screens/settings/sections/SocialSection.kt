@@ -97,7 +97,6 @@ internal sealed class SocialItem(
     data object NotifyFriendPlaying : SocialItem("notifyFriendPlaying", "notifications")
     data object SuppressInGame : SocialItem("suppressInGame", "notifications")
     data object QuayPassEnabled : SocialItem("quayPassEnabled", "quaypass")
-    data object CocoonJingles : SocialItem("cocoonJingles", "jingles", visibleWhen = { true })
     data object Unlink : SocialItem("unlink", "unlink")
 
     companion object {
@@ -109,8 +108,6 @@ internal sealed class SocialItem(
         private val NotificationsSpacer = SectionSpacer("notificationsSpacer", "notifications")
         private val QuayPassSpacer = SectionSpacer("quayPassSpacer", "quaypass")
         private val QuayPassHeader = Header("quayPassHeader", "quaypass", R.string.settings_social_section_quaypass)
-        private val JinglesSpacer = SectionSpacer("jinglesSpacer", "jingles", visibleWhen = { true })
-        private val JinglesHeader = Header("jinglesHeader", "jingles", R.string.cocoon_jingles, visibleWhen = { true })
         private val UnlinkSpacer = SectionSpacer("unlinkSpacer", "unlink")
 
         val ALL: List<SocialItem>
@@ -120,7 +117,6 @@ internal sealed class SocialItem(
                 PrivacyHeader, OnlineStatus, ShowNowPlaying,
                 NotificationsSpacer, NotificationsHeader, NotifyFriendOnline, NotifyFriendPlaying, SuppressInGame,
                 QuayPassSpacer, QuayPassHeader, QuayPassEnabled,
-                JinglesSpacer, JinglesHeader, CocoonJingles,
                 UnlinkSpacer, Unlink
             )
     }
@@ -137,7 +133,6 @@ private val socialLayout = SettingsLayout<SocialItem, SocialLayoutState>(
             "privacy" -> R.string.settings_social_section_privacy
             "notifications" -> R.string.settings_social_section_notifications
             "quaypass" -> R.string.settings_social_section_quaypass
-            "jingles" -> R.string.cocoon_jingles
             else -> null
         }
     }
@@ -328,14 +323,6 @@ fun SocialSection(
                                     viewModel.setQuayPassEnabled(false)
                                 }
                             }
-                        )
-
-                        SocialItem.CocoonJingles -> NavigationPreference(
-                            icon = Icons.Outlined.MusicNote,
-                            title = stringResource(R.string.cocoon_jingles),
-                            subtitle = stringResource(R.string.cocoon_jingles_subtitle),
-                            isFocused = isFocused(item),
-                            onClick = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true }
                         )
 
                         SocialItem.Unlink -> ActionPreference(

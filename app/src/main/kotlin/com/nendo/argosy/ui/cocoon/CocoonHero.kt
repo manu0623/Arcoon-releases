@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -44,15 +45,24 @@ fun CocoonHeroScene(slot: PresentationSlot.CocoonHero) {
             androidx.compose.animation.AnimatedContent(
                 targetState = slot,
                 transitionSpec = {
-                    (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200, delayMillis = 40)) +
-                        androidx.compose.animation.scaleIn(
-                            androidx.compose.animation.core.tween(240, easing = com.nendo.argosy.ui.theme.Motion.argosyEase),
-                            initialScale = 0.94f
-                        )) togetherWith androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))
+                    (androidx.compose.animation.fadeIn(
+                        androidx.compose.animation.core.tween(
+                            230,
+                            easing = com.nendo.argosy.ui.theme.Motion.argosyEase
+                        )
+                    ) + androidx.compose.animation.slideInHorizontally(
+                        androidx.compose.animation.core.tween(
+                            230,
+                            easing = com.nendo.argosy.ui.theme.Motion.argosyEase
+                        )
+                    ) { width -> -width / 12 }) togetherWith androidx.compose.animation.fadeOut(
+                        androidx.compose.animation.core.tween(100)
+                    )
                 },
                 contentAlignment = Alignment.Center,
                 label = "cocoon-hero"
             ) { shown ->
+                if (shown.hidesMirror) return@AnimatedContent
                 // A theme can give each folder a full-screen hero image and a logo.
                 val themeId = com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.active.value?.id to
                     com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.packs.value
@@ -77,6 +87,16 @@ fun CocoonHeroScene(slot: PresentationSlot.CocoonHero) {
                                     1f to androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.7f)
                                 )
                             )
+                        )
+                    }
+                    if (logo == null && shown.artPath != null) {
+                        coil.compose.AsyncImage(
+                            model = com.nendo.argosy.ui.common.rememberFileImageModel(shown.artPath),
+                            contentDescription = shown.title,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier
+                                .size(iconSize)
+                                .clip(RoundedCornerShape(iconSize * 0.22f))
                         )
                     }
                     if (logo != null) {

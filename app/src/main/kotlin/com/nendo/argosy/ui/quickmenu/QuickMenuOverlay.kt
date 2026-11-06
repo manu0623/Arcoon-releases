@@ -30,6 +30,7 @@ import com.nendo.argosy.ui.quickmenu.components.QuickMenuContent
 import com.nendo.argosy.ui.quickmenu.components.QuickMenuOrbRow
 import com.nendo.argosy.ui.theme.Dimens
 import com.nendo.argosy.ui.theme.LocalLauncherTheme
+import com.nendo.argosy.ui.input.revealTicks
 import com.nendo.argosy.ui.theme.Motion
 import com.nendo.argosy.ui.util.doubleTapNoFocus
 
@@ -61,6 +62,12 @@ fun QuickMenuOverlay(
         animationSpec = tween(200),
         label = "contentAlpha"
     )
+
+    // The entrance is the cue: ticks travel with the fade-and-scale instead of sitting beside it.
+    val revealHaptics = com.nendo.argosy.ui.input.LocalHaptics.current
+    androidx.compose.runtime.LaunchedEffect(uiState.isVisible) {
+        if (uiState.isVisible) revealHaptics.revealTicks(Motion.durationSlide)
+    }
 
     if (uiState.isVisible) {
         FooterHints(hints = emptyList())

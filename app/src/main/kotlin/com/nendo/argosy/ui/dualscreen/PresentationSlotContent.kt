@@ -77,7 +77,8 @@ private const val PLAY_SHARE_TOP_GAMES = 2
 fun PresentationSlotContent(
     slot: PresentationSlot,
     showControlHints: Boolean = true,
-    showsNotifications: Boolean = false
+    showsNotifications: Boolean = false,
+    suspendedCard: Boolean = true
 ) {
     val manager = com.nendo.argosy.DualScreenManagerHolder.instance
     val dimmerPrefs = remember(manager) {
@@ -102,7 +103,7 @@ fun PresentationSlotContent(
             lastActivityAtMs = lastActivity,
             onWake = { manager?.notifyUserActivity("presentationDimmerTap") }
         ) {
-            PresentationSlotBody(slot, showControlHints, showsNotifications)
+            PresentationSlotBody(slot, showControlHints, showsNotifications, suspendedCard)
         }
     }
 }
@@ -111,7 +112,8 @@ fun PresentationSlotContent(
 private fun PresentationSlotBody(
     slot: PresentationSlot,
     showControlHints: Boolean,
-    showsNotifications: Boolean
+    showsNotifications: Boolean,
+    suspendedCard: Boolean
 ) {
     val density = LocalDensity.current
     val manager = com.nendo.argosy.DualScreenManagerHolder.instance
@@ -128,6 +130,7 @@ private fun PresentationSlotBody(
         PresentationSlotScene(
             slot = slot,
             hintsHeight = hintsHeight,
+            suspendedCard = suspendedCard,
             modifier = Modifier
                 .fillMaxSize()
                 .then(if (recapBlur > 0.dp) Modifier.blur(recapBlur) else Modifier)
@@ -173,6 +176,7 @@ private fun PresentationSlotBody(
 private fun PresentationSlotScene(
     slot: PresentationSlot,
     hintsHeight: Dp,
+    suspendedCard: Boolean,
     modifier: Modifier = Modifier
 ) {
     val frostedBackdrop = LocalFrostedBackdrop.current
@@ -306,10 +310,24 @@ private fun PresentationSlotScene(
             com.nendo.argosy.ui.cocoon.CocoonSuspendTest.picture(suspended.gameId) != null &&
             (com.nendo.argosy.ui.cocoon.CocoonSuspendTest.fresh(suspended.gameId) != null ||
                 com.nendo.argosy.ui.cocoon.CocoonSuspendTest.growThen.value != null)
-        if (suspended != null && (slot is PresentationSlot.Detail || slot is PresentationSlot.CocoonHero || handingOver)) {
+        var cardHoldOver by remember(suspendedSession?.gameId, suspendedSession?.startTimeMillis) {
+            mutableStateOf(false)
+        }
+        LaunchedEffect(suspendedSession?.gameId, suspendedSession?.startTimeMillis) {
+            val start = suspendedSession?.startTimeMillis ?: return@LaunchedEffect
+            val wait = (COCOON_LEAVE_HOLD_MS - (System.currentTimeMillis() - start)).coerceAtLeast(0)
+            delay(wait + 300)
+            cardHoldOver = true
+        }
+        val nowPlayingHero = slot is PresentationSlot.CocoonHero && slot.hidesMirror
+        if (suspendedCard && suspended != null && (nowPlayingHero || cardHoldOver || handingOver) &&
+            (nowPlayingHero || slot is PresentationSlot.Detail ||
+                slot is PresentationSlot.CocoonHero || handingOver)
+        ) {
             com.nendo.argosy.ui.cocoon.CocoonSuspendedCard(
                 session = suspended,
-                centered = slot is PresentationSlot.Detail && slot.detail.gameId == suspended.gameId,
+                centered = nowPlayingHero ||
+                    (slot is PresentationSlot.Detail && slot.detail.gameId == suspended.gameId),
                 modifier = Modifier.fillMaxSize()
             )
         }

@@ -50,7 +50,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.nendo.argosy.DualScreenManagerHolder
 import com.nendo.argosy.R
 import com.nendo.argosy.ui.dualscreen.PresentOnCompanion
-import com.nendo.argosy.ui.dualscreen.PresentationSlot
 import com.nendo.argosy.ui.dualscreen.SlotOwner
 import com.nendo.argosy.ui.theme.Dimens
 import com.nendo.argosy.ui.theme.backdrop.BackdropRole
@@ -185,11 +184,11 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     LaunchedEffect(initialSection, initialAction, initialPlatformId) {
-        if (initialSection != null) {
-            val section = SettingsSection.entries.find { it.name.equals(initialSection, ignoreCase = true) }
+        val section = settingsEntrySection(initialSection)
+        if (section != null) {
             if (section == SettingsSection.PLATFORM_DETAIL && initialPlatformId != null) {
                 viewModel.openPlatformDetailById(initialPlatformId)
-            } else if (section != null) {
+            } else {
                 viewModel.startAtSection(section)
                 kotlinx.coroutines.delay(300)
                 when (initialAction) {
@@ -608,7 +607,11 @@ fun SettingsScreen(
         label = "soundPickerBlur"
     )
 
-    LaunchedEffect(Unit) { com.nendo.argosy.ui.cocoon.CocoonSettingsFocus.paneFocused.value = false }
+    LaunchedEffect(Unit) {
+        com.nendo.argosy.ui.cocoon.CocoonSettingsFocus.paneFocused.value = false
+        // Settings search never outlives the screen it belongs to.
+        com.nendo.argosy.ui.cocoon.CocoonSettingsSearchState.open.value = false
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -1341,8 +1344,9 @@ fun SettingsScreen(
     }
 
     // Opened straight into a page (Y ▸ Edit on a platform folder): cover the main list until that
-    // page is up, so it doesn't flash first.
-    var reachedStart by remember { mutableStateOf(initialSection == null) }
+    // page is up, so it doesn't flash first. Only a resolvable, deeper section opens a page - a
+    // caller navigating with the route template leaves a "{section}" placeholder here.
+    var reachedStart by remember { mutableStateOf(!settingsEntryCovered(initialSection)) }
     LaunchedEffect(uiState.currentSection) {
         if (!reachedStart && uiState.currentSection != SettingsSection.MAIN) reachedStart = true
     }
@@ -1362,6 +1366,20 @@ fun SettingsScreen(
         com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationScreen(
             onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = false },
             jinglesOnly = true
+        )
+    }
+
+    if (com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value) {
+        com.nendo.argosy.ui.cocoon.CocoonSteamGridDbSettings(
+            viewModel = viewModel,
+            onDismiss = { com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value = false }
+        )
+    }
+
+    if (com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value) {
+        com.nendo.argosy.ui.cocoon.CocoonRomMediaSettings(
+            viewModel = viewModel,
+            onDismiss = { com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value = false }
         )
     }
 
@@ -1599,19 +1617,19 @@ private fun SettingsAmbientPresentation(uiState: SettingsUiState, viewModel: Set
     val scope = settingsPlatformScope(uiState)
     val name = scope?.platformName?.uppercase() ?: settingsSectionTitle(uiState)
     val platformId = scope?.platformId
-    var covers by remember(platformId) { mutableStateOf<List<String>?>(null) }
+    var covers by remember(platformId) { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(platformId) {
         covers = viewModel.ambientShowcaseCovers(platformId)
     }
-    val shown = covers?.takeIf { it.isNotEmpty() } ?: return
+    /*
+     * Published before the covers are looked up. Waiting for them left the lower screen on the
+     * presentation fallback - Cocoon's near-black wallpaper - for the length of the query, and for
+     * good when a section had no covers, so entering Settings read as a black screen. The section
+     * name is already the showcase's title; only the collage arrives late.
+     */
     PresentOnCompanion(
         SlotOwner("settings.ambient"),
-        PresentationSlot.PlatformShowcase(
-            name = name,
-            yearSpan = null,
-            coverPaths = shown,
-            facts = emptyList()
-        )
+        settingsAmbientSlot(name = name, coverPaths = covers)
     )
 }
 

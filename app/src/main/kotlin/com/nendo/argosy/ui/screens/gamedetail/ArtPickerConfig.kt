@@ -69,10 +69,13 @@ fun ArtSlot.stepped(delta: Int): ArtSlot {
  */
 fun withRevertTile(slot: ArtSlot, overridden: Set<ArtSlot>, candidates: List<ArtCandidate>): List<ArtCandidate> {
     val unique = candidates.distinctBy { it.source }
+    // Scraping sits with the art choices: it fetches this game's info and art again, which is
+    // the other way of getting a cover — so it belongs here rather than in the game menu.
+    val scrape = ArtCandidate(source = "scrape:${slot.name}", isScrape = true)
     return if (slot in overridden) {
-        listOf(ArtCandidate(source = "revert:${slot.name}", isRevert = true)) + unique
+        listOf(ArtCandidate(source = "revert:${slot.name}", isRevert = true), scrape) + unique
     } else {
-        unique
+        listOf(scrape) + unique
     }
 }
 

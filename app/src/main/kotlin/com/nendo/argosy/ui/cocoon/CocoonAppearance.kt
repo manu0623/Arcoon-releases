@@ -151,10 +151,12 @@ fun CocoonAppearanceSheet(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CocoonFolderIcon(colorIndex = previewColor + 5, glyph = CocoonGlyph.FOLDER, platformSlug = null, size = 44.dp,
+                    // The neighbours are the colours either side of the chosen one, not
+                    // arbitrary offsets, so the strip reads as the board it will sit on.
+                    CocoonFolderIcon(colorIndex = previewColor - 1, glyph = CocoonGlyph.FOLDER, platformSlug = null, size = 44.dp,
                         modifier = Modifier.graphicsLayer { alpha = 0.55f })
                     CocoonFolderIcon(colorIndex = previewColor, glyph = previewGlyph, platformSlug = previewPayload, size = 56.dp)
-                    CocoonFolderIcon(colorIndex = previewColor + 2, glyph = CocoonGlyph.FOLDER, platformSlug = null, size = 44.dp,
+                    CocoonFolderIcon(colorIndex = previewColor + 1, glyph = CocoonGlyph.FOLDER, platformSlug = null, size = 44.dp,
                         modifier = Modifier.graphicsLayer { alpha = 0.55f })
                 }
                 Spacer(Modifier.height(10.dp))
@@ -196,11 +198,17 @@ fun CocoonAppearanceSheet(
                             when (row) {
                                 LookRow.COLOR -> {
                                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, null, tint = CocoonSurface.TextSecondary)
-                                    Box(
-                                        Modifier.size(26.dp).background(
-                                            Brush.verticalGradient(listOf(CocoonFolderPalette.top(previewColor), CocoonFolderPalette.bottom(previewColor))),
-                                            CircleShape
-                                        )
+                                    // The swatch is the folder itself, drawn with the very tint
+                                    // the tile uses, so the demo cannot disagree with the board.
+                                    androidx.compose.foundation.Image(
+                                        painter = androidx.compose.ui.res.painterResource(CocoonFolderPalette.drawableFor(previewColor)),
+                                        contentDescription = null,
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                                            CocoonFolderPalette.top(previewColor),
+                                            androidx.compose.ui.graphics.BlendMode.Modulate
+                                        ),
+                                        modifier = Modifier.size(26.dp)
                                     )
                                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = CocoonSurface.TextSecondary)
                                 }
