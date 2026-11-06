@@ -190,6 +190,9 @@ android {
 
     sourceSets {
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
+        getByName("debug").java.srcDirs(layout.buildDirectory.dir("generated/ksp/debug/java"))
+        getByName("release").java.srcDirs(layout.buildDirectory.dir("generated/ksp/release/java"))
+        getByName("customRelease").java.srcDirs(layout.buildDirectory.dir("generated/ksp/customRelease/java"))
     }
 }
 

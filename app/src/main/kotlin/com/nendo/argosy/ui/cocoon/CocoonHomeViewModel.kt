@@ -826,27 +826,6 @@ class CocoonHomeViewModel @Inject constructor(
         publish()
     }
 
-    /**
-     * The temporary square for the game left running. Home only: inside a folder the board is that
-     * folder's own contents. It is never written to the board cache, so a cold start cannot show a
-     * game that is no longer suspended.
-     */
-    private fun nowPlayingTile(): CocoonTile? {
-        val session = suspendedSession ?: return null
-        if (groupPath.isNotEmpty()) return null
-        if (CocoonSuspendTest.resumeInProgress.value) return null
-        return CocoonTile(
-            key = "now-playing-${session.gameId}",
-            target = CocoonTileTarget.NowPlaying(session.gameId),
-            title = session.title,
-            titleRes = null,
-            kindRes = R.string.cocoon_kind_game,
-            glyph = CocoonGlyph.GAME,
-            platformSlug = session.platformName.ifBlank { null },
-            colorIndex = CocoonFolderPalette.indexFor("now-playing-${session.gameId}")
-        )
-    }
-
     /** A, or a tap on the square: back into the game, exactly where it was left. */
     private fun resumeNowPlaying() {
         val session = com.nendo.argosy.DualScreenManagerHolder.instance
@@ -931,7 +910,7 @@ class CocoonHomeViewModel @Inject constructor(
         }
         ordered += byKey.values
         while (ordered.lastOrNull()?.target is CocoonTileTarget.Gap) ordered.removeAt(ordered.lastIndex)
-        val tiles: List<CocoonTile> = layout(listOfNotNull(nowPlayingTile()) + ordered)
+        val tiles: List<CocoonTile> = layout(ordered)
         if (current == null) {
             CocoonBoardCache.tiles = tiles.filter { it.target !is CocoonTileTarget.NowPlaying }
         }

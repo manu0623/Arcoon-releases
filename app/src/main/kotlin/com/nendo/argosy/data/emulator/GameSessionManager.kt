@@ -263,6 +263,45 @@ open class GameSessionManager @Inject constructor(
         }.isSuccess
     }
 
+    /**
+     * The emulator app's own window, brought forward the way the home screen reopens a running app:
+     * its task comes back as it was, game still loaded. Used when the exact game screen is unknown.
+     */
+    fun bringEmulatorAppToFront(packageName: String): Boolean {
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return false
+        return runCatching {
+            intent.addFlags(
+                android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            )
+            context.startActivity(intent)
+        }.isSuccess
+    }
+
+    private fun resumeExternal(session: SuspendedGameSession) {
+        val path = when {
+            bringExternalToFront() -> "its game screen"
+            bringEmulatorAppToFront(session.packageName) -> "the emulator app"
+            else -> null
+        }
+        if (path == null) {
+            Logger.warn(TAG, "Could not bring ${session.packageName} back for '${session.title}'")
+            return
+        }
+        Logger.info(TAG, "Resumed '${session.title}' in ${session.packageName} through $path")
+        scope.launch {
+            val tracker = playSessionTracker.get()
+            tracker.adoptHeldSession(session.gameId, session.packageName)
+            val active = tracker.activeSession.value
+            withContext(Dispatchers.Main) {
+                onExternalResumed(session.gameId)
+                com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
+                    session.gameId, active?.isHardcore ?: false, active?.channelName
+                )
+            }
+        }
+    }
+
     fun onExternalResumed(gameId: Long) {
         val session = _sessionState.value ?: return
         if (session.builtIn || session.gameId != gameId) return
@@ -300,7 +339,10 @@ open class GameSessionManager @Inject constructor(
     /** Brings the suspended game back to the front, exactly where it was left. */
     open fun resumeSession() {
         val session = _sessionState.value ?: return
-        if (!session.builtIn) return
+        if (!session.builtIn) {
+            resumeExternal(session)
+            return
+        }
         val resumeRequest = suspendedDisplayId?.let { displayId ->
             com.nendo.argosy.ui.dualscreen.BuiltInResumeRequest(
                 gameId = session.gameId,
@@ -378,6 +420,10 @@ open class GameSessionManager @Inject constructor(
     /** Quits the suspended game through its normal shutdown (save written, session ended). */
     open fun closeSession() {
         val session = _sessionState.value ?: return
+        if (!session.builtIn) {
+            scope.launch { closeAndWait() }
+            return
+        }
         if (session.builtIn) {
             builtInTask()?.let { runCatching { it.finishAndRemoveTask() } }
         }
