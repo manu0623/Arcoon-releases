@@ -893,7 +893,7 @@ fun LibraryScreen(
             exit = fadeOut(androidx.compose.animation.core.tween(100))
         ) {
             uiState.focusedGame?.let { game ->
-                QuickMenuOverlay(
+                com.nendo.argosy.ui.cocoon.CocoonPopulating(com.nendo.argosy.ui.cocoon.CocoonPopulate.Style.DROP, com.nendo.argosy.ui.cocoon.CocoonPopulate.CursorEntry.GROW_FROM_LEFT) { QuickMenuOverlay(
                     game = game,
                     rows = uiState.quickMenuRowList(),
                     focusIndex = uiState.quickMenuFocusIndex,
@@ -950,7 +950,7 @@ fun LibraryScreen(
                         viewModel.toggleQuickMenu()
                         onOpenGameSheet(game.id, "achievements")
                     }
-                )
+                ) }
             }
         }
 

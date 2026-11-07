@@ -24,6 +24,10 @@
 #include <cmath>
 #include <EGL/egl.h>
 #include <unordered_map>
+#include <atomic>
+#include <ctime>
+#include <cstdarg>
+#include <cctype>
 
 #include "../../libretro-common/include/libretro.h"
 #include "log.h"
@@ -249,9 +253,54 @@ bool Environment::environment_handle_get_microphone_interface(struct retro_micro
     return true;
 }
 
+/*
+ * Shader activity: when the core last said it was compiling or building shaders or pipelines,
+ * in its log or in an on-screen message. The frontend shows a "compiling shaders" readout while
+ * this is recent. Cores word it differently, so any mention of shaders or pipelines alongside
+ * compiling, building, linking or caching counts.
+ */
+static std::atomic<long long> gShaderActivityMs{0};
+
+static long long monotonicMs() {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<long long>(ts.tv_sec) * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+static void noteShaderText(const char* text) {
+    if (text == nullptr) return;
+    std::string lower(text);
+    for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    bool aboutShaders = lower.find("shader") != std::string::npos || lower.find("pipeline") != std::string::npos;
+    if (!aboutShaders) return;
+    bool working = lower.find("compil") != std::string::npos || lower.find("build") != std::string::npos ||
+        lower.find("link") != std::string::npos || lower.find("cach") != std::string::npos;
+    if (working) gShaderActivityMs.store(monotonicMs());
+}
+
+/** Called by the Vulkan backend for every shader or pipeline the core builds. */
+extern "C" void libretrodroid_noteShaderWork() {
+    gShaderActivityMs.store(monotonicMs());
+}
+
+/** Milliseconds since the core last reported shader work, or -1 when it never has. */
+extern "C" long long libretrodroid_shaderActivityAgeMs() {
+    long long at = gShaderActivityMs.load();
+    if (at == 0) return -1;
+    return monotonicMs() - at;
+}
+
 void Environment::callback_retro_log(enum retro_log_level level, const char *fmt, ...) {
     va_list argptr;
     va_start(argptr, fmt);
+    {
+        va_list copy;
+        va_copy(copy, argptr);
+        char line[512];
+        vsnprintf(line, sizeof(line), fmt, copy);
+        va_end(copy);
+        noteShaderText(line);
+    }
 
     switch (level) {
 #if VERBOSE_LOGGING
@@ -469,6 +518,20 @@ bool Environment::handle_callback_environment(unsigned cmd, void *data) {
 
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
             return true;
+
+        // On-screen messages are not drawn, but one about shaders feeds the HUD's readout. The
+        // core is told they are not shown, so it keeps logging what it would have displayed.
+        case RETRO_ENVIRONMENT_SET_MESSAGE: {
+            auto* message = static_cast<const struct retro_message*>(data);
+            if (message != nullptr) noteShaderText(message->msg);
+            return false;
+        }
+
+        case RETRO_ENVIRONMENT_SET_MESSAGE_EXT: {
+            auto* message = static_cast<const struct retro_message_ext*>(data);
+            if (message != nullptr) noteShaderText(message->msg);
+            return false;
+        }
 
         default:
             LOGD("callback environment has been called: %u", cmd);

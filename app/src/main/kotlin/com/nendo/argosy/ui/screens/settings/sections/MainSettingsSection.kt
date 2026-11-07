@@ -462,7 +462,8 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxHeight(),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            // Rows touch, as in the Y menu: a hairline inside each row parts them.
+            verticalArrangement = Arrangement.spacedBy(0.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = Dimens.spacingXs)
         ) {
             items(activeRange.toList(), key = { it }) { focusIndex ->

@@ -155,7 +155,9 @@ fun ArgosyApp(
     /** Closes that panel again; a no-op when it is not open. */
     hideQuickPanel: () -> Unit = {},
     /** Whether that panel is up, so the same button can close it again. */
-    isQuickPanelOpen: (() -> Boolean)? = null
+    isQuickPanelOpen: (() -> Boolean)? = null,
+    /** True for the copy drawn inside the upper screen's floating Settings panel. */
+    asLiftedPanel: Boolean = false
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -268,31 +270,75 @@ fun ArgosyApp(
     // Starting up it has no Settings yet, and ending the lift then bounced input between screens.
     var liftedSettingsShown by remember { mutableStateOf(false) }
     val settingsRouteOpen = currentRoute?.startsWith(Screen.Settings.route) == true
+    // Every launcher copy hears the same controller. While Settings floats on the upper screen,
+    // the hidden lower copy stops listening: it has no Settings page of its own, so Left there
+    // opened the drawer (whose state the copies share) over the panel.
+    val inputYieldsToPanel = !asLiftedPanel && settingsLiftOwner != null
+    val hidesSettingsHere = !asLiftedPanel && settingsRouteOpen &&
+        (settingsLiftOwner != null || dsm?.companionHoldsPrimaryNow() == true)
+    LaunchedEffect(asLiftedPanel) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "launcher composed on display $routeDisplay panel=$asLiftedPanel lifted=${settingsLiftOwner != null}"
+        )
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            com.nendo.argosy.util.ArcoonTrace.log("launcher disposed on display $routeDisplay panel=$asLiftedPanel")
+        }
+    }
+    // Leaves Settings on this screen without ever emptying its history: Settings can be its first
+    // entry (restored from a carried route), and an empty history reopened Settings by itself.
+    val leaveSettingsHere: () -> Unit = {
+        if (navController.previousBackStackEntry != null) {
+            navController.popBackStack()
+        } else {
+            navController.navigate(Screen.Home.route) {
+                popUpTo(navController.graph.id) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
     LaunchedEffect(settingsRouteOpen, isDualActive, settingsLiftOwner) {
         val owner = settingsLiftOwner
-        val liftMovedThisSurface = owner != null && owner !== launcherSurfaceToken
-        val settingsStillStacked = navController.currentBackStack.value.any {
-            it.destination.route?.startsWith(Screen.Settings.route) == true
-        }
-        if (owner == null) liftedSettingsShown = false
-        if (liftMovedThisSurface && settingsStillStacked) liftedSettingsShown = true
-        when {
-            liftMovedThisSurface && owner != null && !settingsStillStacked && liftedSettingsShown -> {
+        if (asLiftedPanel) {
+            // The floating panel: it ends the lift once its Settings has shown and gone again.
+            val settingsStillStacked = navController.currentBackStack.value.any {
+                it.destination.route?.startsWith(Screen.Settings.route) == true
+            }
+            if (owner == null) liftedSettingsShown = false
+            if (owner != null && settingsStillStacked) liftedSettingsShown = true
+            if (owner != null && !settingsStillStacked && liftedSettingsShown) {
                 liftedSettingsShown = false
                 dsm?.dropSettingsLift(owner)
             }
+            return@LaunchedEffect
+        }
+        when {
+            // Settings stays in this screen's history, hidden behind the showcase picture, and
+            // leaves once the panel closes, so Home comes back (and re-publishes its highlight).
+            // Any copy of this screen that saw the lift does this, including one rebuilt while
+            // the panel was up, which otherwise sat on an empty Settings page (black screen).
+            owner != null -> settingsLiftMine = true
             settingsLiftMine && owner == null -> {
                 settingsLiftMine = false
-                if (settingsRouteOpen) navController.popBackStack()
+                if (settingsRouteOpen) leaveSettingsHere()
             }
             settingsRouteOpen && isDualActive && owner == null -> {
-                settingsLiftMine = true
-                dsm?.liftSettingsToShowcase(launcherSurfaceToken)
+                val route = navController.currentBackStackEntry?.concreteRoute()
+                // What this screen goes back to, recorded first so a rebuild opens there.
+                dsm?.setPrimaryRoute(
+                    navController.previousBackStackEntry?.concreteRoute() ?: Screen.Home.route
+                )
+                if (dsm?.liftSettingsToShowcase(launcherSurfaceToken, route) == true) {
+                    settingsLiftMine = true
+                } else {
+                    route?.let { dsm?.setPrimaryRoute(it) }
+                }
             }
         }
     }
 
-    val carriedRoute = remember { dsm?.primaryRoute?.value }
+    val carriedRoute = remember { if (asLiftedPanel) dsm?.liftedRoute else dsm?.primaryRoute?.value }
     val carriedStack = remember(carriedRoute) {
         carriedRoute?.let(RouteRestore::restoreStack).orEmpty()
     }
@@ -309,7 +355,11 @@ fun ArgosyApp(
     }
 
     LaunchedEffect(navBackStackEntry) {
-        navBackStackEntry?.let { dsm?.setPrimaryRoute(it.concreteRoute()) }
+        // Settings opened on the lower screen lives on the upper one, so it is never this
+        // screen's route to carry: a rebuilt lower screen restored it and reopened Settings.
+        val floatsUp = navBackStackEntry?.destination?.route?.startsWith(Screen.Settings.route) == true &&
+            (settingsLiftOwner != null || dsm?.companionHoldsPrimaryNow() == true)
+        if (!asLiftedPanel && !floatsUp) navBackStackEntry?.let { dsm?.setPrimaryRoute(it.concreteRoute()) }
     }
 
     val handleDeepLink: suspend (android.net.Uri) -> Unit = { uri ->
@@ -1081,7 +1131,8 @@ fun ArgosyApp(
         inputDispatcher.blockInputFor(Motion.transitionDebounceMs)
     }
 
-    LaunchedEffect(inputLifecycle) {
+    LaunchedEffect(inputLifecycle, inputYieldsToPanel) {
+        if (inputYieldsToPanel) return@LaunchedEffect
         viewModel.gamepadInputHandler.eventFlow().flowWithLifecycle(inputLifecycle).collect { input ->            val result = inputDispatcher.dispatch(input)
             // Temporary: a held direction that does not travel names its own failure here.
             if (input.isRepeat) {
@@ -1217,7 +1268,8 @@ fun ArgosyApp(
         onDispose { handler.detachShortcutGate(shortcutGate) }
     }
 
-    LaunchedEffect(inputLifecycle) {
+    LaunchedEffect(inputLifecycle, inputYieldsToPanel) {
+        if (inputYieldsToPanel) return@LaunchedEffect
         viewModel.gamepadInputHandler.shortcutEventFlow().flowWithLifecycle(inputLifecycle).collect { shortcut ->
             when (shortcut) {
                 UiShortcut.OPEN_NAVIGATION -> {
@@ -1242,7 +1294,8 @@ fun ArgosyApp(
         }
     }
 
-    LaunchedEffect(inputLifecycle) {
+    LaunchedEffect(inputLifecycle, inputYieldsToPanel) {
+        if (inputYieldsToPanel) return@LaunchedEffect
         viewModel.gamepadInputHandler.homeEventFlow().flowWithLifecycle(inputLifecycle).collect {
             // Home pressed inside a game leaves the launcher where the game was started (its
             // folder, with the game focused), as in Cocoon; it is not a trip back to the board.
@@ -1523,6 +1576,15 @@ fun ArgosyApp(
                         NavGraph(
                             navController = navController,
                             startDestination = startDestination,
+                            // The floating panel closes straight from Settings: going Home first
+                            // drew Home in the panel and took over the top screen's highlight.
+                            settingsShownElsewhere = !asLiftedPanel &&
+                                (settingsLiftOwner != null || dsm?.companionHoldsPrimaryNow() == true),
+                            onSettingsExit = if (asLiftedPanel) {
+                                { settingsLiftOwner?.let { dsm?.dropSettingsLift(it) } }
+                            } else {
+                                null
+                            },
                             onDrawerToggle = { if (isDrawerOpen) closeDrawer() else openDrawer() },
                             argosyViewModel = viewModel,
                             videoPreviewBlocked = isDrawerOpen || isQuickSettingsOpen ||
@@ -1540,6 +1602,16 @@ fun ArgosyApp(
                             modifier = Modifier
                                 .frostedBackdropSource(frostedBackdrop)
                                 .blur(contentBlur)
+                                // Settings opened on the lower screen floats up to the upper one;
+                                // this screen never draws its own copy, not even for the moment
+                                // before the move.
+                                .then(
+                                    if (hidesSettingsHere) {
+                                        Modifier.graphicsLayer { alpha = 0f }
+                                    } else {
+                                        Modifier
+                                    }
+                                )
                         )
                     }
 

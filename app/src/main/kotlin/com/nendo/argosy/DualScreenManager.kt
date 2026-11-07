@@ -208,12 +208,22 @@ class DualScreenManager(
      * it. Refused while the launcher already holds the display with the room, which is the case a
      * role swap has arranged.
      */
-    fun liftSettingsToShowcase(owner: Any) {
-        if (_settingsLift.value === owner) return
-        if (!companionHoldsPrimary.value) return
+    fun liftSettingsToShowcase(owner: Any, route: String? = null): Boolean {
+        if (_settingsLift.value === owner) return true
+        if (!companionHoldsPrimary.value) return false
+        liftedRoute = route ?: _primaryRoute.value
         _settingsLift.value = owner
         refocusMain()
+        return true
     }
+
+    /**
+     * The Settings route the lift opened with. The upper screen draws Settings in a floating panel
+     * from this, while the lower launcher goes straight back to the screen it was on, so neither
+     * screen swaps what it shows.
+     */
+    var liftedRoute: String? = null
+        private set
 
     /**
      * Puts the launcher back on its own display once [owner]'s Settings screen closes.
@@ -1122,6 +1132,29 @@ class DualScreenManager(
              * (grace) and the app does not flash into single-screen mode and back.
              */
             !swapped && lift == null && (grace || (dualScreen && companionActive))
+        }.stateIn(activityIndependentScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
+
+    /**
+     * [companionHoldsPrimary] read straight from its sources. The flow catches up a frame late,
+     * and key routing or a screen's choice of what to draw in that frame bounced between screens.
+     */
+    fun companionHoldsPrimaryNow(): Boolean =
+        !_isRolesSwapped.value && _settingsLift.value == null &&
+            (_companionGrace.value || (_isDualScreenDevice.value && _isCompanionActive.value))
+
+    /**
+     * Whether the lower screen hosts the launcher, regardless of a Settings lift. The upper screen
+     * keeps its showcase picture by this, so a lift (which only floats Settings over it) never
+     * flips the picture away.
+     */
+    val companionHostsLauncher: StateFlow<Boolean> =
+        kotlinx.coroutines.flow.combine(
+            _isDualScreenDevice,
+            _isCompanionActive,
+            _isRolesSwapped,
+            _companionGrace
+        ) { dualScreen, companionActive, swapped, grace ->
+            !swapped && (grace || (dualScreen && companionActive))
         }.stateIn(activityIndependentScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
 
     private var companionGraceJob: kotlinx.coroutines.Job? = null

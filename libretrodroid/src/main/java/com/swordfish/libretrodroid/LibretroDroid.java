@@ -223,6 +223,15 @@ public class LibretroDroid {
     public static native boolean activateRichPresence(String script);
     public static native byte[] currentRichPresence();
 
+    /** Milliseconds since the core last reported compiling or building shaders, or -1 if never. */
+    public static native long shaderActivityAgeMs();
+
+    /** Shaders (Vulkan shader modules) the core has built since the app started. */
+    public static native long shaderModuleCount();
+
+    /** Graphics pipelines the core has built since the app started. */
+    public static native long pipelineCount();
+
     /**
      * Run native achievement condition tests.
      * @return Number of tests that passed

@@ -395,6 +395,13 @@ class LibretroActivity : ComponentActivity() {
     private var isGamepadConnectedState by mutableStateOf(false)
     private var currentOrientationState by mutableStateOf(android.content.res.Configuration.ORIENTATION_LANDSCAPE)
     private var currentRotationState by mutableStateOf(0)
+    /** When this game was launched, and how many shaders the core had built by then. */
+    private val launchRealtimeMs = android.os.SystemClock.elapsedRealtime()
+    private val shaderCountAtLaunch: Long? = runCatching {
+        val modules = com.swordfish.libretrodroid.LibretroDroid.shaderModuleCount()
+        if (modules > 0) modules else com.swordfish.libretrodroid.LibretroDroid.pipelineCount()
+    }.getOrNull()
+
     private var touchSettingsState by mutableStateOf(com.nendo.argosy.data.preferences.BuiltinEmulatorSettings())
     private var portraitPositionState by mutableStateOf("Auto")
     private var gripReserveModeState by mutableStateOf(com.nendo.argosy.data.preferences.GripReserveMode.OFF)
@@ -1008,6 +1015,47 @@ class LibretroActivity : ComponentActivity() {
         override fun displayMoveAbandoned() = rebuildSecondScreen()
     }
 
+    /*
+     * Waking from sleep, the game resumes before the lower screen has switched back on, so the
+     * split falls back to one screen. While the game is in front this watches for that screen to
+     * come back and puts the console's lower screen on it again.
+     */
+    private var secondScreenWatcher: android.hardware.display.DisplayManager.DisplayListener? = null
+
+    private fun watchForSecondScreen() {
+        if (secondScreenWatcher != null || DualScreenOutput.forCore(resolvedCoreId) == null) return
+        val displayManager = getSystemService(android.hardware.display.DisplayManager::class.java) ?: return
+        val watcher = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = restoreSecondScreenIfBack()
+            override fun onDisplayChanged(displayId: Int) = restoreSecondScreenIfBack()
+            override fun onDisplayRemoved(displayId: Int) {}
+        }
+        displayManager.registerDisplayListener(watcher, android.os.Handler(mainLooper))
+        secondScreenWatcher = watcher
+    }
+
+    private fun stopWatchingForSecondScreen() {
+        val watcher = secondScreenWatcher ?: return
+        getSystemService(android.hardware.display.DisplayManager::class.java)?.unregisterDisplayListener(watcher)
+        secondScreenWatcher = null
+    }
+
+    private fun restoreSecondScreenIfBack() {
+        if (!::retroView.isInitialized) return
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
+        if (secondScreenDisplay() == null) return
+        when {
+            dualScreenOutput == null -> {
+                com.nendo.argosy.util.ArcoonTrace.log("second screen back: restoring the two-screen split")
+                rebuildSecondScreen()
+            }
+            secondScreen == null -> {
+                com.nendo.argosy.util.ArcoonTrace.log("second screen back: showing the lower screen again")
+                showSecondScreen()
+            }
+        }
+    }
+
     private fun rebuildSecondScreen() {
         if (!::retroView.isInitialized) return
         hideSecondScreen()
@@ -1309,6 +1357,53 @@ class LibretroActivity : ComponentActivity() {
             }
         }
         val lastSaveAt = saveStateManager.lastStateWriteRealtimeMs
+        // Shaders the core builds, counted at the Vulkan layer. At boot the core rebuilds its
+        // whole disk cache in one burst ("Loading shaders 1,234"); once that burst goes quiet,
+        // every further one is a new shader compiled during play ("New shaders 12").
+        var shaderReadout by androidx.compose.runtime.remember { mutableStateOf<String?>(null) }
+        androidx.compose.runtime.LaunchedEffect(settings.hudShowShaders) {
+            if (!settings.hudShowShaders) {
+                shaderReadout = null
+                return@LaunchedEffect
+            }
+            fun built(): Long = runCatching {
+                val modules = com.swordfish.libretrodroid.LibretroDroid.shaderModuleCount()
+                if (modules > 0) modules else com.swordfish.libretrodroid.LibretroDroid.pipelineCount()
+            }.getOrDefault(0L)
+            val start = shaderCountAtLaunch ?: built()
+            // Switched on long after the game started: nothing left to load, count new ones only.
+            var loadedBaseline: Long? = if (
+                android.os.SystemClock.elapsedRealtime() - launchRealtimeMs > SHADER_LOAD_WINDOW_MS
+            ) built() - start else null
+            while (true) {
+                val total = built() - start
+                val age = runCatching { com.swordfish.libretrodroid.LibretroDroid.shaderActivityAgeMs() }
+                    .getOrDefault(-1L)
+                val sinceLaunch = android.os.SystemClock.elapsedRealtime() - launchRealtimeMs
+                if (loadedBaseline == null &&
+                    ((total > 0 && age > SHADER_QUIET_MS) || sinceLaunch > SHADER_LOAD_WINDOW_MS)
+                ) {
+                    loadedBaseline = total
+                    com.nendo.argosy.util.ArcoonTrace.log(
+                        "shaders: loaded $total at boot (modules=${runCatching { com.swordfish.libretrodroid.LibretroDroid.shaderModuleCount() }.getOrNull()} " +
+                            "pipelines=${runCatching { com.swordfish.libretrodroid.LibretroDroid.pipelineCount() }.getOrNull()})"
+                    )
+                }
+                val baseline = loadedBaseline
+                shaderReadout = when {
+                    baseline == null && total > 0 -> getString(
+                        com.nendo.argosy.R.string.ingame_hud_loading_shaders,
+                        java.text.NumberFormat.getIntegerInstance().format(total)
+                    )
+                    baseline == null -> null
+                    else -> getString(
+                        com.nendo.argosy.R.string.ingame_hud_new_shaders,
+                        java.text.NumberFormat.getIntegerInstance().format(total - baseline)
+                    )
+                }
+                kotlinx.coroutines.delay(SHADER_POLL_MS)
+            }
+        }
         return com.nendo.argosy.ui.components.InGameStatusHudState(
             batteryLevel = battery.level.takeIf { settings.hudShowBattery && it >= 0 },
             batteryCharging = battery.isCharging,
@@ -1325,7 +1420,8 @@ class LibretroActivity : ComponentActivity() {
                 formatAgo((nowRealtimeMs - lastSaveAt) / 1000L)
             } else {
                 null
-            }
+            },
+            shaders = shaderReadout
         )
     }
 
@@ -2476,7 +2572,8 @@ class LibretroActivity : ComponentActivity() {
                 hudShowClock = touchSettingsState.hudShowClock,
                 hudShowPlaytime = touchSettingsState.hudShowPlaytime,
                 hudShowFps = touchSettingsState.hudShowFps,
-                hudShowLastSave = touchSettingsState.hudShowLastSave
+                hudShowLastSave = touchSettingsState.hudShowLastSave,
+                hudShowShaders = touchSettingsState.hudShowShaders
             ),
             onControlsAction = ::handleControlsAction,
             coreOptions = buildCoreOptionItems(),
@@ -3247,6 +3344,9 @@ class LibretroActivity : ComponentActivity() {
             is InGameControlsAction.SetHudShowLastSave -> {
                 lifecycleScope.launch { preferencesRepository.setHudShowLastSave(action.enabled) }
             }
+            is InGameControlsAction.SetHudShowShaders -> {
+                lifecycleScope.launch { preferencesRepository.setHudShowShaders(action.enabled) }
+            }
         }
     }
 
@@ -3571,6 +3671,7 @@ class LibretroActivity : ComponentActivity() {
         retroView.onResume()
         setUpSecondScreen()
         showSecondScreen()
+        watchForSecondScreen()
         startRollingSave()
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.available.value = canSuspend() && dualScreenOutput == null
     }
@@ -3994,6 +4095,7 @@ class LibretroActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        stopWatchingForSecondScreen()
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.available.value = false
         val pauseStartedAt = android.os.SystemClock.uptimeMillis()
         try {
@@ -4429,6 +4531,11 @@ class LibretroActivity : ComponentActivity() {
         private const val FPS_SAMPLE_INTERVAL_MS = 1_000L
 
         private const val HUD_TICK_INTERVAL_MS = 1_000L
+        private const val SHADER_POLL_MS = 250L
+        /** The boot burst counts as loading until it has been quiet this long. */
+        private const val SHADER_QUIET_MS = 1_500L
+        /** After this long from launch nothing more counts as loading. */
+        private const val SHADER_LOAD_WINDOW_MS = 30_000L
 
         private const val HUD_DURATION_WIDTH = 4
         private const val HUD_FPS_DIGITS = 3

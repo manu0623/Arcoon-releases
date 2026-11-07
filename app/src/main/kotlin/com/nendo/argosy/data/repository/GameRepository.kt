@@ -186,10 +186,27 @@ class GameRepository @Inject constructor(
             .filter { it.isNotEmpty() }
             .toSet()
 
-        val topLevelRoms = rootFiles.filter { it.extension.lowercase() in validExtensions }
-        val topLevelMatch = topLevelRoms.filter { DiscSheets.isLoader(it.name) }.minByOrNull { it.name }
-            ?: topLevelRoms.maxByOrNull { it.length() }
-        if (topLevelMatch != null) return topLevelMatch
+        fun bestRom(files: List<File>): File? {
+            val roms = files.filter { it.isFile && it.extension.lowercase() in validExtensions }
+            return roms.filter { DiscSheets.isLoader(it.name) }.minByOrNull { it.name }
+                ?: roms.maxByOrNull { it.length() }
+        }
+
+        bestRom(rootFiles)?.let { return it }
+
+        // A game downloaded with its extra content keeps the rom in a category folder beside the
+        // updates and DLC ("<game>/Game/<rom>"). Look in the Game folder first, then in any other
+        // playable category (patches, translations, demos), never in updates, DLC or manuals.
+        val categoryDirs = rootEntries.filter { it.isDirectory }
+            .mapNotNull { dir ->
+                com.nendo.argosy.data.model.VariantCategory.entries
+                    .firstOrNull { it.key.equals(dir.name, ignoreCase = true) && it.isLaunchTarget }
+                    ?.let { category -> category to dir }
+            }
+            .sortedBy { (category, _) -> category.sortOrder }
+        for ((_, dir) in categoryDirs) {
+            bestRom(dir.listFiles()?.toList().orEmpty())?.let { return it }
+        }
 
         if (platformSlug == "wiiu") {
             val codeDir = rootEntries.firstOrNull { it.isDirectory && it.name.equals("code", ignoreCase = true) }

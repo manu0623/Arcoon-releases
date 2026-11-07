@@ -34,11 +34,13 @@ data class InGameStatusHudState(
     val clock: String? = null,
     val sessionElapsed: String? = null,
     val fps: String? = null,
-    val lastSave: String? = null
+    val lastSave: String? = null,
+    /** "Loading shaders 1,234" at boot, then "New shaders 12" (null when switched off). */
+    val shaders: String? = null
 ) {
     val hasAnything: Boolean
         get() = batteryLevel != null || clock != null || sessionElapsed != null ||
-            fps != null || lastSave != null
+            fps != null || lastSave != null || shaders != null
 }
 
 /**
@@ -80,6 +82,7 @@ fun InGameStatusHud(
             state.sessionElapsed?.let { HudText(it, monospace = true) }
             state.fps?.let { HudText(it, monospace = true) }
             state.lastSave?.let { HudText(it) }
+            state.shaders?.let { HudText(it, monospace = true) }
         }
     }
 }

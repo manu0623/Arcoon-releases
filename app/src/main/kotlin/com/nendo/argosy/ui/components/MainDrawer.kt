@@ -76,10 +76,11 @@ fun MainDrawer(
     val wasOpen = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // The drawer slides in behind this: a light cue travels with the slide, and only on the way
     // in - a drawer that is already open when the app starts must not tick.
+    // Each opening plays Cocoon's drop-down: once the sheet has slid in, the rows populate top
+    // to bottom with a tick each (CocoonPopulate), then the cursor fades in on the focused row.
+    val openings = androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
     LaunchedEffect(isOpen) {
-        if (isOpen && !wasOpen.value) {
-            revealHaptics.revealTicks(com.nendo.argosy.ui.theme.Motion.durationSlide)
-        }
+        if (isOpen && !wasOpen.value) openings.intValue++
         wasOpen.value = isOpen
     }
     // Cocoon's left sheet: a near-black panel with rounded right corners.
@@ -99,7 +100,7 @@ fun MainDrawer(
                 localAvatarDoodle = drawerState.localAvatarDoodle,
                 rommUsername = drawerState.rommUsername,
                 rommAvatarUrl = drawerState.rommAvatarUrl,
-                isFocused = drawerState.navFocusIndex == DRAWER_ACCOUNT_ROW_INDEX,
+                isFocused = isOpen && drawerState.navFocusIndex == DRAWER_ACCOUNT_ROW_INDEX,
                 onOpenAccounts = {
                     onNavigate(Screen.Settings.createRoute(section = ACCOUNTS_SECTION_NAME))
                 }
@@ -109,16 +110,26 @@ fun MainDrawer(
                 color = MaterialTheme.colorScheme.outlineVariant
             )
 
-            NavigationContent(
+            com.nendo.argosy.ui.cocoon.CocoonPopulating(
+                com.nendo.argosy.ui.cocoon.CocoonPopulate.Style.DROP,
+                key = openings.intValue,
+                startDelayMs = com.nendo.argosy.ui.theme.Motion.durationSlide.toLong(),
+                // Nothing to play before the drawer has ever opened.
+                enabled = openings.intValue > 0
+            ) {
+                NavigationContent(
                 items = items,
                 currentRoute = currentRoute,
-                focusedIndex = drawerState.navFocusIndex - DRAWER_NAV_ITEM_OFFSET,
+                // A closed drawer has no highlighted row: its rows sit off screen, and one that
+                // still counted as focused took the cursor away from the screen in front.
+                focusedIndex = if (isOpen) drawerState.navFocusIndex - DRAWER_NAV_ITEM_OFFSET else -1,
                 badgeFor = drawerState::badgeCountFor,
                 isRommConnected = drawerState.rommConnected,
                 onNavigate = onNavigate,
                 onResumeGame = onResumeGame,
                 modifier = Modifier.weight(1f)
             )
+            }
         }
     }
 
@@ -176,6 +187,8 @@ private fun NavigationContent(
                         }
                     },
                     modifier = Modifier.padding(end = Dimens.spacingMd),
+                    isFirst = index == 0,
+                    isLast = index == items.lastIndex,
                     trailing = { badge?.let { DrawerBadge(it) } }
                 )
             }

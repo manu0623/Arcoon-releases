@@ -27,6 +27,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -132,8 +135,13 @@ fun CocoonNavRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .cocoonPopulate(focused)
             .cocoonBrackets(focused = focused, outset = 3.dp)
-            .background(if (selected) CocoonSurface.Chip else Color.Transparent, RoundedCornerShape(14.dp))
+            // The open category reads like the Y menu's focused row: its panel, a shade lighter.
+            .background(
+                if (selected) Color.White.copy(alpha = 0.08f).compositeOver(CocoonMenuPanel) else Color.Transparent,
+                RoundedCornerShape(18.dp)
+            )
             .clickableNoFocus(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -189,20 +197,34 @@ fun CocoonSettingsRow(
     isFirst: Boolean = true,
     isLast: Boolean = true,
 ) {
-    // Cocoon groups a category's rows into one rounded panel split by hairlines.
-    val big = 16.dp
-    val small = 3.dp
+    // Looks like the Y menu (CocoonMenuRow): a category's rows are one dark panel, round only at
+    // its outer corners, split by hairlines that stop short of the edges; the focused row lifts a
+    // shade lighter inside it.
+    val big = 18.dp
     val shape = RoundedCornerShape(
-        topStart = if (isFirst) big else small,
-        topEnd = if (isFirst) big else small,
-        bottomStart = if (isLast) big else small,
-        bottomEnd = if (isLast) big else small
+        topStart = if (isFirst) big else 0.dp,
+        topEnd = if (isFirst) big else 0.dp,
+        bottomStart = if (isLast) big else 0.dp,
+        bottomEnd = if (isLast) big else 0.dp
     )
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .cocoonPopulate(focused)
+            .zIndex(if (focused) 1f else 0f)
             .cocoonBrackets(focused = focused, outset = 3.dp)
-            .background(if (focused) CocoonSurface.Chip.copy(alpha = 1f) else CocoonSurface.Chip, shape)
+            .background(CocoonMenuPanel, shape)
+            .then(if (focused) Modifier.background(Color.White.copy(alpha = 0.08f), shape) else Modifier)
+            .then(
+                if (!isLast) Modifier.drawBehind {
+                    val inset = 14.dp.toPx()
+                    drawRect(
+                        color = Color.White.copy(alpha = 0.07f),
+                        topLeft = androidx.compose.ui.geometry.Offset(inset, size.height - 1.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(size.width - inset * 2, 1.dp.toPx())
+                    )
+                } else Modifier
+            )
             .clickableNoFocus(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -46,7 +46,11 @@ fun NavGraph(
     argosyViewModel: ArgosyViewModel,
     modifier: Modifier = Modifier,
     videoPreviewBlocked: Boolean = false,
-    onPlayMedia: (itemId: String, startOver: Boolean) -> Unit = { _, _ -> }
+    onPlayMedia: (itemId: String, startOver: Boolean) -> Unit = { _, _ -> },
+    /** Replaces leaving Settings for Home, for the upper screen's floating Settings panel. */
+    onSettingsExit: (() -> Unit)? = null,
+    /** True when Settings opened here is drawn on the other screen, so this one draws nothing. */
+    settingsShownElsewhere: Boolean = false
 ) {
     val navigateToDefault = remember {
         {
@@ -319,9 +323,19 @@ fun NavGraph(
             val section = backStackEntry.arguments?.getString("section")
             val action = backStackEntry.arguments?.getString("action")
             val platformId = backStackEntry.arguments?.getLong("platformId")?.takeIf { it >= 0 }
-            SettingsScreen(
+            if (settingsShownElsewhere) {
+                androidx.compose.foundation.layout.Spacer(Modifier)
+                return@composable
+            }
+            // Settings opens like a folder: its rows arrive in a wave with a tick each.
+            com.nendo.argosy.ui.cocoon.CocoonPopulating(com.nendo.argosy.ui.cocoon.CocoonPopulate.Style.FOLDER) {
+                SettingsScreen(
                 onBack = {
-                    if (platformId != null) navController.popBackStack() else navigateToDefault()
+                    when {
+                        platformId != null -> navController.popBackStack()
+                        onSettingsExit != null -> onSettingsExit()
+                        else -> navigateToDefault()
+                    }
                 },
                 initialSection = section,
                 initialAction = action,
@@ -331,6 +345,7 @@ fun NavGraph(
                 },
                 onNavigate = { route -> navController.navigate(route) }
             )
+            }
         }
 
         composable(

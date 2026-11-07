@@ -325,7 +325,7 @@ fun CocoonHomeScreen(
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))
         ) {
             val packageName = (cocoonDockTarget(state.dockIndex, state.dockApps) as? CocoonDockTarget.App)?.packageName
-            if (packageName != null) CocoonDockMenu(
+            if (packageName != null) com.nendo.argosy.ui.cocoon.CocoonPopulating(com.nendo.argosy.ui.cocoon.CocoonPopulate.Style.DROP, com.nendo.argosy.ui.cocoon.CocoonPopulate.CursorEntry.GROW_FROM_LEFT) { CocoonDockMenu(
                 packageName = packageName,
                 focusedIndex = state.dockMenuIndex,
                 showLaunchPicker = needsCocoonScreenPicker(rememberDockLaunchScreens()),
@@ -340,7 +340,7 @@ fun CocoonHomeScreen(
                     inputHandler.onConfirm()
                 },
                 onDismiss = { viewModel.closeDockMenu() }
-            )
+            ) }
         }
         androidx.compose.animation.AnimatedVisibility(
             visible = state.addAppOpen,
@@ -361,7 +361,7 @@ fun CocoonHomeScreen(
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(120)),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))
         ) {
-            CocoonListMenu(
+            com.nendo.argosy.ui.cocoon.CocoonPopulating(com.nendo.argosy.ui.cocoon.CocoonPopulate.Style.DROP, key = state.startNewOpen) { CocoonListMenu(
                 title = stringResource(if (state.startNewOpen) R.string.cocoon_start_new else R.string.cocoon_start_title),
                 headerIcon = if (state.startNewOpen) androidx.compose.material.icons.Icons.Outlined.Add else androidx.compose.material.icons.Icons.Outlined.Menu,
                 rows = cocoonStartRows(state.startNewOpen).map { row ->
@@ -386,7 +386,7 @@ fun CocoonHomeScreen(
                     inputHandler.onConfirm()
                 },
                 onDismiss = { viewModel.closeStartMenu() }
-            )
+            ) }
         }
         // Start ▸ Add Widget / Add Pod: the second step. The list keeps drawing for the length of
         // its exit fade after B closes it, so it remembers what was open; falling back to the
@@ -401,7 +401,7 @@ fun CocoonHomeScreen(
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))
         ) {
             val choice = lastChoice
-            CocoonListMenu(
+            com.nendo.argosy.ui.cocoon.CocoonPopulating(com.nendo.argosy.ui.cocoon.CocoonPopulate.Style.DROP, key = lastChoice) { CocoonListMenu(
                 title = stringResource(
                     when (choice) {
                         CocoonChoice.WIDGETS -> R.string.cocoon_start_add_widget
@@ -470,7 +470,7 @@ fun CocoonHomeScreen(
                 focusedIndex = state.choiceIndex,
                 onRow = { index -> viewModel.pickChoice(index) },
                 onDismiss = { viewModel.closeChoice() }
-            )
+            ) }
         }
         if (state.pickingImage) {
             com.nendo.argosy.ui.filebrowser.FileBrowserScreen(
@@ -538,7 +538,7 @@ fun CocoonHomeScreen(
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(120)),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100))
         ) {
-            if (focused != null) CocoonTileMenu(
+            if (focused != null) com.nendo.argosy.ui.cocoon.CocoonPopulating(com.nendo.argosy.ui.cocoon.CocoonPopulate.Style.DROP, com.nendo.argosy.ui.cocoon.CocoonPopulate.CursorEntry.GROW_FROM_LEFT) { CocoonTileMenu(
                 tile = focused,
                 rows = state.tileMenuRows,
                 focusedIndex = state.tileMenuIndex,
@@ -548,7 +548,7 @@ fun CocoonHomeScreen(
                     inputHandler.onConfirm()
                 },
                 onDismiss = { viewModel.closeTileMenu() }
-            )
+            ) }
         }
     }
 }
@@ -971,10 +971,6 @@ private fun CocoonTileMenu(
                     // The inset sits inside the scroll viewport: a focused row draws its brackets
                     // outside its bounds, and the viewport's clip was cutting the first one off.
                     .padding(vertical = 8.dp)
-                    .graphicsLayer {
-                        translationX = (1f - enter.value) * 64.dp.toPx()
-                        alpha = 0.15f + 0.85f * enter.value
-                    }
             ) {
                 rows.forEachIndexed { index, row ->
                     val danger = row == CocoonTileMenuRow.DELETE_FOLDER || row == CocoonTileMenuRow.REMOVE

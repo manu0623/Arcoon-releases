@@ -20,6 +20,7 @@
 #include <dlfcn.h>
 #include <media/NdkImageReader.h>
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 
 #include "../log.h"
@@ -28,7 +29,77 @@
 #include <adrenotools/driver.h>
 #endif
 
+extern "C" void libretrodroid_noteShaderWork();
+
 namespace libretrodroid {
+
+/*
+ * Shader counting. The core reaches the driver through the Vulkan entry points handed to it
+ * here, so wrapping vkCreateShaderModule and vkCreateGraphicsPipelines counts every shader and
+ * pipeline it builds: a burst while it rebuilds its disk cache at boot, then one by one as a game
+ * needs new ones (the cause of first-time stutter). The frontend reads the totals for its HUD.
+ */
+namespace shadercount {
+std::atomic<long long> modules{0};
+std::atomic<long long> pipelines{0};
+PFN_vkGetInstanceProcAddr realGetInstanceProcAddr = nullptr;
+PFN_vkGetDeviceProcAddr realGetDeviceProcAddr = nullptr;
+PFN_vkCreateShaderModule realCreateShaderModule = nullptr;
+PFN_vkCreateGraphicsPipelines realCreateGraphicsPipelines = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL createShaderModule(VkDevice device, const VkShaderModuleCreateInfo* info,
+                                                  const VkAllocationCallbacks* allocator, VkShaderModule* out) {
+    VkResult result = realCreateShaderModule(device, info, allocator, out);
+    if (result == VK_SUCCESS) {
+        modules.fetch_add(1);
+        libretrodroid_noteShaderWork();
+    }
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL createGraphicsPipelines(VkDevice device, VkPipelineCache cache, uint32_t count,
+                                                       const VkGraphicsPipelineCreateInfo* infos,
+                                                       const VkAllocationCallbacks* allocator, VkPipeline* out) {
+    VkResult result = realCreateGraphicsPipelines(device, cache, count, infos, allocator, out);
+    if (result == VK_SUCCESS) {
+        pipelines.fetch_add(count);
+        libretrodroid_noteShaderWork();
+    }
+    return result;
+}
+
+/** Swaps the two counted entry points in for the real ones, remembering the real ones. */
+PFN_vkVoidFunction wrap(const char* name, PFN_vkVoidFunction real) {
+    if (real == nullptr || name == nullptr) return real;
+    if (strcmp(name, "vkCreateShaderModule") == 0) {
+        realCreateShaderModule = reinterpret_cast<PFN_vkCreateShaderModule>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(&createShaderModule);
+    }
+    if (strcmp(name, "vkCreateGraphicsPipelines") == 0) {
+        realCreateGraphicsPipelines = reinterpret_cast<PFN_vkCreateGraphicsPipelines>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(&createGraphicsPipelines);
+    }
+    return real;
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL getDeviceProcAddr(VkDevice device, const char* name) {
+    if (realGetDeviceProcAddr == nullptr) return nullptr;
+    if (name != nullptr && strcmp(name, "vkGetDeviceProcAddr") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(&getDeviceProcAddr);
+    }
+    return wrap(name, realGetDeviceProcAddr(device, name));
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL getInstanceProcAddr(VkInstance instance, const char* name) {
+    if (realGetInstanceProcAddr == nullptr) return nullptr;
+    PFN_vkVoidFunction real = realGetInstanceProcAddr(instance, name);
+    if (name != nullptr && strcmp(name, "vkGetDeviceProcAddr") == 0 && real != nullptr) {
+        realGetDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(real);
+        return reinterpret_cast<PFN_vkVoidFunction>(&getDeviceProcAddr);
+    }
+    return wrap(name, real);
+}
+}  // namespace shadercount
 
 namespace {
 
@@ -437,7 +508,8 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL VulkanBackend::coreGetInstanceProcAddr(
     if (strcmp(name, "vkCreateDevice") == 0) {
         return reinterpret_cast<PFN_vkVoidFunction>(&coreCreateDevice);
     }
-    return getInstance().vk.getInstanceProcAddr(instance, name);
+    shadercount::realGetInstanceProcAddr = getInstance().vk.getInstanceProcAddr;
+    return shadercount::getInstanceProcAddr(instance, name);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL VulkanBackend::coreCreateDevice(VkPhysicalDevice physicalDevice,
@@ -461,13 +533,14 @@ bool VulkanBackend::coreCreatesDevice() const {
 
 bool VulkanBackend::createDeviceThroughCore() {
     retro_vulkan_context context {};
+    shadercount::realGetInstanceProcAddr = vk.getInstanceProcAddr;
 
     if (negotiation->interface_version >= 2 && negotiation->create_device2 != nullptr) {
         negotiatedDevice = negotiation->create_device2(
-            &context, instance, gpu, surface, vk.getInstanceProcAddr, &createDeviceWrapper, this);
+            &context, instance, gpu, surface, &shadercount::getInstanceProcAddr, &createDeviceWrapper, this);
         if (!negotiatedDevice) {
             negotiatedDevice = negotiation->create_device2(
-                &context, instance, VK_NULL_HANDLE, surface, vk.getInstanceProcAddr,
+                &context, instance, VK_NULL_HANDLE, surface, &shadercount::getInstanceProcAddr,
                 &createDeviceWrapper, this);
         }
     } else {
@@ -574,8 +647,10 @@ bool VulkanBackend::start() {
     renderInterface.instance = instance;
     renderInterface.gpu = gpu;
     renderInterface.device = device;
-    renderInterface.get_device_proc_addr = vk.getDeviceProcAddr;
-    renderInterface.get_instance_proc_addr = vk.getInstanceProcAddr;
+    shadercount::realGetInstanceProcAddr = vk.getInstanceProcAddr;
+    shadercount::realGetDeviceProcAddr = vk.getDeviceProcAddr;
+    renderInterface.get_device_proc_addr = &shadercount::getDeviceProcAddr;
+    renderInterface.get_instance_proc_addr = &shadercount::getInstanceProcAddr;
     renderInterface.queue = queue;
     renderInterface.queue_index = queueFamily;
     renderInterface.set_image = &callbackSetImage;
@@ -937,3 +1012,7 @@ void VulkanBackend::shutdown() {
 }
 
 }
+
+/** Shaders (modules) and pipelines the core has built since the app started. */
+extern "C" long long libretrodroid_shaderModuleCount() { return libretrodroid::shadercount::modules.load(); }
+extern "C" long long libretrodroid_pipelineCount() { return libretrodroid::shadercount::pipelines.load(); }

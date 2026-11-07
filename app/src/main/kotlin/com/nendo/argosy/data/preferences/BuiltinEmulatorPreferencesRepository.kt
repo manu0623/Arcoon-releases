@@ -88,6 +88,7 @@ class BuiltinEmulatorPreferencesRepository @Inject constructor(
         val HUD_SHOW_PLAYTIME = booleanPreferencesKey("builtin_hud_show_playtime")
         val HUD_SHOW_FPS = booleanPreferencesKey("builtin_hud_show_fps")
         val HUD_SHOW_LAST_SAVE = booleanPreferencesKey("builtin_hud_show_last_save")
+        val HUD_SHOW_SHADERS = booleanPreferencesKey("builtin_hud_show_shaders")
     }
 
     fun isBuiltinLibretroEnabled(): Flow<Boolean> = dataStore.data.map { prefs ->
@@ -161,7 +162,8 @@ class BuiltinEmulatorPreferencesRepository @Inject constructor(
             hudShowClock = prefs[Keys.HUD_SHOW_CLOCK] ?: true,
             hudShowPlaytime = prefs[Keys.HUD_SHOW_PLAYTIME] ?: false,
             hudShowFps = prefs[Keys.HUD_SHOW_FPS] ?: false,
-            hudShowLastSave = prefs[Keys.HUD_SHOW_LAST_SAVE] ?: false
+            hudShowLastSave = prefs[Keys.HUD_SHOW_LAST_SAVE] ?: false,
+            hudShowShaders = prefs[Keys.HUD_SHOW_SHADERS] ?: false
         )
     }.flowOn(Dispatchers.Default)
 
@@ -483,6 +485,10 @@ class BuiltinEmulatorPreferencesRepository @Inject constructor(
 
     suspend fun setHudShowLastSave(enabled: Boolean) {
         dataStore.edit { it[Keys.HUD_SHOW_LAST_SAVE] = enabled }
+    }
+
+    suspend fun setHudShowShaders(enabled: Boolean) {
+        dataStore.edit { it[Keys.HUD_SHOW_SHADERS] = enabled }
     }
 
     suspend fun setBuiltinGpuDriver(token: String) {

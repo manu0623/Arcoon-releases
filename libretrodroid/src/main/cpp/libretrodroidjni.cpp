@@ -57,6 +57,12 @@ extern "C" {
 #include "utils/utils.h"
 #include "../../libretro-common/include/libretro.h"
 #include "utils/libretrodroidexception.h"
+
+/** Defined in environment.cpp. */
+long long libretrodroid_shaderActivityAgeMs();
+/** Defined in vulkan/vulkanbackend.cpp. */
+long long libretrodroid_shaderModuleCount();
+long long libretrodroid_pipelineCount();
 }
 
 extern "C" {
@@ -1151,6 +1157,27 @@ JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_activa
     bool activated = LibretroDroid::getInstance().getAchievements().activateRichPresence(text);
     env->ReleaseStringUTFChars(script, text);
     return activated ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_shaderModuleCount(
+    JNIEnv* env,
+    jclass obj
+) {
+    return static_cast<jlong>(libretrodroid_shaderModuleCount());
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_pipelineCount(
+    JNIEnv* env,
+    jclass obj
+) {
+    return static_cast<jlong>(libretrodroid_pipelineCount());
+}
+
+JNIEXPORT jlong JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_shaderActivityAgeMs(
+    JNIEnv* env,
+    jclass obj
+) {
+    return static_cast<jlong>(libretrodroid_shaderActivityAgeMs());
 }
 
 // Raw UTF-8 bytes: a status line can hold emoji, which JNI's modified UTF-8 strings cannot carry.

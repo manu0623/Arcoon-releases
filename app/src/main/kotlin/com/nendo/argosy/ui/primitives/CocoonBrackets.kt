@@ -54,7 +54,8 @@ fun Modifier.cocoonBrackets(
     // Only the surface underneath the panel goes dark: the panel window still needs its ring,
     // because the pad is driving that menu and the ring is where the focus is.
     val inPanel = com.nendo.argosy.ui.quickpanel.LocalQuickPanelSurface.current
-    val lit = focused && !(panelOpen.value && !inPanel)
+    val lit = focused && !(panelOpen.value && !inPanel) &&
+        com.nendo.argosy.ui.cocoon.cocoonPopulateLetsCursorShow()
     val cursor = LocalCocoonCursor.current
     if (cursor != null && cursor.view === androidx.compose.ui.platform.LocalView.current) {
         return@composed cocoonCursorTarget(cursor, lit, outset)
@@ -178,6 +179,27 @@ class CocoonCursor {
     /** Full-screen pages open on top of this host's items: its cursor stays hidden meanwhile. */
     internal val covered = androidx.compose.runtime.mutableIntStateOf(0)
 
+    /** How the cursor enters the next item it lands on, instead of gliding there. */
+    enum class Entry {
+        /** Appears on the item, fading in. */
+        FRESH,
+        /** Starts as a narrow shape at the item's left edge and stretches across it. */
+        GROW_FROM_LEFT
+    }
+
+    internal var pendingEntry: Entry? = null
+    internal var entryAtNanos = 0L
+    internal var entryFades = false
+
+    /** The next item the cursor lands on (a newly opened menu's) is entered as [entry]. */
+    fun requestEntry(entry: Entry) {
+        pendingEntry = entry
+    }
+
+    fun clearEntry() {
+        pendingEntry = null
+    }
+
     /** The most recently focused target still focused, with its outset. */
     internal fun active(): Pair<Rect, Float>? {
         val key = order.lastOrNull() ?: return null
@@ -287,7 +309,8 @@ fun CocoonCursorHost(
                     val dt = if (!gliding || last == 0L) 0.016f else ((now - last) / 1e9f).coerceIn(0f, 0.034f)
                     last = now
                     gliding = follower.decay(dt)
-                    if (gliding) tick++
+                    val fading = cursor.entryFades && now - cursor.entryAtNanos < ENTRY_FADE_NANOS
+                    if (gliding || fading) tick++
                 }
             }
         }
@@ -324,12 +347,24 @@ fun CocoonCursorHost(
                 follower.reset()
                 return@Canvas
             }
-            val r = if (glides) goal?.let { follower.place(it, activeKey) } else goal
-            if (alpha > 0.01f && r != null) {
+            // A newly opened menu asked to be entered fresh, not glided into from the board.
+            val entry = cursor.pendingEntry
+            if (entry != null && activeKey != null && activeKey != follower.drawnKey) {
+                cursor.pendingEntry = null
+                follower.reset()
+                follower.growNext = entry == CocoonCursor.Entry.GROW_FROM_LEFT
+                cursor.entryFades = entry == CocoonCursor.Entry.FRESH
+                cursor.entryAtNanos = System.nanoTime()
+            }
+            val entryFade = if (cursor.entryFades) {
+                ((System.nanoTime() - cursor.entryAtNanos).toFloat() / ENTRY_FADE_NANOS).coerceIn(0f, 1f)
+            } else 1f
+            val r = if (glides || follower.growNext) goal?.let { follower.place(it, activeKey) } else goal
+            if (alpha * entryFade > 0.01f && r != null) {
                 val b = if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.settings.cursorAnimated) {
                     breath * CocoonBracketSpec.breath.toPx()
                 } else 0f
-                drawCocoonBracketsAt(r.left - b, r.top - b, r.right + b, r.bottom + b, alpha)
+                drawCocoonBracketsAt(r.left - b, r.top - b, r.right + b, r.bottom + b, alpha * entryFade)
             }
         }
     }
@@ -342,6 +377,8 @@ fun CocoonCursorHost(
  * jumped most of the way and only the end looked animated.
  */
 private const val GLIDE_SECONDS = 0.26f
+/** A cursor entering a newly opened menu fresh fades in over this long. */
+private const val ENTRY_FADE_NANOS = 200_000_000L
 private val GLIDE_EASE = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 /** Moves the drawn cursor toward its goal: eased glide to a new item, then locked onto it. */
@@ -362,6 +399,9 @@ private class CursorFollower {
 
     val drawnKey: Any? get() = key
 
+    /** The next item is entered growing from its left edge (Cocoon's Y menu). */
+    var growNext = false
+
     /** Forget the drawn position, so the next item is shown in place (no glide). */
     fun reset() {
         drawn = null
@@ -373,7 +413,14 @@ private class CursorFollower {
         val current = drawn
         if (goalKey != key) {
             key = goalKey
-            if (current != null) {
+            if (current == null && growNext) {
+                // Starts as a square at the item's left edge; only the right side travels.
+                growNext = false
+                startL = 0f; startT = 0f; startB = 0f
+                startR = (goal.left + goal.height) - goal.right
+                gapL = 0f; gapT = 0f; gapB = 0f; gapR = startR
+                elapsed = 0f
+            } else if (current != null) {
                 startL = current.left - goal.left
                 startT = current.top - goal.top
                 startR = current.right - goal.right
