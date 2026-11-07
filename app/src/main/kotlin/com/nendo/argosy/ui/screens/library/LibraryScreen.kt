@@ -706,7 +706,9 @@ fun LibraryScreen(
                                         downloadIndicatorFor = {
                                             downloadIndicators.value[it] ?: GameDownloadIndicator.NONE
                                         },
-                                        useBoxArt = uiState.boxArt3d,
+                                        // Square folder tiles always take the flat cover, zoomed to fill:
+                                        // a 3D box is tall and fitting it left empty bands on both sides.
+                                        useBoxArt = false,
                                         onClick = { viewModel.handleItemTap(index, onGameSelect) },
                                         onLongClick = { viewModel.handleItemLongPress(index) },
                                         modifier = Modifier
