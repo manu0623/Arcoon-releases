@@ -437,7 +437,9 @@ private fun CoverContent(
             // the optimizer's ready-made thumbnail when there is one: far quicker to draw
             else coil.request.ImageRequest.Builder(context)
                 .data(com.nendo.argosy.ui.cocoon.CocoonThumbs.model(context, effectiveCoverPath) ?: imageData)
-                .size(fixedSize).build()
+                .size(fixedSize)
+                .transformations(com.nendo.argosy.ui.cocoon.CocoonCoverTrim)
+                .build()
         }
         Box(modifier = Modifier.fillMaxSize()) {
             AsyncImage(
