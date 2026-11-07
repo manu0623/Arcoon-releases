@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui.cocoon
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nendo.argosy.R
@@ -44,8 +46,17 @@ object CocoonSuspendTest {
      */
     val launcherReturn = MutableStateFlow(-1L)
 
-    /** The picture handed from the game to the launcher, for one suspend. */
-    class Handoff(val gameId: Long, val picture: ImageBitmap, val aspect: Float, val at: Long)
+    /**
+     * The picture handed from the game to the launcher, for one suspend. [picture] is what the top
+     * screen showed; [lower] is a two-screen console's other screen, null for one-screen games.
+     */
+    class Handoff(
+        val gameId: Long,
+        val picture: ImageBitmap,
+        val aspect: Float,
+        val at: Long,
+        val lower: ImageBitmap? = null
+    )
 
     val handoff = mutableStateOf<Handoff?>(null)
 
@@ -110,6 +121,60 @@ object CocoonSuspendTest {
     /** A moment for the launcher's first frame (the picture at full size) to settle before shrinking. */
     const val GAME_HOLD_MS = 40L
 }
+
+/**
+ * A two-screen game's lower screen on the launcher's lower window. On suspend it covers the
+ * launcher with the game's last lower frame and fades away while the top picture shrinks; on
+ * resume it fades back in while the card grows, so the game's own window takes over a matching
+ * picture instead of the launcher.
+ */
+@Composable
+fun CocoonSuspendLowerPicture(modifier: Modifier = Modifier) {
+    val handoff = CocoonSuspendTest.handoff.value ?: return
+    val lower = handoff.lower ?: return
+    val resuming = CocoonSuspendTest.resumeInProgress.value
+    val leaving = androidx.compose.runtime.remember(handoff) { CocoonSuspendTest.fresh(handoff.gameId) != null }
+    val alpha = androidx.compose.runtime.remember(handoff) {
+        androidx.compose.animation.core.Animatable(if (leaving) 1f else 0f)
+    }
+    androidx.compose.runtime.LaunchedEffect(handoff, resuming) {
+        if (resuming) {
+            alpha.animateTo(
+                1f,
+                androidx.compose.animation.core.tween(
+                    CocoonSuspendTest.GROW_MS,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing
+                )
+            )
+        } else if (alpha.value > 0f) {
+            kotlinx.coroutines.delay(CocoonSuspendTest.GAME_HOLD_MS + LOWER_FADE_DELAY_MS)
+            alpha.animateTo(
+                0f,
+                androidx.compose.animation.core.tween(
+                    LOWER_FADE_MS,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing
+                )
+            )
+        }
+    }
+    if (alpha.value <= 0f) return
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .graphicsLayer { this.alpha = alpha.value }
+            .background(Color.Black)
+    ) {
+        androidx.compose.foundation.Image(
+            bitmap = lower,
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+private const val LOWER_FADE_DELAY_MS = 60L
+private const val LOWER_FADE_MS = 440
 
 @Composable
 fun CocoonSuspendTestButton(modifier: Modifier = Modifier) {

@@ -105,7 +105,18 @@ fun CocoonSuspendedCard(
         arrive.animateTo(1f, tween(340, easing = FastOutSlowInEasing))
     }
     val art = com.nendo.argosy.ui.common.rememberResolvedArt(session.gameId)
-    val image = session.screenshotPath ?: art?.backgroundPath ?: art?.coverPath
+    val artImage = art?.backgroundPath ?: art?.coverPath
+    val image = artImage ?: session.screenshotPath
+    // The paused moment shrinks into the card and then gives way to the game's art; on resume the
+    // art turns back into that moment as the card grows, so the game takes over the same picture.
+    val artShown = androidx.compose.runtime.remember(session.gameId, session.startTimeMillis) {
+        androidx.compose.animation.core.Animatable(if (arrivingFromGame) 0f else 1f)
+    }
+    androidx.compose.runtime.LaunchedEffect(artShown, arrive.value >= 1f, resumeInProgress) {
+        if (resumeInProgress || arrive.value < 1f || artShown.value >= 1f) return@LaunchedEffect
+        kotlinx.coroutines.delay(ART_SWAP_DELAY_MS)
+        artShown.animateTo(1f, tween(ART_SWAP_MS, easing = FastOutSlowInEasing))
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val w = maxWidth
@@ -166,6 +177,18 @@ fun CocoonSuspendedCard(
                         .fillMaxSize()
                         .clip(RoundedCornerShape(lerp(0.dp, lerp(10.dp, 20.dp, p), a)))
                 )
+                val artAlpha = if (resumeInProgress) minOf(artShown.value, a) else artShown.value
+                if (artImage != null && artAlpha > 0f) {
+                    AsyncImage(
+                        model = com.nendo.argosy.ui.common.rememberFileImageModel(artImage),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = artAlpha }
+                            .clip(RoundedCornerShape(lerp(0.dp, lerp(10.dp, 20.dp, p), a)))
+                    )
+                }
             } else if (image != null) {
                 AsyncImage(
                     model = com.nendo.argosy.ui.common.rememberFileImageModel(image),
@@ -256,3 +279,6 @@ fun CocoonSuspendedCard(
         }
     }
 }
+
+private const val ART_SWAP_DELAY_MS = 120L
+private const val ART_SWAP_MS = 420

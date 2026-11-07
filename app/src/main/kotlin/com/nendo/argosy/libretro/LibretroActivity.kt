@@ -306,6 +306,10 @@ class LibretroActivity : ComponentActivity() {
     /** Set when Home left the game suspended rather than quitting it. */
     private var suspendedByHome = false
 
+    /** Set by a suspend from Arcoon's own controls: the next pause saves after the animation. */
+    private var deferPauseForSuspend = false
+    private var deferredPauseWork: Runnable? = null
+
     /** Black cover laid over the game as Home is pressed, so the system's slide shows only black. */
     private var leaveVeil: android.view.View? = null
     private var canEnableBFI = false
@@ -3537,6 +3541,9 @@ class LibretroActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Back before the suspended save ran: the game never stopped, so the save is skipped and
+        // the rolling save takes over again below.
+        takeDeferredPause()
         leaveVeil?.let { veil ->
             (veil.parent as? android.view.ViewGroup)?.removeView(veil)
             leaveVeil = null
@@ -3638,14 +3645,21 @@ class LibretroActivity : ComponentActivity() {
         suspendedByHome = true
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.resumeInProgress.value = false
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.suspendedGameId = gameId
-        val frame = captureFrameOrNull()
+        val whole = captureFrameOrNull()
+        // A two-screen console draws both screens in one frame; each display gets only its own.
+        val split = dualScreenOutput
+        val frame = whole?.let { if (split != null) cropFraction(it, split.primary) else it }
+        val lower = whole?.let { if (split != null) cropFraction(it, split.secondary) else null }
+        if (::retroView.isInitialized) retroView.pauseEmulation()
+        deferPauseForSuspend = true
         if (frame != null) {
             val copy = frame.copy(frame.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
             com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = com.nendo.argosy.ui.cocoon.CocoonSuspendTest.Handoff(
                 gameId = gameId,
                 picture = copy.asImageBitmap(),
                 aspect = copy.width.toFloat() / copy.height.coerceAtLeast(1),
-                at = System.currentTimeMillis()
+                at = System.currentTimeMillis(),
+                lower = lower?.asImageBitmap()
             )
         }
         gameSessionManager.suspendBuiltIn(
@@ -3677,6 +3691,8 @@ class LibretroActivity : ComponentActivity() {
             com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.value = gameId
         }
         if (started.isFailure) {
+            deferPauseForSuspend = false
+            if (::retroView.isInitialized) retroView.resumeEmulation()
             suspendedByHome = false
             gameSessionManager.onBuiltInResumed(gameId)
             com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
@@ -4009,13 +4025,39 @@ class LibretroActivity : ComponentActivity() {
         if (!coreLoadedSuccessfully) {
             Log.w(TAG, "[SRAM] onPause SKIP ALL | coreLoadedSuccessfully=false, no sram write")
         }
+        if (deferPauseForSuspend && coreLoadedSuccessfully && !isFinishing) {
+            // The game is already frozen; its save and pause wait until the card has landed,
+            // because they run on the thread that draws the launcher's suspend animation.
+            deferPauseForSuspend = false
+            val work = Runnable {
+                deferredPauseWork = null
+                saveAndPauseCore()
+            }
+            deferredPauseWork = work
+            window.decorView.postDelayed(work, SUSPEND_PAUSE_DELAY_MS)
+            super.onPause()
+            return
+        }
+        deferPauseForSuspend = false
+        saveAndPauseCore()
+        super.onPause()
+    }
+
+    /** Runs a save and pause left waiting by a suspend at once, for a resume or a teardown. */
+    private fun takeDeferredPause(): Runnable? {
+        val work = deferredPauseWork ?: return null
+        deferredPauseWork = null
+        window.decorView.removeCallbacks(work)
+        return work
+    }
+
+    private fun saveAndPauseCore() {
         if (coreLoadedSuccessfully) {
             if (!isFinishing && !coreDestroyed && isHwCore && !isGuestJoinedSession &&
                 !(::netplay.isInitialized && netplay.inSession)
             ) {
                 saveStateManager.saveSram(retroView)
                 retroView.onPause()
-                super.onPause()
                 return
             }
             val pauseFrame = if (coreDestroyed) null else captureFrameOrNull()
@@ -4032,7 +4074,6 @@ class LibretroActivity : ComponentActivity() {
             }
             retroView.onPause()
         }
-        super.onPause()
     }
 
     private fun applyOrientationLock(locked: Boolean) {
@@ -4046,6 +4087,16 @@ class LibretroActivity : ComponentActivity() {
     }
 
     private fun captureFrameOrNull(): Bitmap? = try { retroView.captureRawFrame() } catch (_: Exception) { null }
+
+    /** The part of [frame] left after trimming [trim]'s fraction from each edge, or the whole frame. */
+    private fun cropFraction(frame: Bitmap, trim: RectF): Bitmap {
+        val left = (trim.left * frame.width).toInt()
+        val top = (trim.top * frame.height).toInt()
+        val width = (frame.width - left - (trim.right * frame.width).toInt()).coerceAtMost(frame.width - left)
+        val height = (frame.height - top - (trim.bottom * frame.height).toInt()).coerceAtMost(frame.height - top)
+        if (width <= 0 || height <= 0) return frame
+        return Bitmap.createBitmap(frame, left, top, width, height)
+    }
 
     private fun cacheTouchBackdrop(bmp: Bitmap) {
         if (platformSlug.isBlank()) {
@@ -4267,6 +4318,7 @@ class LibretroActivity : ComponentActivity() {
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy: isFinishing=$isFinishing, isChangingConfigurations=$isChangingConfigurations")
+        takeDeferredPause()?.run()
         quickPanelOverlay.hideNow()
         hideSecondScreen()
         if (!coreDestroyed && ::retroView.isInitialized) retroView.destroyNative()
@@ -4362,6 +4414,9 @@ class LibretroActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "LibretroActivity"
+
+        /** Long enough for the suspend picture to shrink into its card and settle. */
+        private const val SUSPEND_PAUSE_DELAY_MS = 900L
 
         private const val CORE_INPUT_PULSE_MS = 50L
 
