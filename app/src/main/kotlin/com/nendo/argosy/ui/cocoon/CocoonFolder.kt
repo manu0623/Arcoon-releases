@@ -181,9 +181,35 @@ interface CocoonGridNavigation {
 }
 
 /** Whether the top screen shows the game's info panel; off means art and logo only. */
+/**
+ * The top screen's X panel. X opens the game's info, a second X turns the panel to the game's
+ * journey and a third closes it. [scroll] carries right-stick steps for the journey page.
+ */
 object CocoonHeroInfo {
     val visible = kotlinx.coroutines.flow.MutableStateFlow(false)
-    fun toggle() { visible.value = !visible.value }
+    val journey = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val scroll = kotlinx.coroutines.flow.MutableSharedFlow<Int>(extraBufferCapacity = 8)
+
+    fun toggle() {
+        when {
+            !visible.value -> {
+                journey.value = false
+                visible.value = true
+            }
+            !journey.value -> journey.value = true
+            else -> {
+                visible.value = false
+                journey.value = false
+            }
+        }
+    }
+
+    /** Scrolls the journey page by [step] when it is the one showing. */
+    fun scrollJourney(step: Int): Boolean {
+        if (!visible.value || !journey.value) return false
+        scroll.tryEmit(step)
+        return true
+    }
 }
 
 /** Height the dock row takes above a folder's header. */

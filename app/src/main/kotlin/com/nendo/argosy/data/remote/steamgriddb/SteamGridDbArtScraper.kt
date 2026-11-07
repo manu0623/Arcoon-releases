@@ -33,7 +33,9 @@ enum class SteamGridDbScrapeStage {
     RUNNING,
     PARKED,
     FINISHED,
-    NEEDS_KEY
+    NEEDS_KEY,
+    RESTORING,
+    RESTORED
 }
 
 data class SteamGridDbScrapeState(
@@ -57,7 +59,8 @@ class SteamGridDbArtScraper @Inject constructor(
     private val gameArtDao: GameArtDao,
     private val appPreferences: AppPreferencesRepository,
     private val displayPreferences: DisplayPreferencesRepository,
-    private val imageCacheManager: ImageCacheManager
+    private val imageCacheManager: ImageCacheManager,
+    private val romMSync: dagger.Lazy<com.nendo.argosy.data.remote.romm.RomMLibrarySyncService>
 ) {
     companion object {
         private const val TAG = "SteamGridDbScrape"
@@ -80,6 +83,7 @@ class SteamGridDbArtScraper @Inject constructor(
     val state: StateFlow<SteamGridDbScrapeState> = _state.asStateFlow()
 
     private var job: Job? = null
+    private var restoreJob: Job? = null
 
     init {
         scope.launch {
@@ -98,6 +102,8 @@ class SteamGridDbArtScraper @Inject constructor(
 
     fun start(platformSlug: String? = null, rescanAll: Boolean = false) {
         if (job?.isActive == true) return
+        restoreJob?.cancel()
+        restoreJob = null
         job = scope.launch { runScrape(platformSlug, rescanAll) }
     }
 
@@ -183,6 +189,37 @@ class SteamGridDbArtScraper @Inject constructor(
                 appPreferences.getSteamGridDbScrapePlatform(),
                 appPreferences.getSteamGridDbScrapeRescanAll()
             )
+        }
+    }
+
+    /**
+     * SteamGridDB was switched off: every cover it supplied is asked from RomM again, game by
+     * game, through the same path a sync takes, so the RomM art replaces it on screen. Games RomM
+     * does not know keep their SteamGridDB cover.
+     */
+    fun restoreRomMCovers() {
+        if (restoreJob?.isActive == true) return
+        restoreJob = scope.launch {
+            val romIds = gameArtDao.getRommIdsWithSteamGridDbCover()
+            if (romIds.isEmpty()) return@launch
+            Logger.info(TAG, "Restoring RomM covers for ${romIds.size} games")
+            _state.value = SteamGridDbScrapeState(stage = SteamGridDbScrapeStage.RESTORING, total = romIds.size)
+            var restored = 0
+            for (romId in romIds) {
+                if (!currentCoroutineContext().isActive) return@launch
+                when (val result = romMSync.get().syncSingleRom(romId)) {
+                    is com.nendo.argosy.data.remote.romm.RomMResult.Success -> restored++
+                    is com.nendo.argosy.data.remote.romm.RomMResult.Error -> {
+                        if (result.message == "Not connected") {
+                            Logger.warn(TAG, "RomM is not connected; $restored of ${romIds.size} covers restored")
+                            break
+                        }
+                    }
+                }
+                _state.update { current -> current.copy(scanned = current.scanned + 1, filled = restored) }
+            }
+            _state.update { current -> current.copy(stage = SteamGridDbScrapeStage.RESTORED, filled = restored) }
+            Logger.info(TAG, "RomM covers restored for $restored of ${romIds.size} games")
         }
     }
 

@@ -219,6 +219,7 @@ private fun PresentationSlotScene(
                 val backgroundBlur = com.nendo.argosy.DualScreenManagerHolder.instance
                     ?.presentationBackgroundBlur?.collectAsState()?.value ?: 0
                 val showInfo by com.nendo.argosy.ui.cocoon.CocoonHeroInfo.visible.collectAsState()
+                val showJourney by com.nendo.argosy.ui.cocoon.CocoonHeroInfo.journey.collectAsState()
                 if (slot.detail.gameId != null) {
                     // Cocoon: the game's art with its logo; the info panel only on request (X).
                     // Moving between games crossfades, as Cocoon's "Fade" hero transition does.
@@ -227,7 +228,12 @@ private fun PresentationSlotScene(
                         animationSpec = androidx.compose.animation.core.tween(160),
                         label = "cocoon-game-hero"
                     ) { detail ->
-                        com.nendo.argosy.ui.cocoon.CocoonGameHero(detail, modifier = Modifier.fillMaxSize(), showInfo = showInfo)
+                        com.nendo.argosy.ui.cocoon.CocoonGameHero(
+                            detail,
+                            modifier = Modifier.fillMaxSize(),
+                            showInfo = showInfo,
+                            showJourney = showInfo && showJourney
+                        )
                     }
                 } else {
                     CompanionDetailScreen(
@@ -241,6 +247,7 @@ private fun PresentationSlotScene(
                 if (slot.detail.gameId != null && suspendedSession?.gameId != slot.detail.gameId) {
                     com.nendo.argosy.ui.cocoon.CocoonInfoPill(
                         active = showInfo,
+                        journey = showInfo && showJourney,
                         modifier = Modifier.align(Alignment.BottomEnd).padding(Dimens.spacingLg)
                     )
                 }

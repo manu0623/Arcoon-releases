@@ -293,7 +293,7 @@ private fun JourneyState.messageRes(): Int = when (this) {
 }
 
 @StringRes
-private fun JourneyCategory.leadRes(): Int = when (this) {
+internal fun JourneyCategory.leadRes(): Int = when (this) {
     JourneyCategory.PROGRESSION -> R.string.gamedetail_journey_lead_progression
     JourneyCategory.EXPLORATION -> R.string.gamedetail_journey_lead_exploration
     JourneyCategory.COMBAT -> R.string.gamedetail_journey_lead_combat

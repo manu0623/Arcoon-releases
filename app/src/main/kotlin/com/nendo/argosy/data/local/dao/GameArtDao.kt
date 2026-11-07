@@ -234,6 +234,17 @@ interface GameArtDao {
     )
     suspend fun countArtScrapeCandidates(platformSlug: String? = null, rescanAll: Boolean = false): Int
 
+    @Query(
+        """
+        SELECT games.rommId FROM games
+        JOIN game_art art ON art.gameId = games.id AND art.slot = 'COVER'
+        WHERE art.overridePath IS NULL AND art.sourceUrl LIKE '%steamgriddb%'
+          AND games.rommId IS NOT NULL
+        ORDER BY games.id ASC
+        """
+    )
+    suspend fun getRommIdsWithSteamGridDbCover(): List<Long>
+
     @Query("SELECT searchTitle, alternativeNames FROM games WHERE id = :gameId")
     suspend fun getTitleAliases(gameId: Long): TitleAliases?
 
