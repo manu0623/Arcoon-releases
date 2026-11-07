@@ -197,13 +197,22 @@ fun CocoonSteamGridDbSettings(viewModel: SettingsViewModel, onDismiss: () -> Uni
             scrapeState.filled
         )
         SteamGridDbScrapeStage.NEEDS_KEY -> stringResource(R.string.cocoon_steamgriddb_scrape_needs_key)
+        SteamGridDbScrapeStage.RESTORING -> stringResource(
+            R.string.cocoon_steamgriddb_restore_running,
+            scrapeState.scanned,
+            scrapeState.total
+        )
+        SteamGridDbScrapeStage.RESTORED -> stringResource(
+            R.string.cocoon_steamgriddb_restore_done,
+            scrapeState.filled
+        )
     }
     fun toggle() {
         scope.launch {
             val current = viewModel.preferencesRepository.userPreferences.first().steamGridDbEnabled
             val next = !current
             viewModel.preferencesRepository.setSteamGridDbEnabled(next)
-            if (next) scraper.scrapeLibrary()
+            if (next) scraper.scrapeLibrary() else scraper.restoreRomMCovers()
         }
     }
 

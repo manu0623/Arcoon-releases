@@ -95,6 +95,22 @@ class RaMetadataSource @Inject constructor(
     }
 
     /**
+     * The real unlock moments RetroAchievements holds for [raGameId], by achievement id, as epoch
+     * millis (casual, hardcore). Null without a web API key or an answer.
+     */
+    suspend fun webUnlockDates(raGameId: Long, freshAfter: Instant): Map<Long, Pair<Long?, Long?>>? {
+        val credentials = webCredentials() ?: return null
+        val result = webClient.gameProgress(credentials, raGameId, freshAfter).recordedFor(credentials)
+        if (result !is RAWebResult.Success) return null
+        return result.value.achievements.byId.values.associate { achievement ->
+            achievement.id to (
+                achievement.dateEarned?.let { com.nendo.argosy.util.parseTimestamp(it) } to
+                    achievement.dateEarnedHardcore?.let { com.nendo.argosy.util.parseTimestamp(it) }
+                )
+        }
+    }
+
+    /**
      * Per-game highest awards through [through]: from the web API key when set and answering, else
      * RomM's progression.
      */

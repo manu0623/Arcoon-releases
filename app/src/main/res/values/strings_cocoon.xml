@@ -326,6 +326,25 @@
     <string name="cocoon_steamgriddb_scrape_running">Scraping art, %1$d of %2$d checked</string>
     <string name="cocoon_steamgriddb_scrape_parked">Rate limit reached, resuming in %1$d min</string>
     <string name="cocoon_steamgriddb_scrape_done">Filled %1$d covers</string>
+    <string name="cocoon_journey_title">Your journey</string>
+    <string name="cocoon_journey_close">Close</string>
+    <string name="cocoon_journey_loading">Loading your journey…</string>
+    <string name="cocoon_journey_empty">Your journey will appear here once this game has unlocked achievements.</string>
+    <string name="cocoon_journey_error">Your journey could not be loaded.</string>
+    <string name="cocoon_journey_progress">%1$d of %2$d achievements · %3$d of %4$d points</string>
+    <string name="cocoon_journey_opening">Your recorded journey began on %1$s with “%2$s”.</string>
+    <string name="cocoon_journey_closing_latest">Your most notable recent milestone, “%2$s”, was recorded on %1$s.</string>
+    <string name="cocoon_journey_closing_main">On %1$s, “%2$s” marked the main objectives as finished.</string>
+    <string name="cocoon_journey_closing_mastered">By %1$s, with “%2$s”, every achievement in this game was unlocked.</string>
+    <string name="cocoon_journey_left_off">Where you left off</string>
+    <string name="cocoon_journey_last_known">Last known status · %1$s, when you unlocked “%2$s”</string>
+    <string name="cocoon_journey_highlights">Journey highlights</string>
+    <string name="cocoon_journey_full">Full journey</string>
+    <string name="cocoon_journey_chapter">Chapter %1$d · %2$s</string>
+    <string name="cocoon_journey_and_more">%1$s and %2$d more</string>
+    <string name="cocoon_journey_entry_meta">%1$s · %2$d points</string>
+    <string name="cocoon_steamgriddb_restore_running">Restoring RomM covers, %1$d of %2$d</string>
+    <string name="cocoon_steamgriddb_restore_done">Restored %1$d RomM covers</string>
     <string name="cocoon_steamgriddb_scrape_needs_key">Turn on SteamGridDB and add an API key first</string>
     <!-- Swap request shown when a search hit's title is not the game's own. -->
     <!-- Integrations row. The 3DS tool that reads an icon, a banner and a jingle out of a ROM. -->

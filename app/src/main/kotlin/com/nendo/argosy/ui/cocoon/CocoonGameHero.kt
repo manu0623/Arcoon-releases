@@ -53,10 +53,16 @@ import com.nendo.argosy.ui.theme.CocoonSurface
  * Cocoon's game hero on the top screen. By default: the game's art filling the screen with its
  * logo centred. With Info (X): the art softens, the logo slides into the left third and a panel
  * slides in from the right with the title, quick facts, platform and developer, the description
- * and, beneath it, a strip of screenshots.
+ * and, beneath it, a strip of screenshots. With Journey (X again): the same panel, full height,
+ * tells the game's recorded journey.
  */
 @Composable
-fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, showInfo: Boolean = true) {
+fun CocoonGameHero(
+    rawDetail: CompanionDetail,
+    modifier: Modifier = Modifier,
+    showInfo: Boolean = true,
+    showJourney: Boolean = false
+) {
     val liveArt = rawDetail.gameId?.let { com.nendo.argosy.ui.common.rememberResolvedArt(it) }
     val detail = rawDetail.withLiveArt(liveArt)
     val backdrop = detail.backdropUrl ?: detail.artUrl
@@ -173,7 +179,7 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
             if (t > 0f) {
                 val left = w * 0.345f
                 val panelW = w * 0.64f
-                val hasShots = screenshots.isNotEmpty()
+                val hasShots = screenshots.isNotEmpty() && !showJourney
                 val panelTop = h * 0.14f
                 val panelH = if (hasShots) h * 0.50f else h * 0.70f
                 Column(
@@ -185,7 +191,12 @@ fun CocoonGameHero(rawDetail: CompanionDetail, modifier: Modifier = Modifier, sh
                         .background(CocoonSurface.Panel.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
-                    InfoPanelBody(detail)
+                    val gameId = detail.gameId
+                    if (showJourney && gameId != null) {
+                        CocoonJourneyPanel(gameId = gameId, platformName = detail.subtitle)
+                    } else {
+                        InfoPanelBody(detail)
+                    }
                 }
                 if (hasShots) {
                     val stripTop = panelTop + panelH + h * 0.025f
@@ -329,9 +340,9 @@ private fun HeroChip(icon: ImageVector, label: String) {
     }
 }
 
-/** Cocoon's bottom-right "Info" pill: the button that toggles the game's info panel. */
+/** Cocoon's bottom-right X pill: names what X does next (Info, then Your journey, then Close). */
 @Composable
-fun CocoonInfoPill(active: Boolean, modifier: Modifier = Modifier) {
+fun CocoonInfoPill(active: Boolean, modifier: Modifier = Modifier, journey: Boolean = false) {
     Row(
         modifier = modifier
             .background(if (active) CocoonSurface.TextPrimary.copy(alpha = 0.18f) else CocoonSurface.Chip, RoundedCornerShape(50))
@@ -345,7 +356,13 @@ fun CocoonInfoPill(active: Boolean, modifier: Modifier = Modifier) {
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
-            text = androidx.compose.ui.res.stringResource(com.nendo.argosy.R.string.cocoon_info),
+            text = androidx.compose.ui.res.stringResource(
+                when {
+                    journey -> com.nendo.argosy.R.string.cocoon_journey_close
+                    active -> com.nendo.argosy.R.string.cocoon_journey_title
+                    else -> com.nendo.argosy.R.string.cocoon_info
+                }
+            ),
             style = MaterialTheme.typography.labelMedium,
             color = CocoonSurface.TextPrimary
         )

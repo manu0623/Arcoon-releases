@@ -192,7 +192,7 @@ fun cocoonFolderMenuInput(
         if (isOpen) return InputResult.HANDLED
         return base.onSecondaryAction()
     }
-    // X shows or hides the game's info panel on the top screen; R3 changes how many covers fit a row.
+    // X opens the game's info panel on the top screen, then its journey, then closes it; R3 changes how many covers fit a row.
     override fun onContextMenu(): InputResult {
         if (dialog) return swallow
         if (isOpen) return InputResult.HANDLED
@@ -213,8 +213,16 @@ fun cocoonFolderMenuInput(
     override fun onPrevTrigger(): InputResult = if (dialog) swallow else base.onPrevTrigger()
     override fun onNextTrigger(): InputResult = if (dialog) swallow else base.onNextTrigger()
     override fun onLeftStickClick(): InputResult = if (dialog) swallow else base.onLeftStickClick()
-    override fun onRightStickUp(): InputResult = if (dialog) swallow else base.onRightStickUp()
-    override fun onRightStickDown(): InputResult = if (dialog) swallow else base.onRightStickDown()
+    override fun onRightStickUp(): InputResult = when {
+        dialog -> swallow
+        CocoonHeroInfo.scrollJourney(-1) -> InputResult.HANDLED
+        else -> base.onRightStickUp()
+    }
+    override fun onRightStickDown(): InputResult = when {
+        dialog -> swallow
+        CocoonHeroInfo.scrollJourney(1) -> InputResult.HANDLED
+        else -> base.onRightStickDown()
+    }
     override fun onRightStickLeft(): InputResult = if (dialog) swallow else base.onRightStickLeft()
     override fun onRightStickRight(): InputResult = if (dialog) swallow else base.onRightStickRight()
     override fun onLongConfirm(): InputResult = if (dialog) swallow else base.onLongConfirm()
