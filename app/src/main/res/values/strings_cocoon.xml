@@ -343,6 +343,16 @@
     <string name="cocoon_journey_chapter">Chapter %1$d · %2$s</string>
     <string name="cocoon_journey_and_more">%1$s and %2$d more</string>
     <string name="cocoon_journey_entry_meta">%1$s · %2$d points</string>
+    <string name="cocoon_journey_last_known_session">Last known status · %1$s</string>
+    <string name="cocoon_journey_last_session">Last session</string>
+    <string name="cocoon_journey_session_meta">%1$s · %2$s played</string>
+    <string name="cocoon_journey_session_none">No achievements were unlocked in this session.</string>
+    <string name="cocoon_journey_session_unlocked">Unlocked %1$s.</string>
+    <string name="cocoon_journey_all_sessions">All sessions (%1$d)</string>
+    <string name="cocoon_journey_play_session">Play session</string>
+    <string name="cocoon_journey_session_count">%1$d unlocked</string>
+    <string name="cocoon_journey_hours_minutes">%1$d h %2$d min</string>
+    <string name="cocoon_journey_minutes">%1$d min</string>
     <string name="cocoon_steamgriddb_restore_running">Restoring RomM covers, %1$d of %2$d</string>
     <string name="cocoon_steamgriddb_restore_done">Restored %1$d RomM covers</string>
     <string name="cocoon_steamgriddb_scrape_needs_key">Turn on SteamGridDB and add an API key first</string>

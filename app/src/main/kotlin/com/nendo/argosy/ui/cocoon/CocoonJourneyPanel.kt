@@ -27,6 +27,7 @@ import com.nendo.argosy.R
 import com.nendo.argosy.domain.model.JourneyEntry
 import com.nendo.argosy.domain.model.JourneyPhase
 import com.nendo.argosy.domain.usecase.journey.JourneyClosing
+import com.nendo.argosy.domain.usecase.journey.JourneySession
 import com.nendo.argosy.domain.usecase.journey.JourneyStory
 import com.nendo.argosy.domain.usecase.journey.LoadJourneyStoryUseCase
 import com.nendo.argosy.ui.screens.gamedetail.components.leadRes
@@ -122,10 +123,26 @@ private fun StoryBody(story: JourneyStory) {
         Body(stringResource(res, date(closing.entry.unlockedAt), closing.entry.title))
     }
 
-    story.leftOff?.let { entry ->
+    story.leftOff?.let { status ->
         Header(stringResource(R.string.cocoon_journey_left_off))
-        Body(entry.context.orEmpty())
-        Meta(stringResource(R.string.cocoon_journey_last_known, date(entry.unlockedAt), entry.title))
+        Body(status.text)
+        Meta(
+            status.unlockTitle?.let { stringResource(R.string.cocoon_journey_last_known, date(status.at), it) }
+                ?: stringResource(R.string.cocoon_journey_last_known_session, date(status.at))
+        )
+    }
+
+    story.sessions.firstOrNull()?.let { last ->
+        Header(stringResource(R.string.cocoon_journey_last_session))
+        Meta(stringResource(R.string.cocoon_journey_session_meta, date(last.start), played(last.playedMs)))
+        last.status?.takeIf { it != story.leftOff?.text }?.let { Body(it) }
+        Body(
+            if (last.unlocked.isEmpty()) {
+                stringResource(R.string.cocoon_journey_session_none)
+            } else {
+                stringResource(R.string.cocoon_journey_session_unlocked, titles(last.unlocked.map { it.title }))
+            }
+        )
     }
 
     if (story.highlights.isNotEmpty()) {
@@ -135,7 +152,52 @@ private fun StoryBody(story: JourneyStory) {
 
     Header(stringResource(R.string.cocoon_journey_full))
     story.chapters.forEachIndexed { index, chapter -> ChapterBlock(index + 1, chapter) }
+
+    if (story.sessions.isNotEmpty()) {
+        Header(stringResource(R.string.cocoon_journey_all_sessions, story.sessions.size))
+        story.sessions.forEach { SessionRow(it) }
+    }
     Spacer(modifier = Modifier.height(12.dp))
+}
+
+@Composable
+private fun SessionRow(session: JourneySession) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Text(
+            text = stringResource(R.string.cocoon_journey_session_meta, date(session.start), played(session.playedMs)),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = CocoonSurface.TextPrimary
+        )
+        Meta(
+            listOfNotNull(
+                session.status ?: stringResource(R.string.cocoon_journey_play_session),
+                session.unlocked.size.takeIf { it > 0 }
+                    ?.let { stringResource(R.string.cocoon_journey_session_count, it) }
+            ).joinToString(" · ")
+        )
+    }
+}
+
+@Composable
+private fun titles(names: List<String>): String {
+    val quoted = names.map { "“$it”" }
+    val named = quoted.take(CHAPTER_TITLES_SHOWN).joinToString(", ")
+    return if (quoted.size > CHAPTER_TITLES_SHOWN) {
+        stringResource(R.string.cocoon_journey_and_more, named, quoted.size - CHAPTER_TITLES_SHOWN)
+    } else {
+        named
+    }
+}
+
+@Composable
+private fun played(ms: Long): String {
+    val minutes = (ms / 60_000L).toInt().coerceAtLeast(1)
+    return if (minutes >= 60) {
+        stringResource(R.string.cocoon_journey_hours_minutes, minutes / 60, minutes % 60)
+    } else {
+        stringResource(R.string.cocoon_journey_minutes, minutes)
+    }
 }
 
 @Composable
@@ -149,14 +211,7 @@ private fun ChapterBlock(number: Int, chapter: JourneyPhase) {
         fontWeight = FontWeight.SemiBold,
         color = CocoonSurface.TextPrimary
     )
-    val titles = chapter.entries.map { "“${it.title}”" }
-    val named = titles.take(CHAPTER_TITLES_SHOWN).joinToString(", ")
-    val list = if (titles.size > CHAPTER_TITLES_SHOWN) {
-        stringResource(R.string.cocoon_journey_and_more, named, titles.size - CHAPTER_TITLES_SHOWN)
-    } else {
-        named
-    }
-    Body(stringResource(chapter.category.leadRes(), list))
+    Body(stringResource(chapter.category.leadRes(), titles(chapter.entries.map { it.title })))
 }
 
 @Composable

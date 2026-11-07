@@ -11,7 +11,8 @@ import javax.inject.Singleton
 private const val TAG = "JourneyEventRecorder"
 
 /**
- * Records the rich presence line RetroAchievements reports at the moment of an unlock. The insert
+ * Records the game's status line at the moment of an unlock: the one the built-in emulator computes
+ * itself when given, otherwise the line RetroAchievements reports for the account. The insert
  * ignores a row that already exists, so a repeated unlock keeps the context captured the first
  * time. A missing answer stores the event with no context and the journal says nothing more.
  */
@@ -22,13 +23,19 @@ class JourneyEventRecorder @Inject constructor(
     private val raRepository: RetroAchievementsRepository
 ) {
 
-    suspend fun capture(gameId: Long, raId: Long, at: Long = System.currentTimeMillis()) {
+    suspend fun capture(
+        gameId: Long,
+        raId: Long,
+        at: Long = System.currentTimeMillis(),
+        presence: String? = null
+    ) {
         withContext(Dispatchers.IO) {
             val owner = raRepository.activeOwnerUserId()
-            val presence = runCatching { metadataSource.userSummary()?.richPresenceMsg }
-                .getOrNull()
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
+            val presence = presence?.trim()?.takeIf { it.isNotEmpty() }
+                ?: runCatching { metadataSource.userSummary()?.richPresenceMsg }
+                    .getOrNull()
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
             if (presence == null) Logger.debug(TAG, "No rich presence captured for raId=$raId")
             eventDao.insert(
                 AchievementJourneyEventEntity(

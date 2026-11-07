@@ -1141,6 +1141,30 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_initAchiev
     LibretroDroid::getInstance().initAchievements(achievements, static_cast<uint32_t>(consoleId));
 }
 
+JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_activateRichPresence(
+    JNIEnv* env,
+    jclass obj,
+    jstring script
+) {
+    if (script == nullptr) return JNI_FALSE;
+    const char* text = env->GetStringUTFChars(script, nullptr);
+    bool activated = LibretroDroid::getInstance().getAchievements().activateRichPresence(text);
+    env->ReleaseStringUTFChars(script, text);
+    return activated ? JNI_TRUE : JNI_FALSE;
+}
+
+// Raw UTF-8 bytes: a status line can hold emoji, which JNI's modified UTF-8 strings cannot carry.
+JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_currentRichPresence(
+    JNIEnv* env,
+    jclass obj
+) {
+    std::string text = LibretroDroid::getInstance().getAchievements().currentRichPresence();
+    if (text.empty()) return nullptr;
+    jbyteArray bytes = env->NewByteArray(static_cast<jsize>(text.size()));
+    env->SetByteArrayRegion(bytes, 0, static_cast<jsize>(text.size()), reinterpret_cast<const jbyte*>(text.data()));
+    return bytes;
+}
+
 JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_clearAchievements(
     JNIEnv* env,
     jclass obj
