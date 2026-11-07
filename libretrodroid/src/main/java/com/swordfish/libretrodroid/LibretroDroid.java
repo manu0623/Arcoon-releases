@@ -220,6 +220,8 @@ public class LibretroDroid {
 
     public static native void initAchievements(AchievementDef[] achievements, int consoleId);
     public static native void clearAchievements();
+    public static native boolean activateRichPresence(String script);
+    public static native byte[] currentRichPresence();
 
     /**
      * Run native achievement condition tests.

@@ -46,6 +46,8 @@ public:
     void queueUnlock(uint32_t id);
     void markTriggered(uint32_t id);
     bool isActive() const { return active; }
+    bool activateRichPresence(const std::string& script);
+    std::string currentRichPresence();
 
     static void setCore(Core* core);
 
@@ -57,6 +59,11 @@ private:
     std::queue<uint32_t> pendingUnlocks;
     std::mutex unlockMutex;
     std::vector<uint32_t> triggeredIds;
+
+    bool richPresenceActive = false;
+    uint32_t richPresenceFrames = 0;
+    std::string richPresenceText;
+    std::mutex richPresenceMutex;
 
     rc_libretro_memory_regions_t memoryRegions = {};
     bool memoryInitialized = false;

@@ -26,6 +26,10 @@ namespace libretrodroid {
 
 static Core* g_core = nullptr;
 
+// About ten seconds at 60 frames a second.
+static constexpr uint32_t RICH_PRESENCE_EVERY_FRAMES = 600;
+static constexpr size_t RICH_PRESENCE_MAX_BYTES = 256;
+
 static void getCoreMemoryInfo(uint32_t id, rc_libretro_core_memory_info_t* info) {
     if (!g_core || !info) return;
     info->data = static_cast<uint8_t*>(g_core->retro_get_memory_data(id));
@@ -153,6 +157,32 @@ void Achievements::evaluateFrame() {
         rc_runtime_deactivate_achievement(rt, id);
         LOGD("Deactivated achievement %u to prevent re-triggering", id);
     }
+
+    // The status line is built here, on the emulation thread, so reading game memory never races
+    // the core; the app only ever reads the cached text.
+    if (richPresenceActive && ++richPresenceFrames >= RICH_PRESENCE_EVERY_FRAMES) {
+        richPresenceFrames = 0;
+        char buffer[RICH_PRESENCE_MAX_BYTES];
+        int length = rc_runtime_get_richpresence(rt, buffer, sizeof(buffer), &Achievements::peekMemory, nullptr, nullptr);
+        if (length > 0) {
+            std::lock_guard<std::mutex> lock(richPresenceMutex);
+            richPresenceText.assign(buffer, static_cast<size_t>(length) < sizeof(buffer) ? length : sizeof(buffer) - 1);
+        }
+    }
+}
+
+bool Achievements::activateRichPresence(const std::string& script) {
+    if (!runtime || script.empty()) return false;
+    int result = rc_runtime_activate_richpresence(static_cast<rc_runtime_t*>(runtime), script.c_str(), nullptr, 0);
+    richPresenceActive = result == RC_OK;
+    richPresenceFrames = RICH_PRESENCE_EVERY_FRAMES - 1;
+    if (!richPresenceActive) LOGW("Rich presence script rejected: error %d", result);
+    return richPresenceActive;
+}
+
+std::string Achievements::currentRichPresence() {
+    std::lock_guard<std::mutex> lock(richPresenceMutex);
+    return richPresenceText;
 }
 
 static int peekLogCounter = 0;
@@ -229,6 +259,12 @@ void Achievements::clear() {
     }
     active = false;
     triggeredIds.clear();
+    richPresenceActive = false;
+    richPresenceFrames = 0;
+    {
+        std::lock_guard<std::mutex> lock(richPresenceMutex);
+        richPresenceText.clear();
+    }
 
     if (memoryInitialized) {
         rc_libretro_memory_destroy(&memoryRegions);

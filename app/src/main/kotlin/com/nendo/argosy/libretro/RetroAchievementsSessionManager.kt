@@ -85,6 +85,7 @@ class RetroAchievementsSessionManager(
     private var heartbeatJob: Job? = null
     private var cachedAchievementDefs: Array<com.swordfish.libretrodroid.AchievementDef>? = null
     private var cachedConsoleId: Int? = null
+    private var cachedRichPresenceScript: String? = null
     private var cachedRetroView: GLRetroView? = null
     private var pausedForNetplay: Boolean = false
 
@@ -256,6 +257,11 @@ class RetroAchievementsSessionManager(
             achievementRuntime.arm(achievementDefs, consoleId)
             cachedAchievementDefs = achievementDefs
             cachedConsoleId = consoleId
+            cachedRichPresenceScript = patchData.richPresencePatch?.takeIf { it.isNotBlank() }
+            cachedRichPresenceScript?.let { script ->
+                val armed = achievementRuntime.armRichPresence(script)
+                Log.d(TAG, "Rich presence ${if (armed) "armed" else "rejected"} for game ${gameRaId}")
+            }
 
             retroView.achievementUnlockListener = { achievementId ->
                 onAchievementUnlocked(achievementId)
@@ -293,10 +299,13 @@ class RetroAchievementsSessionManager(
 
     private fun startHeartbeatLoop() {
         heartbeatJob = scope.launch {
+            // The first ping comes after a minute so a short session still records the game's status.
+            var wait = FIRST_HEARTBEAT_MS
             while (isActive && raSessionActive) {
-                delay(240_000L)
+                delay(wait)
+                wait = HEARTBEAT_MS
                 val raId = gameRaId ?: break
-                raRepository.sendHeartbeat(raId, null)
+                raRepository.sendHeartbeat(raId, achievementRuntime.richPresence())
                 Log.d(TAG, "RA heartbeat sent for game $raId")
             }
         }
@@ -315,7 +324,7 @@ class RetroAchievementsSessionManager(
         earnedAchievements++
 
         scope.launch {
-            journeyEventRecorder.capture(gameId, achievementId)
+            journeyEventRecorder.capture(gameId, achievementId, presence = achievementRuntime.richPresence())
             Log.d(TAG, "Submitting achievement $achievementId to RA server...")
             val result = raRepository.awardAchievement(
                 gameId = gameId,
@@ -470,6 +479,7 @@ class RetroAchievementsSessionManager(
         val view = cachedRetroView
         if (defs != null && consoleId != null && view != null && gameRaId != null) {
             achievementRuntime.arm(defs, consoleId)
+            cachedRichPresenceScript?.let { achievementRuntime.armRichPresence(it) }
             view.achievementUnlockListener = { achievementId ->
                 onAchievementUnlocked(achievementId)
             }
@@ -488,6 +498,7 @@ class RetroAchievementsSessionManager(
         pausedForNetplay = false
         cachedAchievementDefs = null
         cachedConsoleId = null
+        cachedRichPresenceScript = null
         cachedRetroView = null
         achievementRuntime.clear()
         if (gameRaId != null) {
@@ -497,5 +508,7 @@ class RetroAchievementsSessionManager(
 
     companion object {
         private const val TAG = "RASessionManager"
+        private const val FIRST_HEARTBEAT_MS = 60_000L
+        private const val HEARTBEAT_MS = 240_000L
     }
 }
