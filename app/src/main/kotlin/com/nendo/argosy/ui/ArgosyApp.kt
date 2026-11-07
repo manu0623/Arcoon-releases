@@ -264,6 +264,9 @@ fun ArgosyApp(
         ?: remember { mutableStateOf<Any?>(null) }
     val launcherSurfaceToken = remember { Any() }
     var settingsLiftMine by remember { mutableStateOf(false) }
+    // The lifted screen ends the lift only once it has shown Settings and Settings has gone again.
+    // Starting up it has no Settings yet, and ending the lift then bounced input between screens.
+    var liftedSettingsShown by remember { mutableStateOf(false) }
     val settingsRouteOpen = currentRoute?.startsWith(Screen.Settings.route) == true
     LaunchedEffect(settingsRouteOpen, isDualActive, settingsLiftOwner) {
         val owner = settingsLiftOwner
@@ -271,9 +274,13 @@ fun ArgosyApp(
         val settingsStillStacked = navController.currentBackStack.value.any {
             it.destination.route?.startsWith(Screen.Settings.route) == true
         }
+        if (owner == null) liftedSettingsShown = false
+        if (liftMovedThisSurface && settingsStillStacked) liftedSettingsShown = true
         when {
-            liftMovedThisSurface && owner != null && !settingsStillStacked ->
+            liftMovedThisSurface && owner != null && !settingsStillStacked && liftedSettingsShown -> {
+                liftedSettingsShown = false
                 dsm?.dropSettingsLift(owner)
+            }
             settingsLiftMine && owner == null -> {
                 settingsLiftMine = false
                 if (settingsRouteOpen) navController.popBackStack()
