@@ -2855,7 +2855,9 @@ class DualScreenManager(
                 return
             }
         }
-        if (companionHoldsPrimary.value) {
+        // While Settings is lifted onto the top screen, input belongs to that screen's window: the
+        // lower launcher is hidden behind the showcase and must not take the controller back.
+        if (companionHoldsPrimary.value && _settingsLift.value == null) {
             controlCompanion?.let {
                 it.refocusSelf()
                 return
