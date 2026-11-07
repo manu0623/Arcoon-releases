@@ -237,6 +237,11 @@ class ArgosyActivity : ComponentActivity() {
     @SuppressLint("NewApi")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // No task screenshot: coming back, Android would show the last one (an earlier suspend's
+        // picture at full size) before the launcher draws the new one.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            setRecentsScreenshotEnabled(false)
+        }
         com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.init(this)
         com.nendo.argosy.ui.cocoon.CocoonAppStore.init(this)
         com.nendo.argosy.ui.cocoon.CocoonHomeStore.load(this)
