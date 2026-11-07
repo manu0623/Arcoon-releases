@@ -221,6 +221,13 @@ class DualScreenManager(
     fun dropSettingsLift(owner: Any) {
         if (_settingsLift.value !== owner) return
         _settingsLift.value = null
+        // A lift only starts while the lower launcher holds input, so input goes straight back
+        // to it. Asking refocusMain read the role a moment before it updated and raised the top
+        // window instead, which flashed it.
+        controlCompanion?.let {
+            it.refocusSelf()
+            return
+        }
         refocusMain()
     }
 
