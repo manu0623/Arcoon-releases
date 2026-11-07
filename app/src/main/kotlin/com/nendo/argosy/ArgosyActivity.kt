@@ -417,8 +417,17 @@ class ArgosyActivity : ComponentActivity() {
                             "main window (display ${window.decorView.display?.displayId}) shows ${if (showsPresentation) "presentation" else "launcher"}"
                         )
                     }
+                    // Settings coming up here (or leaving) crossfades with the showcase picture; a
+                    // screen swap keeps its own slide with no fade under it.
+                    val swapping = com.nendo.argosy.ui.cocoon.cocoonSwapRecent()
                     com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = rolesSwapped.value) {
-                    if (showsPresentation) {
+                    androidx.compose.animation.Crossfade(
+                        targetState = showsPresentation,
+                        animationSpec = if (swapping) androidx.compose.animation.core.snap()
+                        else androidx.compose.animation.core.tween(SETTINGS_LIFT_FADE_MS),
+                        label = "main-window-role"
+                    ) { presenting ->
+                    if (presenting) {
                         val slot by dualScreenManager.presentationSlot.collectAsState()
                         androidx.compose.runtime.LaunchedEffect(slot::class) {
                             com.nendo.argosy.util.ArcoonTrace.log("main window presentation slot: ${slot::class.simpleName}")
@@ -472,6 +481,7 @@ class ArgosyActivity : ComponentActivity() {
                                 isQuickPanelOpen = { quickPanelOverlay.isOpen.value }
                             )
                         }
+                    }
                     }
                     }
                     }
@@ -1082,3 +1092,6 @@ class ArgosyActivity : ComponentActivity() {
         }
     )
 }
+
+/** Settings moving onto this screen (or off it) crossfades with the showcase picture. */
+private const val SETTINGS_LIFT_FADE_MS = 200
