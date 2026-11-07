@@ -229,6 +229,20 @@ class SecondaryHomeActivity :
 
     @androidx.compose.runtime.Composable
     private fun CompanionRoleContent() {
+        // The launcher is kept as movable content, so it survives anything around it being
+        // rebuilt (it is moved, not recreated) and keeps its screen, history and highlight.
+        val companionLauncher = remember {
+            androidx.compose.runtime.movableContentOf {
+                com.nendo.argosy.ui.primitives.CocoonCursorHost(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
+                    com.nendo.argosy.ui.ArgosyApp(
+                        onStartupComplete = { dsm.stopStartupGuard() },
+                        openQuickPanelOnTop = { owner, page -> quickPanelOverlay.showOnUpper(owner, page) },
+                        hideQuickPanel = { quickPanelOverlay.hideNow() },
+                        isQuickPanelOpen = { quickPanelOverlay.isOpen.value }
+                    )
+                }
+            }
+        }
         val gameActive by dsm.gameOnScreen.collectAsState()
         val gameDisplay by dsm.emulatorDisplay.collectAsState()
         val resumeRequest by dsm.builtInResumeRequest.collectAsState()
@@ -251,6 +265,7 @@ class SecondaryHomeActivity :
         val dashboardTransitionActive = showsDashboard
         val rolesSwapped by dsm.isRolesSwapped.collectAsState()
         val settingsLifted by dsm.settingsLift.collectAsState()
+        // While Settings floats on the upper screen, this one shows the showcase picture instead.
         val launcherShown = !rolesSwapped && !dashboardTransitionActive && settingsLifted == null
         androidx.compose.runtime.LaunchedEffect(
             launcherShown, rolesSwapped, settingsLifted, gameActive, showsDashboard, suspendedSession
@@ -297,6 +312,9 @@ class SecondaryHomeActivity :
         // A screen swap slides instead of cross-fading (the fade under the slide made it flicker).
         val swapping = com.nendo.argosy.ui.cocoon.cocoonSwapRecent()
         com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = rolesSwapped) {
+            val launcherBlocksTouch = androidx.compose.runtime.rememberUpdatedState(
+                !(launcherShown && !resumeTargetsDashboard && settingsLifted == null)
+            )
             /*
              * The launcher stays alive while the game panel covers it, only hidden. Removing it
              * threw away where you were: after a suspend it was rebuilt from the main menu and
@@ -322,28 +340,20 @@ class SecondaryHomeActivity :
                 modifier = androidx.compose.ui.Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = launcherAlpha }
-                    .then(
-                        if (launcherShown && !resumeTargetsDashboard) androidx.compose.ui.Modifier
-                        else androidx.compose.ui.Modifier.pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                                        .changes.forEach { it.consume() }
-                                }
+                    // One touch guard that switches on and off. Swapping the modifier for
+                    // another rebuilt the whole launcher inside each time Settings opened.
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                if (launcherBlocksTouch.value) event.changes.forEach { it.consume() }
                             }
                         }
-                    )
+                    }
             ) {
                 // One sliding Cocoon cursor for the whole lower screen, as on the top screen. Without
                 // it every item drew its own corners, which lists cut off at their edges.
-                com.nendo.argosy.ui.primitives.CocoonCursorHost(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
-                    com.nendo.argosy.ui.ArgosyApp(
-                        onStartupComplete = { dsm.stopStartupGuard() },
-                        openQuickPanelOnTop = { owner, page -> quickPanelOverlay.showOnUpper(owner, page) },
-                        hideQuickPanel = { quickPanelOverlay.hideNow() },
-                        isQuickPanelOpen = { quickPanelOverlay.isOpen.value }
-                    )
-                }
+                companionLauncher()
             }
             if (blackHoldAlpha > 0f) {
                 androidx.compose.foundation.layout.Box(
@@ -613,7 +623,7 @@ class SecondaryHomeActivity :
                 return super.dispatchKeyEvent(event)
             }
         }
-        if (::dsm.isInitialized && !dsm.companionHoldsPrimary.value) {
+        if (::dsm.isInitialized && !dsm.companionHoldsPrimaryNow()) {
             handBackToPrimaryScreen()
             return true
         }
@@ -643,7 +653,7 @@ class SecondaryHomeActivity :
     override fun dispatchGenericMotionEvent(event: android.view.MotionEvent): Boolean {
         if (pointerGuard.consumes(event)) return true
         val isJoystick = event.isFromSource(android.view.InputDevice.SOURCE_CLASS_JOYSTICK)
-        if (isJoystick && ::dsm.isInitialized && !dsm.companionHoldsPrimary.value) {
+        if (isJoystick && ::dsm.isInitialized && !dsm.companionHoldsPrimaryNow()) {
             gamepadInputHandler.resetStickMotion()
             handBackToPrimaryScreen()
             return true

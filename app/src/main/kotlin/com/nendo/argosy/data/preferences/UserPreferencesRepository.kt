@@ -678,6 +678,8 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun setHudShowFps(enabled: Boolean) = builtinPrefs.setHudShowFps(enabled)
 
     suspend fun setHudShowLastSave(enabled: Boolean) = builtinPrefs.setHudShowLastSave(enabled)
+
+    suspend fun setHudShowShaders(enabled: Boolean) = builtinPrefs.setHudShowShaders(enabled)
     fun getArchitectureOverride(): Flow<String?> = builtinPrefs.getArchitectureOverride()
     fun getBuiltinEmulatorSettings(): Flow<BuiltinEmulatorSettings> = builtinPrefs.getBuiltinEmulatorSettings()
     fun getBuiltinCoreSelections(): Flow<Map<String, String>> = builtinPrefs.getBuiltinCoreSelections()
@@ -775,7 +777,9 @@ data class BuiltinEmulatorSettings(
     val hudShowClock: Boolean = true,
     val hudShowPlaytime: Boolean = false,
     val hudShowFps: Boolean = false,
-    val hudShowLastSave: Boolean = false
+    val hudShowLastSave: Boolean = false,
+    /** Shows "Compiling shaders" while the built-in emulator builds shaders (a cause of stutter). */
+    val hudShowShaders: Boolean = false
 ) {
     val shaderConfig: com.swordfish.libretrodroid.ShaderConfig
         get() = when (shader) {

@@ -1,5 +1,9 @@
 package com.nendo.argosy.ui.components
 
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.compositeOver
+import com.nendo.argosy.ui.cocoon.cocoonPopulate
 import com.nendo.argosy.ui.primitives.cocoonBrackets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -55,25 +59,52 @@ fun NavDrawerRow(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     labelVisible: Boolean = true,
+    isFirst: Boolean = true,
+    isLast: Boolean = true,
     trailing: @Composable RowScope.() -> Unit = {}
 ) {
     // Cocoon drawer row: a dark rounded card per entry, white icon and label, corner brackets on
     // the focused row; the screen you are on reads slightly brighter.
-    val backgroundColor = if (isSelected) com.nendo.argosy.ui.theme.CocoonSurface.Chip.copy(alpha = 1f)
-        else com.nendo.argosy.ui.theme.CocoonSurface.Chip.copy(alpha = 0.7f)
+    // Looks like the Y menu (CocoonMenuRow): the rows are one dark panel, round only at its outer
+    // corners and split by hairlines; the focused row lifts a shade lighter, the screen you are
+    // on a little less.
+    val panel = com.nendo.argosy.ui.cocoon.CocoonMenuPanel
+    val backgroundColor = when {
+        isFocused -> androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f).compositeOver(panel)
+        isSelected -> androidx.compose.ui.graphics.Color.White.copy(alpha = 0.04f).compositeOver(panel)
+        else -> panel
+    }
     val baseContentColor = com.nendo.argosy.ui.theme.CocoonSurface.TextPrimary
     val contentColor = if (enabled) baseContentColor else baseContentColor.copy(alpha = NAV_ROW_DISABLED_ALPHA)
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) 18.dp else 0.dp,
+        topEnd = if (isFirst) 18.dp else 0.dp,
+        bottomStart = if (isLast) 18.dp else 0.dp,
+        bottomEnd = if (isLast) 18.dp else 0.dp
+    )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start,
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = Dimens.spacingSm, top = 3.dp, bottom = 3.dp)
+            .padding(start = Dimens.spacingSm, top = if (isFirst) 3.dp else 0.dp, bottom = if (isLast) 3.dp else 0.dp)
+            .zIndex(if (isFocused) 1f else 0f)
             .cocoonBrackets(focused = isFocused, outset = 3.dp)
             .clip(shape)
             .background(backgroundColor)
+            .then(
+                if (!isLast) Modifier.drawBehind {
+                    val inset = 14.dp.toPx()
+                    drawRect(
+                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.07f),
+                        topLeft = androidx.compose.ui.geometry.Offset(inset, size.height - 1.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(size.width - inset * 2, 1.dp.toPx())
+                    )
+                } else Modifier
+            )
+            // Drop-down entrance: the card is there at once, its content populates.
+            .cocoonPopulate()
             .clickableNoFocus(enabled = enabled, onClick = onClick)
             .padding(vertical = 12.dp)
     ) {

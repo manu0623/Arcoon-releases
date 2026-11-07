@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui.dualscreen
 
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -114,6 +115,7 @@ private const val JOURNAL_RIGHT_ALPHA = 0.15f
 private const val JOURNAL_MID_STOP = 0.42f
 private const val JOURNAL_CLEAR_STOP = 0.8f
 private const val LOGO_TOP_ALPHA = 0.1f
+private const val SUSPENDED_LOGO_FADE_MS = 300
 private const val LOGO_BOTTOM_ALPHA = 0.7f
 private const val JOURNAL_COLUMN_WIDTH_SHARE = 0.56f
 private const val PILL_ALPHA = 0.6f
@@ -267,7 +269,21 @@ private fun GameShowcaseContent(
             }
         }
 
-        if (heldDetail != null) {
+        // While this game is suspended its card sits in the middle of the hero (a frosted window
+        // with a play mark), so the game's logo steps aside; closing the game brings it back.
+        val suspendedGameId = com.nendo.argosy.DualScreenManagerHolder.instance?.gameSessionManager
+            ?.sessionState?.collectAsState()?.value?.gameId
+        val logoAside = suspendedGameId != null && heldDetail?.gameId == suspendedGameId
+        val foregroundAlpha by androidx.compose.animation.core.animateFloatAsState(
+            targetValue = if (logoAside) 0f else 1f,
+            animationSpec = androidx.compose.animation.core.tween(SUSPENDED_LOGO_FADE_MS),
+            label = "showcase-logo-aside"
+        )
+        val showcaseMaxWidth = maxWidth
+        val showcaseMaxHeight = maxHeight
+        if (heldDetail != null) Box(
+            Modifier.fillMaxSize().graphicsLayer { alpha = foregroundAlpha }
+        ) {
             when (style.layout) {
                 PresentationLayout.LOGO -> LogoShowcase(
                     detail = heldDetail,
@@ -283,8 +299,8 @@ private fun GameShowcaseContent(
                     detail = heldDetail,
                     style = style,
                     bottom = bottomInset,
-                    viewportWidth = maxWidth,
-                    viewportHeight = maxHeight,
+                    viewportWidth = showcaseMaxWidth,
+                    viewportHeight = showcaseMaxHeight,
                     onTitleBoundsChanged = { titleBounds = it },
                     coverLayer = rememberShowcaseLayer(
                         motion, durations, durations.coverDelayMs, durations.coverDriftDp, horizontal = true
@@ -297,7 +313,7 @@ private fun GameShowcaseContent(
                     friends = friends,
                     gutter = gutter,
                     bottom = contentBottom,
-                    columnWidth = maxWidth * JOURNAL_COLUMN_WIDTH_SHARE,
+                    columnWidth = showcaseMaxWidth * JOURNAL_COLUMN_WIDTH_SHARE,
                     textLayer = rememberShowcaseLayer(
                         motion, durations, durations.textDelayMs, durations.textRiseDp,
                         horizontal = false, onFinished = onEntranceFinished

@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui.components
 
+import com.nendo.argosy.ui.cocoon.cocoonPopulate
 import com.nendo.argosy.ui.primitives.cocoonBrackets
 
 import androidx.compose.animation.core.animateFloat
@@ -58,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -99,19 +101,26 @@ internal fun preferenceModifier(
     onClick: (() -> Unit)? = null,
     onDirectionalTap: ((Int) -> Unit)? = null
 ): Modifier {
-    // Cocoon rows: a dark rounded card in every state; focus is the corner brackets, not a tint.
+    // Cocoon rows look like the Y menu: a group is one dark panel (round only at its outer
+    // corners), its rows split by hairlines that stop short of the edges, and the focused row
+    // lifts a shade lighter inside it, with the corner brackets around it.
     val group = com.nendo.argosy.ui.screens.settings.components.LocalSettingsGroupPosition.current
-    val preferenceShape = if (group == null) RoundedCornerShape(14.dp) else RoundedCornerShape(
-        topStart = if (group.first) 16.dp else 4.dp,
-        topEnd = if (group.first) 16.dp else 4.dp,
-        bottomStart = if (group.last) 16.dp else 4.dp,
-        bottomEnd = if (group.last) 16.dp else 4.dp
+    val preferenceShape = if (group == null) RoundedCornerShape(18.dp) else RoundedCornerShape(
+        topStart = if (group.first) 18.dp else 0.dp,
+        topEnd = if (group.first) 18.dp else 0.dp,
+        bottomStart = if (group.last) 18.dp else 0.dp,
+        bottomEnd = if (group.last) 18.dp else 0.dp
     )
+    val hairline = group != null && !group.last
     val currentDirectionalTap by rememberUpdatedState(onDirectionalTap)
     val accent = preferenceAccent(isDangerous)
-    val card = com.nendo.argosy.ui.theme.CocoonSurface.Chip
+    val card = com.nendo.argosy.ui.cocoon.CocoonMenuPanel
     val background by animateColorAsState(
-        targetValue = if (isFocused && isDangerous) accent.copy(alpha = 0.15f).compositeOver(card) else card,
+        targetValue = when {
+            isFocused && isDangerous -> accent.copy(alpha = 0.15f).compositeOver(card)
+            isFocused -> Color.White.copy(alpha = 0.08f).compositeOver(card)
+            else -> card
+        },
         animationSpec = Motion.focusColorSpec,
         label = "pref-bg"
     )
@@ -119,12 +128,24 @@ internal fun preferenceModifier(
     return Modifier
         .fillMaxWidth()
         .heightIn(min = Dimens.settingsItemMinHeight)
+        // Settings opens like a folder: rows arrive in a wave (see CocoonPopulate).
+        .cocoonPopulate(isFocused)
         // Grouped rows sit edge to edge, and the cursor is drawn outside the row: without this
         // the next row's card paints over the arms and the brackets look like a ghost.
         .then(if (isFocused) Modifier.zIndex(1f) else Modifier)
         .cocoonBrackets(focused = isFocused, outset = 3.dp)
         .clip(preferenceShape)
         .background(background)
+        .then(
+            if (hairline) Modifier.drawBehind {
+                val inset = 14.dp.toPx()
+                drawRect(
+                    color = Color.White.copy(alpha = 0.07f),
+                    topLeft = androidx.compose.ui.geometry.Offset(inset, size.height - 1.dp.toPx()),
+                    size = androidx.compose.ui.geometry.Size(size.width - inset * 2, 1.dp.toPx())
+                )
+            } else Modifier
+        )
         .then(
             when {
                 onClick != null -> Modifier.clickableNoFocus(onClick = onClick)

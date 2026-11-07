@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui.cocoon
 
+import androidx.compose.ui.draw.blur
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -106,16 +107,18 @@ fun CocoonSuspendedCard(
     }
     val art = com.nendo.argosy.ui.common.rememberResolvedArt(session.gameId)
     val artImage = art?.backgroundPath ?: art?.coverPath
-    val image = artImage ?: session.screenshotPath
-    // The paused moment shrinks into the card and then gives way to the game's art; on resume the
-    // art turns back into that moment as the card grows, so the game takes over the same picture.
-    val artShown = androidx.compose.runtime.remember(session.gameId, session.startTimeMillis) {
+    // The card only ever shows the game's own paused moment, never its art.
+    val image = session.screenshotPath
+    // The paused moment shrinks into the card and then turns to frosted glass: blurred and partly
+    // see-through, the game's hero showing behind it, a play mark in the middle. On resume it
+    // sharpens back as the card grows, so the game takes over the same picture.
+    val windowOpen = androidx.compose.runtime.remember(session.gameId, session.startTimeMillis) {
         androidx.compose.animation.core.Animatable(if (arrivingFromGame) 0f else 1f)
     }
-    androidx.compose.runtime.LaunchedEffect(artShown, arrive.value >= 1f, resumeInProgress) {
-        if (resumeInProgress || arrive.value < 1f || artShown.value >= 1f) return@LaunchedEffect
-        kotlinx.coroutines.delay(ART_SWAP_DELAY_MS)
-        artShown.animateTo(1f, tween(ART_SWAP_MS, easing = FastOutSlowInEasing))
+    androidx.compose.runtime.LaunchedEffect(windowOpen, arrive.value >= 1f, resumeInProgress) {
+        if (resumeInProgress || arrive.value < 1f || windowOpen.value >= 1f) return@LaunchedEffect
+        kotlinx.coroutines.delay(WINDOW_CLEAR_DELAY_MS)
+        windowOpen.animateTo(1f, tween(WINDOW_CLEAR_MS, easing = FastOutSlowInEasing))
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -153,6 +156,7 @@ fun CocoonSuspendedCard(
                     .background(Color.Black)
             )
         }
+        val clear = if (resumeInProgress) minOf(windowOpen.value, a) else windowOpen.value
         val cardW = lerp(startW, lerp(cornerW, centerW, p), a)
         val cardH = lerp(startH, lerp(cornerH, centerH, p), a)
         val radius = lerp(0.dp, lerp(14.dp, 20.dp, p), a)
@@ -162,10 +166,18 @@ fun CocoonSuspendedCard(
             modifier = Modifier
                 .absoluteOffset(x = lerp(startX, lerp(cornerX, centerX, p), a), y = lerp(startY, lerp(cornerY, centerY, p), a))
                 .size(width = cardW, height = cardH)
-                .shadow(14.dp, shape)
+                .shadow(14.dp * (1f - clear), shape)
                 .clip(shape)
-                .background(if (handoff != null && a < 1f) Color.Black else Color(0xFF1C1C1F))
-                .border(1.dp, Color.White.copy(alpha = 0.08f), shape)
+                .background(
+                    (if (handoff != null && a < 1f) Color.Black else Color(0xFF1C1C1F)).copy(alpha = 1f - clear)
+                )
+                // A faint glass tint and a brighter rim keep the clear window readable as a card.
+                .background(Color.White.copy(alpha = 0.04f * clear))
+                .border(
+                    lerp(1.dp, 2.dp, clear),
+                    Color.White.copy(alpha = 0.08f + 0.27f * clear),
+                    shape
+                )
                 .padding(lerp(0.dp, lerp(6.dp, 0.dp, p), a))
         ) {
             if (handoff != null) {
@@ -175,20 +187,10 @@ fun CocoonSuspendedCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer { alpha = 1f - FROST_SEE_THROUGH * clear }
+                        .blur(FROST_BLUR * clear)
                         .clip(RoundedCornerShape(lerp(0.dp, lerp(10.dp, 20.dp, p), a)))
                 )
-                val artAlpha = if (resumeInProgress) minOf(artShown.value, a) else artShown.value
-                if (artImage != null && artAlpha > 0f) {
-                    AsyncImage(
-                        model = com.nendo.argosy.ui.common.rememberFileImageModel(artImage),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer { alpha = artAlpha }
-                            .clip(RoundedCornerShape(lerp(0.dp, lerp(10.dp, 20.dp, p), a)))
-                    )
-                }
             } else if (image != null) {
                 AsyncImage(
                     model = com.nendo.argosy.ui.common.rememberFileImageModel(image),
@@ -196,8 +198,23 @@ fun CocoonSuspendedCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer { alpha = 1f - FROST_SEE_THROUGH * clear }
+                        .blur(FROST_BLUR * clear)
                         .clip(RoundedCornerShape(lerp(10.dp, 20.dp, p)))
                 )
+            }
+            // Large card: one play mark in the middle of the frosted moment.
+            if (p > 0f && clear > 0f) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .graphicsLayer { alpha = p * clear }
+                        .size(64.dp)
+                        .background(Color.White.copy(alpha = 0.92f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color(0xFF1C1C1F), modifier = Modifier.size(38.dp))
+                }
             }
             // Small card: Cocoon's home + play marks over the paused frame.
             if (p < 1f) {
@@ -280,5 +297,8 @@ fun CocoonSuspendedCard(
     }
 }
 
-private const val ART_SWAP_DELAY_MS = 120L
-private const val ART_SWAP_MS = 420
+private const val WINDOW_CLEAR_DELAY_MS = 120L
+/** How much of the hero shows through the frosted moment, and how soft the moment goes. */
+private const val FROST_SEE_THROUGH = 0.45f
+private val FROST_BLUR = 14.dp
+private const val WINDOW_CLEAR_MS = 420

@@ -1386,15 +1386,50 @@ class DownloadManager internal constructor(
         return linkCompletedDownload(progress, finalPath, platformDir)
     }
 
-    private suspend fun installTexturePackIfNeeded(progress: DownloadProgress, path: String) {
-        if (!azaharTexturePacks.looksLikeTexturePack(progress.fileName, progress.fileCategory)) return
-        val game = gameDao.getById(progress.gameId) ?: return
-        val installed = azaharTexturePacks.installFromFile(game, File(path)) ?: return
-        azaharTexturePacks.setEnabled(game.id, true)
-        Logger.info(
-            TAG,
-            "Texture pack installed | game=${game.title} files=${installed.fileCount} dest=${installed.directory}"
-        )
+    /**
+     * Installs a downloaded 3DS texture pack into Azahar and turns textures on for the game. Never
+     * fails the download itself: a pack that cannot be installed is logged and left in place.
+     */
+    /** Returns the installed pack's folder when the downloaded archive was replaced by it. */
+    private suspend fun installTexturePackIfNeeded(progress: DownloadProgress, path: String): String? {
+        if (!azaharTexturePacks.appliesTo(progress.platformSlug)) return null
+        val source = File(path)
+        if (!azaharTexturePacks.looksLikeTexturePack(progress.fileName, progress.fileCategory, source)) return null
+        return runCatching {
+            val known = gameDao.getById(progress.gameId) ?: return null
+            val game = azaharTexturePacks.resolveTitleId(known, source) ?: run {
+                Logger.warn(TAG, "Texture pack skipped | game=${known.title} file=${progress.fileName}: no 3DS title id on the game or in the pack")
+                return null
+            }
+            // The same download again: the pack is already in place, so only make sure it is on.
+            val sourceKey = "${progress.fileName}|${source.length()}"
+            if (azaharTexturePacks.isInstalledFrom(game, sourceKey)) {
+                azaharTexturePacks.setEnabled(game.id, true)
+                Logger.info(TAG, "Texture pack already installed | game=${game.title} file=${progress.fileName}")
+                return null
+            }
+            val installed = azaharTexturePacks.installFromFile(game, source) ?: run {
+                Logger.warn(TAG, "Texture pack not installed | game=${game.title} file=${progress.fileName}: no textures found in it")
+                return null
+            }
+            azaharTexturePacks.markInstalledFrom(game, sourceKey)
+            azaharTexturePacks.setEnabled(game.id, true)
+            // The unpacked pack is what Azahar reads; the downloaded archive would only double the
+            // space. The file's record now points at the installed pack, so it still reads as
+            // downloaded (and removing it removes the pack).
+            val replaced = source.isFile && progress.gameFileId != null
+            if (replaced) {
+                gameFileDao.updateLocalPath(progress.gameFileId!!, installed.directory, Instant.now())
+                source.delete()
+            }
+            Logger.info(
+                TAG,
+                "Texture pack installed | game=${game.title} files=${installed.fileCount} dest=${installed.directory}"
+            )
+            if (replaced) installed.directory else null
+        }.onFailure { error ->
+            Logger.warn(TAG, "Texture pack install failed | file=${progress.fileName}: ${error.message}")
+        }.getOrNull()
     }
 
     private suspend fun linkCompletedDownload(
@@ -1444,7 +1479,7 @@ class DownloadManager internal constructor(
                 val isDisc = gameFileDao.getById(progress.gameFileId)
                     ?.let { m3uManager.recordDiscFile(progress.gameId, it.fileName, finalPath) } == true
                 if (!isDisc) claimLaunchTargetIfBase(progress, finalPath)
-                installTexturePackIfNeeded(progress, finalPath)
+                installTexturePackIfNeeded(progress, finalPath)?.let { finalPath = it }
             }
             progress.isDiscDownload && progress.discId != null -> {
                 gameDiscDao.updateLocalPath(progress.discId, finalPath)

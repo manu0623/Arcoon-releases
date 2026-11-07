@@ -67,6 +67,8 @@ fun CocoonMenuRow(
                 .fillMaxWidth()
                 .background(CocoonMenuPanel, shape)
                 .then(if (focused) Modifier.background(Color.White.copy(alpha = 0.08f), shape) else Modifier)
+                // Drop-down entrance: the row's card is there at once, its content populates.
+                .cocoonPopulate()
                 .clickableNoFocus(onClick = onClick)
                 .padding(horizontal = 18.dp, vertical = 15.dp),
             verticalAlignment = Alignment.CenterVertically,

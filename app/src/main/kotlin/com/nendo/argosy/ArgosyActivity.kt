@@ -12,6 +12,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -404,8 +407,11 @@ class ArgosyActivity : ComponentActivity() {
                     val rolesSwapped = dualScreenManager.isRolesSwapped.collectAsState()
                     val gameActive = dualScreenManager.gameOnScreen.collectAsState()
                     val gameDisplay = dualScreenManager.emulatorDisplay.collectAsState()
+                    // Lifted Settings floats over the showcase picture instead of replacing it.
+                    val settingsLifted = dualScreenManager.settingsLift.collectAsState().value != null
+                    val companionHostsLauncher = dualScreenManager.companionHostsLauncher.collectAsState()
                     val showsPresentation = rendersPresentation(
-                        companionHoldsPrimary.value,
+                        companionHoldsPrimary.value || companionHostsLauncher.value,
                         gameActive.value,
                         gameDisplay.value
                     )
@@ -484,6 +490,33 @@ class ArgosyActivity : ComponentActivity() {
                     }
                     }
                     }
+                    }
+                    // The panel stays up after Settings closes until the lower screen's Home has
+                    // put its own picture back here; leaving at once showed the Settings picture
+                    // for a moment before Home's replaced it.
+                    var settingsPanelUp by androidx.compose.runtime.remember {
+                        androidx.compose.runtime.mutableStateOf(false)
+                    }
+                    androidx.compose.runtime.LaunchedEffect(settingsLifted) {
+                        if (settingsLifted) {
+                            settingsPanelUp = true
+                        } else if (settingsPanelUp) {
+                            kotlinx.coroutines.withTimeoutOrNull(SETTINGS_PANEL_HOLD_MS) {
+                                dualScreenManager.presentationSlot.drop(1).first()
+                            }
+                            settingsPanelUp = false
+                        }
+                    }
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = settingsPanelUp && showsPresentation,
+                        // At once: a fade let the Settings showcase meant for the lower screen
+                        // show through up here for a moment.
+                        enter = androidx.compose.animation.EnterTransition.None,
+                        exit = androidx.compose.animation.fadeOut(
+                            androidx.compose.animation.core.tween(SETTINGS_PANEL_EXIT_MS)
+                        )
+                    ) {
+                        FloatingSettingsPanel()
                     }
                     // The optimization intro's top-screen half (logo and folders popping in).
                     if (showsPresentation) com.nendo.argosy.ui.cocoon.CocoonOptimizeTop()
@@ -610,7 +643,7 @@ class ArgosyActivity : ComponentActivity() {
             return true
         }
 
-        if (dualScreenManager.companionHoldsPrimary.value && !isOverlayFocused) {
+        if (dualScreenManager.companionHoldsPrimaryNow() && !isOverlayFocused) {
             gamepadInputHandler.observeInput(event)
             if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
@@ -704,7 +737,7 @@ class ArgosyActivity : ComponentActivity() {
             return true
         }
 
-        val steerRightStick = !dualScreenManager.companionHoldsPrimary.value || isOverlayFocused
+        val steerRightStick = !dualScreenManager.companionHoldsPrimaryNow() || isOverlayFocused
         if (gamepadInputHandler.processStickMotion(event, steerRightStick, ::deliverStickEvent)) return true
         if (gamepadInputHandler.handleMotionEvent(event)) return true
         return super.dispatchGenericMotionEvent(event)
@@ -721,7 +754,7 @@ class ArgosyActivity : ComponentActivity() {
     }
 
     private fun deliverStickEvent(stickEvent: GamepadEvent, isRepeat: Boolean) {
-        if (dualScreenManager.companionHoldsPrimary.value && !isOverlayFocused) {
+        if (dualScreenManager.companionHoldsPrimaryNow() && !isOverlayFocused) {
             val keyCode = gamepadEventToKeyCode(stickEvent) ?: return
             dualScreenManager.controlCompanion?.onForwardKey(
                 keyCode,
@@ -819,12 +852,69 @@ class ArgosyActivity : ComponentActivity() {
         return true
     }
 
+    /**
+     * Settings drawn as a floating panel over the upper screen's showcase picture, like Quick
+     * Settings: the picture stays put underneath and the lower screen keeps its launcher.
+     */
+    @androidx.compose.runtime.Composable
+    private fun FloatingSettingsPanel() {
+        // Opening: the screen goes dark at once (so the showcase meant for the lower screen never
+        // shows up here), then Settings enters as a folder's page does: it fades in while
+        // settling a short way into place, and its rows arrive in a wave (CocoonPopulate).
+        val opening = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            opening.animateTo(
+                1f,
+                androidx.compose.animation.core.tween(
+                    SETTINGS_PANEL_OPEN_MS,
+                    easing = com.nendo.argosy.ui.theme.Motion.argosyEase
+                )
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black)
+        ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val p = opening.value
+                    alpha = p
+                    translationY = -(1f - p) * SETTINGS_PANEL_RISE_DP * density
+                }
+                .background(com.nendo.argosy.ui.theme.CocoonSurface.Background)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Final)
+                        }
+                    }
+                }
+        ) {
+            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.active.value?.wallpaperMain?.let {
+                com.nendo.argosy.ui.cocoon.theme.CocoonThemeWallpaper(it)
+            }
+            com.nendo.argosy.ui.primitives.CocoonCursorHost(modifier = Modifier.fillMaxSize()) {
+                ArgosyApp(
+                    onStartupComplete = { dualScreenManager.stopStartupGuard() },
+                    openQuickPanelOnTop = { owner, page -> quickPanelOverlay.showOnUpper(owner, page) },
+                    hideQuickPanel = { quickPanelOverlay.hideNow() },
+                    isQuickPanelOpen = { quickPanelOverlay.isOpen.value },
+                    asLiftedPanel = true
+                )
+            }
+        }
+        }
+    }
+
     private fun isGameOnOtherDisplay(): Boolean {
         val emulatorDisplay = dualScreenManager.emulatorDisplayId ?: return false
         val ownDisplay = window.decorView.display?.displayId ?: return false
         if (emulatorDisplay == ownDisplay) return false
         return rendersPresentation(
-            dualScreenManager.companionHoldsPrimary.value,
+            dualScreenManager.companionHoldsPrimaryNow(),
             dualScreenManager.gameOnScreen.value,
             emulatorDisplay
         )
@@ -1095,3 +1185,8 @@ class ArgosyActivity : ComponentActivity() {
 
 /** Settings moving onto this screen (or off it) crossfades with the showcase picture. */
 private const val SETTINGS_LIFT_FADE_MS = 200
+private const val SETTINGS_PANEL_EXIT_MS = 160
+// A folder's page entrance: 240 ms, settling 26 dp into place.
+private const val SETTINGS_PANEL_OPEN_MS = 240
+private const val SETTINGS_PANEL_RISE_DP = 26f
+private const val SETTINGS_PANEL_HOLD_MS = 600L

@@ -73,11 +73,34 @@ class AzaharTexturePacks @Inject constructor(
         )
     }
 
-    fun looksLikeTexturePack(fileName: String, category: String?): Boolean {
+    /** Texture packs only ever go to 3DS games: other systems (Switch) also use 16-digit ids. */
+    fun appliesTo(platformSlug: String): Boolean =
+        com.nendo.argosy.data.platform.PlatformDefinitions.getCanonicalSlug(platformSlug) in THREE_DS_SLUGS ||
+            platformSlug.lowercase() in THREE_DS_SLUGS
+
+    /**
+     * Whether a downloaded file is a texture pack: filed as a mod, named like one ("Texture Pack",
+     * "HD Pack", "Upscaled"...), or, whatever its name, an archive or folder holding a pack.json.
+     */
+    fun looksLikeTexturePack(fileName: String, category: String?, source: File? = null): Boolean {
         if (category == MOD_CATEGORY) return true
         val name = fileName.substringBeforeLast('.').replace('_', ' ').replace('-', ' ')
-        return TEXTURE_NAME.containsMatchIn(name)
+        if (TEXTURE_NAME.containsMatchIn(name)) return true
+        return source != null && containsPackConfig(source)
     }
+
+    private fun containsPackConfig(source: File): Boolean = runCatching {
+        fun isConfig(path: String) = path.replace('\\', '/').substringAfterLast('/').equals(PACK_CONFIG, true)
+        when {
+            !source.exists() -> false
+            source.isDirectory -> source.walkTopDown().maxDepth(6).any { it.isFile && it.name.equals(PACK_CONFIG, true) }
+            isZipArchive(source) -> ZipFile(source).use { zip -> zip.entries().asSequence().any { isConfig(it.name) } }
+            isSevenZArchive(source) -> SevenZFile.builder().setFile(source).get().use { sevenZ ->
+                sevenZ.entries.any { isConfig(it.name) }
+            }
+            else -> false
+        }
+    }.getOrDefault(false)
 
     fun detectTitleId(source: File): String? = runCatching {
         when {
@@ -110,16 +133,24 @@ class AzaharTexturePacks @Inject constructor(
         if (!marker.isFile) emptySet() else marker.readLines().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     }
 
+    /** Records [sourceKey] as the pack now installed for [game] (replacing any earlier one). */
     suspend fun markInstalledFrom(game: GameEntity, sourceKey: String) = withContext(Dispatchers.IO) {
         val folder = folderName(game.titleId) ?: return@withContext
         targetDirs(game, folder).forEach { target ->
             target.mkdirs()
-            val marker = File(target, MARKER_FILE)
-            val existing = if (marker.isFile) marker.readText() else ""
-            if (existing.lines().none { it.trim() == sourceKey }) {
-                marker.writeText(existing.trimEnd() + "\n" + sourceKey)
-            }
+            File(target, MARKER_FILE).writeText(sourceKey + "\n")
         }
+    }
+
+    /**
+     * The game's 3DS title id: the one on record, or else the one the pack itself is filed under
+     * (packs keep their textures in a folder named after it), which is then saved to the game.
+     */
+    suspend fun resolveTitleId(game: GameEntity, source: File): GameEntity? {
+        if (folderName(game.titleId) != null) return game
+        val detected = withContext(Dispatchers.IO) { detectTitleId(source) } ?: return null
+        gameDao.updateTitleId(game.id, detected)
+        return game.copy(titleId = detected)
     }
 
     suspend fun install(game: GameEntity, open: () -> InputStream?): ImportResult? =
@@ -161,11 +192,18 @@ class AzaharTexturePacks @Inject constructor(
 
     private suspend fun commit(game: GameEntity, folder: String, root: File): ImportResult? {
         if (summarize(root).fileCount == 0) return null
-        targetDirs(game, folder).forEach { target ->
+        val primary = primaryDir(game, folder)
+        // A new pack replaces the old one entirely: files left from an earlier version would mix
+        // into it. Variant folders get a copy; the main folder takes the unpacked files by a move,
+        // so a large pack is not copied a second time.
+        targetDirs(game, folder).filter { it.absolutePath != primary.absolutePath }.forEach { target ->
+            target.deleteRecursively()
             target.mkdirs()
             root.copyRecursively(target, overwrite = true)
         }
-        val primary = primaryDir(game, folder)
+        primary.deleteRecursively()
+        primary.mkdirs()
+        root.listFiles()?.forEach { moveInto(it, File(primary, it.name)) }
         val summary = summarize(primary)
         return ImportResult(
             fileCount = summary.fileCount,
@@ -391,7 +429,8 @@ class AzaharTexturePacks @Inject constructor(
         private const val PACK_CONFIG = "pack.json"
         private const val MARKER_FILE = ".argosy-source"
         private const val MOD_CATEGORY = "mod"
-        private val TEXTURE_NAME = Regex("(?i)texture|tex pack|custom tex")
+        private val TEXTURE_NAME = Regex("(?i)texture|tex pack|custom tex|hd pack|hd textures|upscal|retex")
+        private val THREE_DS_SLUGS = setOf("3ds", "n3ds")
         private const val TITLE_ID_LENGTH = 16
         private const val STAGING_DIR_NAME = "azahar_texture_pack"
         private const val ARCHIVE_NAME = "azahar_texture_pack.zip"

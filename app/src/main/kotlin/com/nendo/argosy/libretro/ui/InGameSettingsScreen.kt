@@ -137,7 +137,8 @@ data class InGameControlsState(
     val hudShowClock: Boolean = true,
     val hudShowPlaytime: Boolean = false,
     val hudShowFps: Boolean = false,
-    val hudShowLastSave: Boolean = false
+    val hudShowLastSave: Boolean = false,
+    val hudShowShaders: Boolean = false
 )
 
 sealed class InGameControlsAction {
@@ -176,6 +177,7 @@ sealed class InGameControlsAction {
     data class SetHudShowPlaytime(val enabled: Boolean) : InGameControlsAction()
     data class SetHudShowFps(val enabled: Boolean) : InGameControlsAction()
     data class SetHudShowLastSave(val enabled: Boolean) : InGameControlsAction()
+    data class SetHudShowShaders(val enabled: Boolean) : InGameControlsAction()
 }
 
 data class InGameModalCallbacks(
@@ -269,7 +271,8 @@ internal enum class InGameHudItem(val key: String) {
     CLOCK("hudClock"),
     PLAYTIME("hudPlaytime"),
     FPS("hudFps"),
-    LAST_SAVE("hudLastSave")
+    LAST_SAVE("hudLastSave"),
+    SHADERS("hudShaders")
 }
 
 private fun hudSwitchValue(item: InGameHudItem, state: InGameControlsState): Boolean? = when (item) {
@@ -280,6 +283,7 @@ private fun hudSwitchValue(item: InGameHudItem, state: InGameControlsState): Boo
     InGameHudItem.PLAYTIME -> state.hudShowPlaytime
     InGameHudItem.FPS -> state.hudShowFps
     InGameHudItem.LAST_SAVE -> state.hudShowLastSave
+    InGameHudItem.SHADERS -> state.hudShowShaders
 }
 
 private fun hudSwitchAction(item: InGameHudItem, enabled: Boolean): InGameControlsAction? = when (item) {
@@ -290,6 +294,7 @@ private fun hudSwitchAction(item: InGameHudItem, enabled: Boolean): InGameContro
     InGameHudItem.PLAYTIME -> InGameControlsAction.SetHudShowPlaytime(enabled)
     InGameHudItem.FPS -> InGameControlsAction.SetHudShowFps(enabled)
     InGameHudItem.LAST_SAVE -> InGameControlsAction.SetHudShowLastSave(enabled)
+    InGameHudItem.SHADERS -> InGameControlsAction.SetHudShowShaders(enabled)
 }
 
 internal data class InGameControlsVisibility(
@@ -1176,6 +1181,14 @@ private fun InGameHudRow(
             isEnabled = state.hudShowLastSave,
             isFocused = isFocused,
             onToggle = { onAction(InGameControlsAction.SetHudShowLastSave(it)) }
+        )
+
+        InGameHudItem.SHADERS -> SwitchPreference(
+            title = stringResource(R.string.ingame_settings_hud_shaders_title),
+            subtitle = stringResource(R.string.ingame_settings_hud_shaders_subtitle),
+            isEnabled = state.hudShowShaders,
+            isFocused = isFocused,
+            onToggle = { onAction(InGameControlsAction.SetHudShowShaders(it)) }
         )
     }
 }

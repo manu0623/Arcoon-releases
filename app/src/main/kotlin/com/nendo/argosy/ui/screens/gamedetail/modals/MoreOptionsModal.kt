@@ -1,5 +1,8 @@
 package com.nendo.argosy.ui.screens.gamedetail.modals
 
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -307,11 +310,12 @@ fun MoreOptionsModal(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f, fill = false),
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)
+                // Rows of a section touch, as in the Y menu; a divider entry still parts sections.
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(0.dp)
             ) {
-                itemsIndexed(entries) { _, entry ->
+                itemsIndexed(entries) { index, entry ->
                     when (entry) {
-                        is MoreMenuEntry.Divider -> androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(6.dp))
+                        is MoreMenuEntry.Divider -> androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(12.dp))
                         is MoreMenuEntry.Option -> {
                             val optionFocusIndex = run {
                                 var count = 0
@@ -324,6 +328,8 @@ fun MoreOptionsModal(
                             CocoonSheetRow(
                                 entry = entry,
                                 focused = focusIndex == optionFocusIndex,
+                                isFirst = entries.getOrNull(index - 1) !is MoreMenuEntry.Option,
+                                isLast = entries.getOrNull(index + 1) !is MoreMenuEntry.Option,
                                 onClick = { onAction(entry.action) }
                             )
                         }
@@ -335,14 +341,43 @@ fun MoreOptionsModal(
 }
 
 @Composable
-private fun CocoonSheetRow(entry: MoreMenuEntry.Option, focused: Boolean, onClick: () -> Unit) {
+private fun CocoonSheetRow(
+    entry: MoreMenuEntry.Option,
+    focused: Boolean,
+    isFirst: Boolean,
+    isLast: Boolean,
+    onClick: () -> Unit
+) {
     val tint = if (entry.isDangerous) androidx.compose.ui.graphics.Color(0xFFFF6B6B) else CocoonSurface.TextPrimary
+    // Looks like the Y menu (CocoonMenuRow): a section is one dark panel, round only at its outer
+    // corners, split by hairlines; the focused row lifts a shade lighter inside it.
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) 18.dp else 0.dp,
+        topEnd = if (isFirst) 18.dp else 0.dp,
+        bottomStart = if (isLast) 18.dp else 0.dp,
+        bottomEnd = if (isLast) 18.dp else 0.dp
+    )
+    val panel = com.nendo.argosy.ui.cocoon.CocoonMenuPanel
     androidx.compose.foundation.layout.Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp)
+            .zIndex(if (focused) 1f else 0f)
             .cocoonBrackets(focused = focused, outset = 3.dp)
-            .background(CocoonSurface.Chip, RoundedCornerShape(14.dp))
+            .background(
+                if (focused) androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f).compositeOver(panel) else panel,
+                shape
+            )
+            .then(
+                if (!isLast) Modifier.drawBehind {
+                    val inset = 14.dp.toPx()
+                    drawRect(
+                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.07f),
+                        topLeft = androidx.compose.ui.geometry.Offset(inset, size.height - 1.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(size.width - inset * 2, 1.dp.toPx())
+                    )
+                } else Modifier
+            )
             .clickableNoFocus(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically

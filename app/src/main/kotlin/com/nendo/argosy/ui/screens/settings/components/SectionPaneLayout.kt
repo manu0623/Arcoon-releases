@@ -259,7 +259,8 @@ data class SettingsGroupPosition(val first: Boolean, val last: Boolean)
 
 val LocalSettingsGroupPosition = androidx.compose.runtime.compositionLocalOf<SettingsGroupPosition?> { null }
 
-val SETTINGS_GROUP_DIVIDER = 2.dp
+// Rows of a group touch, as in the Y menu; a hairline inside each row parts them.
+val SETTINGS_GROUP_DIVIDER = 0.dp
 
 @Composable
 private fun NavItem(
