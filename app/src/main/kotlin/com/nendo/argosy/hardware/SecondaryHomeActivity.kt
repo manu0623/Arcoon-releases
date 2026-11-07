@@ -222,6 +222,9 @@ class SecondaryHomeActivity :
 
     private companion object {
         const val SUSPEND_PANEL_FADE_MS = 220
+
+        /** Settings moving to the upper screen: the lower one crossfades to the showcase. */
+        const val SETTINGS_LIFT_FADE_MS = 200
     }
 
     @androidx.compose.runtime.Composable
@@ -302,7 +305,11 @@ class SecondaryHomeActivity :
             val launcherAlpha by androidx.compose.animation.core.animateFloatAsState(
                 targetValue = if (launcherShown) 1f else 0f,
                 animationSpec = androidx.compose.animation.core.tween(
-                    if (launcherShown) SUSPEND_PANEL_FADE_MS else handoffMs
+                    when {
+                        launcherShown -> SUSPEND_PANEL_FADE_MS
+                        settingsLifted != null -> SETTINGS_LIFT_FADE_MS
+                        else -> handoffMs
+                    }
                 ),
                 label = "companion-launcher-alpha"
             )
@@ -356,7 +363,9 @@ class SecondaryHomeActivity :
             androidx.compose.animation.AnimatedVisibility(
                 visible = !launcherShown,
                 enter = if (swapping || dashboardTransitionActive) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(
-                    androidx.compose.animation.core.tween(handoffMs)
+                    androidx.compose.animation.core.tween(
+                        if (settingsLifted != null) SETTINGS_LIFT_FADE_MS else handoffMs
+                    )
                 ),
                 exit = if (rolesSwapped) androidx.compose.animation.ExitTransition.None
                 else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(SUSPEND_PANEL_FADE_MS))
