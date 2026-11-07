@@ -31,6 +31,8 @@ class ManagedStorageAccessor @Inject constructor(
 
     companion object {
         private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
+        private const val READ_DENIED_PAUSE_MS = 60_000L
+        private const val DENIED_KEY_SEGMENTS = 3
         private const val PRIMARY_VOLUME_ID = "primary"
 
         private val DOCUMENT_COLUMNS = arrayOf(
@@ -269,17 +271,38 @@ class ManagedStorageAccessor @Inject constructor(
             return if (file.exists() && file.canRead()) file.inputStream() else null
         }
 
+        val folderKey = "$volumeId:" + relativePath.split('/').take(DENIED_KEY_SEGMENTS).joinToString("/")
+        if (System.currentTimeMillis() < (readDeniedUntil[folderKey] ?: 0L)) return null
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            android.util.Log.w(
+                "ManagedStorageAccessor",
+                "read on the main thread: $relativePath from " +
+                    Throwable().stackTrace.drop(1).take(4).joinToString(" <- ") {
+                        it.className.substringAfterLast('.') + "." + it.methodName
+                    }
+            )
+        }
+
         val documentId = "$volumeId:$relativePath"
         val baseUri = DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE_AUTHORITY, documentId)
         val documentUri = applyManagedParameter(baseUri, relativePath)
 
         return try {
             contentResolver.openInputStream(documentUri)
+        } catch (e: SecurityException) {
+            // Refused for one file means refused for the rest of that app's folder: stop asking for
+            // a while instead of failing once per file, which held up whatever thread was reading.
+            readDeniedUntil[folderKey] = System.currentTimeMillis() + READ_DENIED_PAUSE_MS
+            android.util.Log.e("ManagedStorageAccessor", "openInputStreamAtPath refused, pausing reads: ${e.message}")
+            null
         } catch (e: Exception) {
             android.util.Log.e("ManagedStorageAccessor", "openInputStreamAtPath failed: ${e.message}")
             null
         }
     }
+
+    /** Per app folder (volume plus Android/data/<package>): when reads may be asked for again. */
+    private val readDeniedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
      * Opens an output stream for writing to a file in Android/data.

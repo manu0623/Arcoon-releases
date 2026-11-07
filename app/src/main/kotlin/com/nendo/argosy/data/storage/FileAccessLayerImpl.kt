@@ -217,6 +217,10 @@ class FileAccessLayerImpl @Inject constructor(
             if (result != null) return result
         }
 
+        // A file this process can already open (another app's folder after root granted access)
+        // is read straight away: asking the document provider first fails for each file.
+        directlyReadable(path)?.let { return it.readBytes() }
+
         if (isRestrictedPath(path)) {
             val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return null
             managedStorageAccessor.openInputStreamAtPath(volumeId, relativePath)?.use { stream ->
@@ -279,6 +283,8 @@ class FileAccessLayerImpl @Inject constructor(
             val stream = androidDataAccessor.getInputStream(path)
             if (stream != null) return stream
         }
+
+        directlyReadable(path)?.let { return it.inputStream() }
 
         if (isRestrictedPath(path)) {
             val (volumeId, relativePath) = extractVolumeAndPath(path) ?: return null
@@ -347,6 +353,12 @@ class FileAccessLayerImpl @Inject constructor(
             return androidDataAccessor.walk(path).map { it.toPlainFileInfo() }
         }
         return File(path).walkTopDown().map { it.toFileInfo() }
+    }
+
+    private fun directlyReadable(path: String): File? {
+        if (!isRestrictedPath(path)) return null
+        val file = File(path)
+        return file.takeIf { runCatching { it.isFile && it.canRead() }.getOrDefault(false) }
     }
 
     override fun isRestrictedPath(path: String): Boolean {

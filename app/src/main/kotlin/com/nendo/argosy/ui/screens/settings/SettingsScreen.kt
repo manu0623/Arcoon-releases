@@ -846,6 +846,276 @@ fun SettingsScreen(
         }
     }
 
+    SettingsConfirmModals(uiState, viewModel)
+
+    if (showFileBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FOLDER_SELECTION,
+            title = fileBrowserTitle,
+            onPathSelected = { path ->
+                showFileBrowser = false
+                fileBrowserTitle = null
+                fileBrowserCallback?.invoke(path)
+                fileBrowserCallback = null
+            },
+            onDismiss = {
+                showFileBrowser = false
+                fileBrowserTitle = null
+                fileBrowserCallback = null
+            }
+        )
+    }
+
+    if (showCertBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FILE_SELECTION,
+            title = stringResource(R.string.settings_shell_filebrowser_certificate_title),
+            fileFilter = com.nendo.argosy.ui.filebrowser.FileFilter.CERTIFICATE,
+            onPathSelected = { path ->
+                showCertBrowser = false
+                viewModel.importCertificate(path)
+            },
+            onDismiss = { showCertBrowser = false }
+        )
+    }
+
+    if (showCustomFrameBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FILE_SELECTION,
+            title = stringResource(R.string.settings_shell_filebrowser_custom_frame_title),
+            fileFilter = com.nendo.argosy.ui.filebrowser.FileFilter.IMAGE,
+            onPathSelected = { path ->
+                showCustomFrameBrowser = false
+                viewModel.importCustomFrame(path)
+            },
+            onDismiss = { showCustomFrameBrowser = false }
+        )
+    }
+
+    if (showSettingsBackupBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FILE_SELECTION,
+            title = stringResource(R.string.settings_shell_filebrowser_settings_backup_title),
+            onPathSelected = { path ->
+                showSettingsBackupBrowser = false
+                viewModel.importSettingsFrom(path)
+            },
+            onDismiss = { showSettingsBackupBrowser = false }
+        )
+    }
+
+    // Opened straight into a page (Y ▸ Edit on a platform folder): cover the main list until that
+    // page is up, so it doesn't flash first. Only a resolvable, deeper section opens a page - a
+    // caller navigating with the route template leaves a "{section}" placeholder here.
+    var reachedStart by remember { mutableStateOf(!settingsEntryCovered(initialSection)) }
+    LaunchedEffect(uiState.currentSection) {
+        if (!reachedStart && uiState.currentSection != SettingsSection.MAIN) reachedStart = true
+    }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(2500)
+        reachedStart = true
+    }
+    if (!reachedStart) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(com.nendo.argosy.ui.theme.CocoonSurface.Background)
+        )
+    }
+
+    if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value) {
+        com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationScreen(
+            onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = false },
+            jinglesOnly = true
+        )
+    }
+
+    if (com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value) {
+        com.nendo.argosy.ui.cocoon.CocoonSteamGridDbSettings(
+            viewModel = viewModel,
+            onDismiss = { com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value = false }
+        )
+    }
+
+    if (com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value) {
+        com.nendo.argosy.ui.cocoon.CocoonRomMediaSettings(
+            viewModel = viewModel,
+            onDismiss = { com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value = false }
+        )
+    }
+
+    if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value) {
+        com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationScreen(
+            onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = false }
+        )
+    }
+
+    if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value) {
+        com.nendo.argosy.ui.cocoon.theme.CocoonThemePicker(
+            onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value = false }
+        )
+    }
+
+    if (showBgmPlaylistManager) {
+        BgmPlaylistManagerScreen(
+            onAddMusic = { showBgmAddMusicBrowser = true },
+            onDismiss = { showBgmPlaylistManager = false }
+        )
+    }
+
+    if (showBgmAddMusicBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FILE_OR_FOLDER_SELECTION,
+            fileFilter = FileFilter.AUDIO,
+            title = stringResource(R.string.settings_shell_filebrowser_add_music_title),
+            onPathSelected = { path ->
+                showBgmAddMusicBrowser = false
+                viewModel.addBgmPlaylistEntry(path)
+            },
+            onDismiss = {
+                showBgmAddMusicBrowser = false
+            }
+        )
+    }
+
+    if (showMusicLocationBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FOLDER_SELECTION,
+            title = stringResource(R.string.settings_shell_filebrowser_music_location_title),
+            onPathSelected = { path ->
+                showMusicLocationBrowser = false
+                viewModel.onMusicLocationSelected(path)
+            },
+            onDismiss = {
+                showMusicLocationBrowser = false
+            }
+        )
+    }
+
+    if (showMediaLocationBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FOLDER_SELECTION,
+            title = stringResource(R.string.settings_shell_filebrowser_media_location_title),
+            onPathSelected = { path ->
+                showMediaLocationBrowser = false
+                viewModel.onMediaLocationSelected(path)
+            },
+            onDismiss = {
+                showMediaLocationBrowser = false
+            }
+        )
+    }
+
+    if (showMusicBrowserBgm) {
+        MusicBrowserScreen(
+            mode = MusicBrowserMode.BGM,
+            onDismiss = { showMusicBrowserBgm = false }
+        )
+    }
+
+    musicBrowserSfxTarget?.let { soundType ->
+        MusicBrowserScreen(
+            mode = MusicBrowserMode.SFX,
+            sfxTargetLabel = soundType.name
+                .replace("_", " ")
+                .lowercase()
+                .split(" ")
+                .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } },
+            onSfxSelected = { path ->
+                musicBrowserSfxTarget = null
+                viewModel.setCustomSoundFile(soundType, path, fromRomm = true)
+            },
+            onDismiss = { musicBrowserSfxTarget = null }
+        )
+    }
+
+    customSoundTargetType?.let { soundType ->
+        FileBrowserScreen(
+            mode = FileBrowserMode.FILE_SELECTION,
+            fileFilter = FileFilter.AUDIO,
+            title = stringResource(R.string.settings_shell_filebrowser_custom_sound_title),
+            onPathSelected = { path ->
+                customSoundTargetType = null
+                viewModel.setCustomSoundFile(soundType, path)
+            },
+            onDismiss = {
+                customSoundTargetType = null
+            }
+        )
+    }
+
+    var showImageCacheBrowser by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.openImageCachePickerEvent.collect {
+            showImageCacheBrowser = true
+        }
+    }
+
+    if (showImageCacheBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FOLDER_SELECTION,
+            onPathSelected = { path ->
+                showImageCacheBrowser = false
+                viewModel.setImageCachePath(path)
+            },
+            onDismiss = {
+                showImageCacheBrowser = false
+            }
+        )
+    }
+
+    var showBiosFolderBrowser by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.launchBiosFolderPicker.collect {
+            showBiosFolderBrowser = true
+        }
+    }
+
+    if (showBiosFolderBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FOLDER_SELECTION,
+            onPathSelected = { path ->
+                showBiosFolderBrowser = false
+                viewModel.onBiosFolderSelected(path)
+            },
+            onDismiss = {
+                showBiosFolderBrowser = false
+            }
+        )
+    }
+
+    var showGpuDriverFileBrowser by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.launchGpuDriverFilePicker.collect {
+            showGpuDriverFileBrowser = true
+        }
+    }
+
+    if (showGpuDriverFileBrowser) {
+        FileBrowserScreen(
+            mode = FileBrowserMode.FILE_SELECTION,
+            fileFilter = FileFilter(extensions = setOf("zip")),
+            onPathSelected = { path ->
+                showGpuDriverFileBrowser = false
+                viewModel.installGpuDriverFromFile(path)
+            },
+            onDismiss = {
+                showGpuDriverFileBrowser = false
+            }
+        )
+    }
+}
+
+/**
+ * Every confirmation and edit dialog the settings pages raise. Kept out of [SettingsScreen] so that
+ * function stays small enough for Android to compile ahead of time: past its size limit the whole
+ * screen ran in the slow interpreter.
+ */
+@Composable
+private fun SettingsConfirmModals(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     val builtinMigration = uiState.pendingBuiltinPathMigration
     val builtinMigrationTitle = when (builtinMigration?.pathType) {
         BuiltinPathType.SAVE -> stringResource(R.string.settings_shell_modal_builtin_migration_save_title)
@@ -1286,266 +1556,6 @@ fun SettingsScreen(
         onDismiss = { viewModel.cancelUnverifiedRommAddress() },
         focusedIndex = uiState.server.rommAddressVerifyFocusIndex
     )
-
-    if (showFileBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FOLDER_SELECTION,
-            title = fileBrowserTitle,
-            onPathSelected = { path ->
-                showFileBrowser = false
-                fileBrowserTitle = null
-                fileBrowserCallback?.invoke(path)
-                fileBrowserCallback = null
-            },
-            onDismiss = {
-                showFileBrowser = false
-                fileBrowserTitle = null
-                fileBrowserCallback = null
-            }
-        )
-    }
-
-    if (showCertBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FILE_SELECTION,
-            title = stringResource(R.string.settings_shell_filebrowser_certificate_title),
-            fileFilter = com.nendo.argosy.ui.filebrowser.FileFilter.CERTIFICATE,
-            onPathSelected = { path ->
-                showCertBrowser = false
-                viewModel.importCertificate(path)
-            },
-            onDismiss = { showCertBrowser = false }
-        )
-    }
-
-    if (showCustomFrameBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FILE_SELECTION,
-            title = stringResource(R.string.settings_shell_filebrowser_custom_frame_title),
-            fileFilter = com.nendo.argosy.ui.filebrowser.FileFilter.IMAGE,
-            onPathSelected = { path ->
-                showCustomFrameBrowser = false
-                viewModel.importCustomFrame(path)
-            },
-            onDismiss = { showCustomFrameBrowser = false }
-        )
-    }
-
-    if (showSettingsBackupBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FILE_SELECTION,
-            title = stringResource(R.string.settings_shell_filebrowser_settings_backup_title),
-            onPathSelected = { path ->
-                showSettingsBackupBrowser = false
-                viewModel.importSettingsFrom(path)
-            },
-            onDismiss = { showSettingsBackupBrowser = false }
-        )
-    }
-
-    // Opened straight into a page (Y ▸ Edit on a platform folder): cover the main list until that
-    // page is up, so it doesn't flash first. Only a resolvable, deeper section opens a page - a
-    // caller navigating with the route template leaves a "{section}" placeholder here.
-    var reachedStart by remember { mutableStateOf(!settingsEntryCovered(initialSection)) }
-    LaunchedEffect(uiState.currentSection) {
-        if (!reachedStart && uiState.currentSection != SettingsSection.MAIN) reachedStart = true
-    }
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(2500)
-        reachedStart = true
-    }
-    if (!reachedStart) {
-        androidx.compose.foundation.layout.Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(com.nendo.argosy.ui.theme.CocoonSurface.Background)
-        )
-    }
-
-    if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value) {
-        com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationScreen(
-            onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = false },
-            jinglesOnly = true
-        )
-    }
-
-    if (com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value) {
-        com.nendo.argosy.ui.cocoon.CocoonSteamGridDbSettings(
-            viewModel = viewModel,
-            onDismiss = { com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value = false }
-        )
-    }
-
-    if (com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value) {
-        com.nendo.argosy.ui.cocoon.CocoonRomMediaSettings(
-            viewModel = viewModel,
-            onDismiss = { com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value = false }
-        )
-    }
-
-    if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value) {
-        com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationScreen(
-            onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = false }
-        )
-    }
-
-    if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value) {
-        com.nendo.argosy.ui.cocoon.theme.CocoonThemePicker(
-            onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value = false }
-        )
-    }
-
-    if (showBgmPlaylistManager) {
-        BgmPlaylistManagerScreen(
-            onAddMusic = { showBgmAddMusicBrowser = true },
-            onDismiss = { showBgmPlaylistManager = false }
-        )
-    }
-
-    if (showBgmAddMusicBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FILE_OR_FOLDER_SELECTION,
-            fileFilter = FileFilter.AUDIO,
-            title = stringResource(R.string.settings_shell_filebrowser_add_music_title),
-            onPathSelected = { path ->
-                showBgmAddMusicBrowser = false
-                viewModel.addBgmPlaylistEntry(path)
-            },
-            onDismiss = {
-                showBgmAddMusicBrowser = false
-            }
-        )
-    }
-
-    if (showMusicLocationBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FOLDER_SELECTION,
-            title = stringResource(R.string.settings_shell_filebrowser_music_location_title),
-            onPathSelected = { path ->
-                showMusicLocationBrowser = false
-                viewModel.onMusicLocationSelected(path)
-            },
-            onDismiss = {
-                showMusicLocationBrowser = false
-            }
-        )
-    }
-
-    if (showMediaLocationBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FOLDER_SELECTION,
-            title = stringResource(R.string.settings_shell_filebrowser_media_location_title),
-            onPathSelected = { path ->
-                showMediaLocationBrowser = false
-                viewModel.onMediaLocationSelected(path)
-            },
-            onDismiss = {
-                showMediaLocationBrowser = false
-            }
-        )
-    }
-
-    if (showMusicBrowserBgm) {
-        MusicBrowserScreen(
-            mode = MusicBrowserMode.BGM,
-            onDismiss = { showMusicBrowserBgm = false }
-        )
-    }
-
-    musicBrowserSfxTarget?.let { soundType ->
-        MusicBrowserScreen(
-            mode = MusicBrowserMode.SFX,
-            sfxTargetLabel = soundType.name
-                .replace("_", " ")
-                .lowercase()
-                .split(" ")
-                .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } },
-            onSfxSelected = { path ->
-                musicBrowserSfxTarget = null
-                viewModel.setCustomSoundFile(soundType, path, fromRomm = true)
-            },
-            onDismiss = { musicBrowserSfxTarget = null }
-        )
-    }
-
-    customSoundTargetType?.let { soundType ->
-        FileBrowserScreen(
-            mode = FileBrowserMode.FILE_SELECTION,
-            fileFilter = FileFilter.AUDIO,
-            title = stringResource(R.string.settings_shell_filebrowser_custom_sound_title),
-            onPathSelected = { path ->
-                customSoundTargetType = null
-                viewModel.setCustomSoundFile(soundType, path)
-            },
-            onDismiss = {
-                customSoundTargetType = null
-            }
-        )
-    }
-
-    var showImageCacheBrowser by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        viewModel.openImageCachePickerEvent.collect {
-            showImageCacheBrowser = true
-        }
-    }
-
-    if (showImageCacheBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FOLDER_SELECTION,
-            onPathSelected = { path ->
-                showImageCacheBrowser = false
-                viewModel.setImageCachePath(path)
-            },
-            onDismiss = {
-                showImageCacheBrowser = false
-            }
-        )
-    }
-
-    var showBiosFolderBrowser by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        viewModel.launchBiosFolderPicker.collect {
-            showBiosFolderBrowser = true
-        }
-    }
-
-    if (showBiosFolderBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FOLDER_SELECTION,
-            onPathSelected = { path ->
-                showBiosFolderBrowser = false
-                viewModel.onBiosFolderSelected(path)
-            },
-            onDismiss = {
-                showBiosFolderBrowser = false
-            }
-        )
-    }
-
-    var showGpuDriverFileBrowser by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        viewModel.launchGpuDriverFilePicker.collect {
-            showGpuDriverFileBrowser = true
-        }
-    }
-
-    if (showGpuDriverFileBrowser) {
-        FileBrowserScreen(
-            mode = FileBrowserMode.FILE_SELECTION,
-            fileFilter = FileFilter(extensions = setOf("zip")),
-            onPathSelected = { path ->
-                showGpuDriverFileBrowser = false
-                viewModel.installGpuDriverFromFile(path)
-            },
-            onDismiss = {
-                showGpuDriverFileBrowser = false
-            }
-        )
-    }
 }
 
 @Composable
