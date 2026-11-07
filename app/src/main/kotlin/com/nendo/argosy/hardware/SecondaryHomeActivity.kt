@@ -206,6 +206,7 @@ class SecondaryHomeActivity :
                                 com.nendo.argosy.ui.theme.LocalMotionTier provides com.nendo.argosy.ui.cocoon.cocoonMotionTier()
                             ) { CompanionRoleContent() }
                             com.nendo.argosy.ui.cocoon.CocoonLeaveVeil(blackOnArm = false)
+                            com.nendo.argosy.ui.cocoon.CocoonSuspendLowerPicture()
                             com.nendo.argosy.ui.cocoon.CocoonSuspendTestButton()
                         }
                     }

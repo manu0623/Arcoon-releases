@@ -456,17 +456,13 @@ class GLRetroView(
             .order(java.nio.ByteOrder.LITTLE_ENDIAN)
         val w = bb.getInt()
         val h = bb.getInt()
-        if (w <= 0 || h <= 0) return@runOnGLThread null
-        val pixels = IntArray(w * h)
-        for (i in 0 until w * h) {
-            val offset = 8 + i * 4
-            val r = data[offset].toInt() and 0xFF
-            val g = data[offset + 1].toInt() and 0xFF
-            val b = data[offset + 2].toInt() and 0xFF
-            val a = data[offset + 3].toInt() and 0xFF
-            pixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
+        if (w <= 0 || h <= 0 || data.size < 8 + w * h * 4) return@runOnGLThread null
+        // The frame is RGBA bytes, which is ARGB_8888's own memory layout, so it is copied in one
+        // pass instead of being rebuilt pixel by pixel while the caller waits.
+        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply {
+            copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(data, 8, w * h * 4))
+            setHasAlpha(false)
         }
-        Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)
     }
 
     fun reset() = runOnGLThread {
