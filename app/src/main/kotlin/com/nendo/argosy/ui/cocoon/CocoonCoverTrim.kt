@@ -15,9 +15,9 @@ import kotlin.math.abs
  * merely sits on a plain background (a logo on yellow) has no such edge and is left whole.
  */
 object CocoonCoverTrim : Transformation {
-    override val cacheKey: String = "cocoon-cover-trim-1"
+    override val cacheKey: String = "cocoon-cover-trim-2"
 
-    private const val MIN_BAND = 0.05f
+    private const val MIN_BAND = 0.02f
     private const val MAX_BAND = 0.3f
     private const val BAND_MISMATCH = 0.04f
     private const val TOLERANCE = 20
@@ -27,7 +27,7 @@ object CocoonCoverTrim : Transformation {
     override suspend fun transform(input: Bitmap, size: Size): Bitmap {
         val w = input.width
         val h = input.height
-        if (w < 32 || h < 32 || w < h * 0.9f) return input
+        if (w < 32 || h < 32) return input
         val rows = (0 until SAMPLE_ROWS).map { (it * (h - 1)) / (SAMPLE_ROWS - 1) }
         val leftColor = input.getPixel(1, h / 2)
         val rightColor = input.getPixel(w - 2, h / 2)
