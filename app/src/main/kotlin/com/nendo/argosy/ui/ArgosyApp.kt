@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui
 
+import com.nendo.argosy.ui.common.deferredBlur
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -176,7 +177,13 @@ fun ArgosyApp(
     val quickSettingsState by viewModel.quickSettings.state.collectAsState()
     val quickFriendsState by viewModel.quickFriends.state.collectAsState()
     val quickConnectionsState by viewModel.quickConnections.state.collectAsState()
-    val musicPlayerUiState by musicPlayerViewModel.uiState.collectAsState()
+    // Only the one field read here: the full music state changes twice a second while the music
+    // page is open (playback position), and reading all of it made this whole screen redraw.
+    val musicBrowseNotice by androidx.compose.runtime.remember(musicPlayerViewModel) {
+        musicPlayerViewModel.uiState
+            .map { it.browse?.notice }
+            .distinctUntilChanged()
+    }.collectAsState(initial = musicPlayerViewModel.uiState.value.browse?.notice)
     val screenDimmerPrefs by viewModel.screenDimmerPreferences.collectAsState()
     val isEmulatorRunning by viewModel.isEmulatorRunning.collectAsState()
     val quickMenuState by quickMenuViewModel.uiState.collectAsState()
@@ -723,8 +730,7 @@ fun ArgosyApp(
         }
     }
 
-    // L1 opens friends and R1 the device page, so the bumpers pick a page as they open. Same
-    // window path as the plain open: on two screens the page still comes up on the upper one.
+    // L1 opens friends and R1 the device page, so the bumpers pick a page as they open.
     val openQuickSettingsPage = remember(quickSettingsInputHandler, openQuickPanelOnTop, isQuickPanelOpen) {
         pageOpen@{ page: QuickSettingsPage ->
             if (uiState.isFirstRun) return@pageOpen
@@ -732,7 +738,11 @@ fun ArgosyApp(
                 hideQuickPanel()
                 return@pageOpen
             }
-            if (openQuickPanelOnTop?.invoke(quickPanelResultOwner, page) == true) return@pageOpen
+            // On two screens the bumpers open the panel on the upper screen at their page (R1 quick
+            // menu, L1 friends); the drawer on this screen is only the fallback.
+            if (openQuickPanelOnTop?.invoke(quickPanelResultOwner, page) == true) {
+                return@pageOpen
+            }
             viewModel.quickSettings.selectPage(page)
             viewModel.hideNavBar()
             inputDispatcher.subscribeDrawer(quickSettingsInputHandler)
@@ -1529,7 +1539,6 @@ fun ArgosyApp(
                         }
                     }
                 }
-                val drawerBlur = (drawerBlurProgress * Motion.blurRadiusDrawer.value).dp
                 val quickMenuBlur by androidx.compose.animation.core.animateDpAsState(
                     targetValue = if (quickMenuState.isVisible) Motion.blurRadiusDrawer else 0.dp,
                     animationSpec = androidx.compose.animation.core.tween(200),
@@ -1543,7 +1552,6 @@ fun ArgosyApp(
                     animationSpec = androidx.compose.animation.core.tween(Motion.durationSlide),
                     label = "quickSettingsBlur"
                 )
-                val contentBlur = maxOf(drawerBlur, quickMenuBlur, quickSettingsBlur, launchRecapBlur, monthlyRecapBlur)
 
                 BoxWithConstraints(
                     modifier = Modifier.fillMaxSize()
@@ -1601,7 +1609,17 @@ fun ArgosyApp(
                             },
                             modifier = Modifier
                                 .frostedBackdropSource(frostedBackdrop)
-                                .blur(contentBlur)
+                                // Read while drawing: the animated blur repaints, it no longer re-runs
+                                // this whole screen on every frame of the drawer or a menu opening.
+                                .deferredBlur {
+                                    maxOf(
+                                        (drawerBlurProgress * Motion.blurRadiusDrawer.value).dp,
+                                        quickMenuBlur,
+                                        quickSettingsBlur,
+                                        launchRecapBlur,
+                                        monthlyRecapBlur
+                                    )
+                                }
                                 // Settings opened on the lower screen floats up to the upper one;
                                 // this screen never draws its own copy, not even for the moment
                                 // before the move.
@@ -1690,60 +1708,68 @@ fun ArgosyApp(
                     .padding(end = Dimens.spacingMd, bottom = Dimens.headerHeight)
             )
 
-            QuickMenuOverlay(
-                viewModel = quickMenuViewModel,
-                onGameSelect = { gameId ->
-                    closeQuickMenu()
-                    navController.navigate(Screen.GameDetail.createRoute(gameId)) {
-                        launchSingleTop = true
-                    }
-                },
-                onGamePlay = playFromQuickMenu,
-                closeQuickMenu = closeQuickMenu
-            )
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.nendo.argosy.ui.primitives.LocalCocoonCursorSuppressed provides !quickMenuState.isVisible
+            ) {
+                QuickMenuOverlay(
+                    viewModel = quickMenuViewModel,
+                    onGameSelect = { gameId ->
+                        closeQuickMenu()
+                        navController.navigate(Screen.GameDetail.createRoute(gameId)) {
+                            launchSingleTop = true
+                        }
+                    },
+                    onGamePlay = playFromQuickMenu,
+                    closeQuickMenu = closeQuickMenu
+                )
+            }
 
             val musicNeedsSignIn = musicPageVisible &&
-                musicPlayerUiState.browse?.notice ==
+                musicBrowseNotice ==
                 com.nendo.argosy.ui.components.musicplayer.MusicBrowseNotice.SIGN_IN_FOR_PLAYLISTS
             val signInHint = stringResource(R.string.ui_quick_settings_music_hint_sign_in)
-            QuickSettingsPanel(
-                onHintClick = { button ->
-                    if (button == com.nendo.argosy.ui.components.InputButton.Y && musicNeedsSignIn) {
-                        openRommSignIn()
-                    }
-                },
-                isVisible = isQuickSettingsOpen,
-                state = quickSettingsState,
-                page = quickSettingsPage,
-                focusedIndex = quickSettingsFocusIndex,
-                controller = viewModel.quickSettings,
-                onOpenDeviceAccess = openDeviceAccess,
-                friendsPage = {
-                    QuickSettingsFriendsPage(
-                        state = quickFriendsState,
-                        showQuayPass = quickSettingsState.isSocialLinked,
-                        quayPassEnabled = quickSettingsState.quayPassEnabled,
-                        onRowClick = { quickFriendsInputHandler.tapRow(it) },
-                        onRowLongClick = { quickFriendsInputHandler.longPressRow(it) },
-                        onActionClick = { index, action -> quickFriendsInputHandler.tapAction(index, action) }
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.nendo.argosy.ui.primitives.LocalCocoonCursorSuppressed provides !isQuickSettingsOpen
+            ) {
+                QuickSettingsPanel(
+                    onHintClick = { button ->
+                        if (button == com.nendo.argosy.ui.components.InputButton.Y && musicNeedsSignIn) {
+                            openRommSignIn()
+                        }
+                    },
+                    isVisible = isQuickSettingsOpen,
+                    state = quickSettingsState,
+                    page = quickSettingsPage,
+                    focusedIndex = quickSettingsFocusIndex,
+                    controller = viewModel.quickSettings,
+                    onOpenDeviceAccess = openDeviceAccess,
+                    friendsPage = {
+                        QuickSettingsFriendsPage(
+                            state = quickFriendsState,
+                            showQuayPass = quickSettingsState.isSocialLinked,
+                            quayPassEnabled = quickSettingsState.quayPassEnabled,
+                            onRowClick = { quickFriendsInputHandler.tapRow(it) },
+                            onRowLongClick = { quickFriendsInputHandler.longPressRow(it) },
+                            onActionClick = { index, action -> quickFriendsInputHandler.tapAction(index, action) }
+                        )
+                    },
+                    connectionsPage = {
+                        QuickSettingsConnectionsPage(
+                            state = quickConnectionsState,
+                            onRowClick = quickConnectionsInputHandler::tapRow,
+                            onShowList = quickConnectionsInputHandler::tapList,
+                            onForget = quickConnectionsInputHandler::tapForget
+                        )
+                    },
+                    musicPage = {
+                        QuickSettingsMusicPage(viewModel = musicPlayerViewModel, onOpenRommSignIn = openRommSignIn)
+                    },
+                    onDismiss = closeQuickSettings,
+                    footerHints = listOfNotNull(
+                        (com.nendo.argosy.ui.components.InputButton.Y to signInHint).takeIf { musicNeedsSignIn }
                     )
-                },
-                connectionsPage = {
-                    QuickSettingsConnectionsPage(
-                        state = quickConnectionsState,
-                        onRowClick = quickConnectionsInputHandler::tapRow,
-                        onShowList = quickConnectionsInputHandler::tapList,
-                        onForget = quickConnectionsInputHandler::tapForget
-                    )
-                },
-                musicPage = {
-                    QuickSettingsMusicPage(viewModel = musicPlayerViewModel, onOpenRommSignIn = openRommSignIn)
-                },
-                onDismiss = closeQuickSettings,
-                footerHints = listOfNotNull(
-                    (com.nendo.argosy.ui.components.InputButton.Y to signInHint).takeIf { musicNeedsSignIn }
                 )
-            )
+            }
 
             QuickFriendsModals(
                 state = quickFriendsState,

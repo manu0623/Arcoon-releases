@@ -48,6 +48,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -997,37 +998,40 @@ class GameRepository @Inject constructor(
     private fun splitRegions(joined: String?): List<String> =
         joined?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
 
+    // The list flows below skip a result identical to the last one: Room re-runs a query on any
+    // write to its tables (play time, sync), and an unchanged list then refiltered, re-sorted and
+    // redrew every library screen for nothing.
     fun observeHiddenByPlatformList(platformId: Long): Flow<List<GameListItem>> = flow {
         emitAll(gameDao.observeHiddenByPlatformList(platformId, hiddenOwnerId()))
-    }
+    }.distinctUntilChanged()
 
     fun observeHiddenList(): Flow<List<GameListItem>> = flow {
         emitAll(gameDao.observeHiddenList(hiddenOwnerId()))
-    }
+    }.distinctUntilChanged()
 
     fun observePlayableByPlatformList(platformId: Long): Flow<List<GameListItem>> = flow {
         emitAll(gameDao.observePlayableByPlatformList(platformId, hiddenOwnerId()))
-    }
+    }.distinctUntilChanged()
 
     fun observeFavoritesByPlatformList(platformId: Long): Flow<List<GameListItem>> = flow {
         emitAll(gameDao.observeFavoritesByPlatformList(platformId, hiddenOwnerId()))
-    }
+    }.distinctUntilChanged()
 
     fun observeByPlatformList(platformId: Long): Flow<List<GameListItem>> = flow {
         emitAll(gameDao.observeByPlatformList(platformId, hiddenOwnerId()))
-    }
+    }.distinctUntilChanged()
 
     fun observeAllList(): Flow<List<GameListItem>> = flow {
         emitAll(gameDao.observeAllList(hiddenOwnerId()))
-    }
+    }.distinctUntilChanged()
 
     fun observePlayableList(): Flow<List<GameListItem>> = flow {
         emitAll(gameDao.observePlayableList(hiddenOwnerId()))
-    }
+    }.distinctUntilChanged()
 
     fun observeFavoritesList(): Flow<List<GameListItem>> = flow {
         emitAll(gameDao.observeFavoritesList(hiddenOwnerId()))
-    }
+    }.distinctUntilChanged()
 
     suspend fun getNewlyAdded(
         threshold: Instant,

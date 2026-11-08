@@ -38,8 +38,8 @@ const val COCOON_FOLDER_COLUMNS = 5
 const val COCOON_FOLDER_GAP_DP = 16
 
 /**
- * Cover art as Cocoon draws it inside a folder: square, softly rounded, no border, no glow. The
- * selection is shown by the corner brackets alone.
+ * Cover art as Cocoon draws it inside a folder: square, softly rounded, no border, no glow, no
+ * platform badge. The selection is shown by the corner brackets alone.
  */
 fun cocoonCoverStyle(base: BoxArtStyleConfig): BoxArtStyleConfig = base.copy(
     aspectRatio = 1f,
@@ -49,6 +49,9 @@ fun cocoonCoverStyle(base: BoxArtStyleConfig): BoxArtStyleConfig = base.copy(
     glowAlpha = 0f,
     outerEffect = BoxArtOuterEffect.OFF,
     innerEffect = BoxArtInnerEffect.OFF,
+    // No platform tab or spine: the spine squeezed the cover into a tall strip beside a coloured
+    // band. The platform shows in the name card instead.
+    platformIndicatorStyle = com.nendo.argosy.data.preferences.PlatformIndicatorStyle.OFF,
 )
 
 /**

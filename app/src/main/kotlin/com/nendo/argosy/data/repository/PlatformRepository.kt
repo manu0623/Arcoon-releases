@@ -3,6 +3,7 @@ package com.nendo.argosy.data.repository
 import com.nendo.argosy.data.local.dao.PlatformDao
 import com.nendo.argosy.data.local.entity.PlatformEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,17 +31,19 @@ class PlatformRepository @Inject constructor(
         return true
     }
 
+    // Platform lists are counted from the games table, so Room re-sends them on every game write;
+    // an identical list is skipped instead of rebuilding the home and library.
     fun observeVisiblePlatforms(): Flow<List<PlatformEntity>> =
-        platformDao.observeVisiblePlatforms()
+        platformDao.observeVisiblePlatforms().distinctUntilChanged()
 
     fun observeAllPlatforms(): Flow<List<PlatformEntity>> =
-        platformDao.observeAllPlatforms()
+        platformDao.observeAllPlatforms().distinctUntilChanged()
 
     fun observePlatformsWithGames(): Flow<List<PlatformEntity>> =
-        platformDao.observePlatformsWithGames()
+        platformDao.observePlatformsWithGames().distinctUntilChanged()
 
     fun observeConfigurablePlatforms(): Flow<List<PlatformEntity>> =
-        platformDao.observeConfigurablePlatforms()
+        platformDao.observeConfigurablePlatforms().distinctUntilChanged()
 
     suspend fun getById(id: Long): PlatformEntity? =
         platformDao.getById(id)

@@ -4,9 +4,6 @@ private const val BANNER_IMAGE_WIDTH = 256
 private const val BANNER_IMAGE_HEIGHT = 128
 private const val BANNER_IMAGE_BYTE_SIZE = BANNER_IMAGE_WIDTH * BANNER_IMAGE_HEIGHT * 2
 
-/** 70 ms a frame: a 24-frame turn lasts about 1.7 s, the Home Menu's own resting speed. */
-private const val GIF_FRAME_DELAY_CENTISECONDS = 7
-
 sealed interface ThreeDsBannerRenderResult {
     data class Success(val width: Int, val height: Int, val argb: IntArray) : ThreeDsBannerRenderResult
     data class Failure(val reason: String) : ThreeDsBannerRenderResult
@@ -25,13 +22,20 @@ sealed interface ThreeDsBannerRenderResult {
  */
 object ThreeDsBannerRenderer {
 
-    fun render(cgfx: ByteArray): ThreeDsBannerRenderResult {
+    fun render(
+        cgfx: ByteArray,
+        common: ByteArray? = null,
+        shouldStop: () -> Boolean = { false },
+    ): ThreeDsBannerRenderResult {
         if (cgfx.size < 64 || !hasCgfxMagic(cgfx)) {
             return ThreeDsBannerRenderResult.Failure("CGFX magic missing or truncated")
         }
 
         // A real banner is a 3D scene; compositing it is what produces the Home Menu look, and it
-        // must run before any single texture is considered.
+        // must run before any single texture is considered. The full scene renderer comes first;
+        // the older compositor stays as a fallback for containers it cannot read.
+        ThreeDsBannerScene.renderStill(cgfx, common, shouldStop)?.let { return it }
+        if (shouldStop()) return ThreeDsBannerRenderResult.Failure("stopped")
         CgfxBannerScene.render(cgfx)?.let { return it }
 
         val textures = (CgfxTextureWalker.walk(cgfx) as? CgfxWalkResult.Success)?.textures.orEmpty()
@@ -63,17 +67,35 @@ object ThreeDsBannerRenderer {
     }
 
     /**
-     * The banner's scene as one full turn, encoded as an animated GIF. The launcher's image loader
-     * already decodes animated GIFs, so the hero turns without any playback code of its own.
+     * The banner's own animation, as the Home Menu plays it, as an animated WebP (full colour and
+     * alpha; the launcher's image loader plays it like a GIF). Null for a banner that does not
+     * move, or a container only the legacy compositor can read.
      */
-    fun renderRotationGif(cgfx: ByteArray): ByteArray? {
-        val rotation = CgfxBannerScene.renderRotation(cgfx) ?: return null
-        return GifEncoder.encode(
-            frames = rotation.frames,
-            width = rotation.width,
-            height = rotation.height,
-            delayCentiseconds = GIF_FRAME_DELAY_CENTISECONDS,
-        )
+    fun renderAnimation(
+        cgfx: ByteArray,
+        common: ByteArray? = null,
+        shouldStop: () -> Boolean = { false },
+    ): ByteArray? = ThreeDsBannerScene.renderAnimation(cgfx, common, AndroidWebpFrameEncoder, shouldStop)
+
+    /** Android's own WebP encoder, one still per frame (lossy with a separate alpha plane). */
+    private object AndroidWebpFrameEncoder : ThreeDsBannerScene.FrameEncoder {
+        private const val QUALITY = 80
+
+        override fun encode(argb: IntArray, width: Int, height: Int): ByteArray? {
+            val bitmap = android.graphics.Bitmap.createBitmap(argb, width, height, android.graphics.Bitmap.Config.ARGB_8888)
+            return try {
+                val out = java.io.ByteArrayOutputStream()
+                @Suppress("DEPRECATION")
+                val format = if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    android.graphics.Bitmap.CompressFormat.WEBP_LOSSY
+                } else {
+                    android.graphics.Bitmap.CompressFormat.WEBP
+                }
+                if (bitmap.compress(format, QUALITY, out)) out.toByteArray() else null
+            } finally {
+                bitmap.recycle()
+            }
+        }
     }
 
     /** The bannertool image-banner layout: a 256x128 block at a fixed offset. */

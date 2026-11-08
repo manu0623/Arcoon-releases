@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui.cocoon
 
+import com.nendo.argosy.ui.common.deferredBlur
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.blur
@@ -148,7 +149,7 @@ fun CocoonHomeScreen(
         if (!returningFromFolder) return@LaunchedEffect
         CocoonFolderZoom.returning = false
         CocoonFolderZoom.opening = false
-        folderZoom.animateTo(0f, androidx.compose.animation.core.tween(240, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
+        folderZoom.animateTo(0f, androidx.compose.animation.core.tween(190, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
         returningFromFolder = false
     }
     CocoonFolderZoom.progress = folderZoom
@@ -158,7 +159,7 @@ fun CocoonHomeScreen(
         zoomScope.launch {
             CocoonFolderZoom.returning = true
             CocoonFolderZoom.opening = true
-            folderZoom.animateTo(1f, androidx.compose.animation.core.tween(170, easing = androidx.compose.animation.core.FastOutLinearInEasing))
+            folderZoom.animateTo(1f, androidx.compose.animation.core.tween(140, easing = androidx.compose.animation.core.FastOutLinearInEasing))
             then()
         }
     }
@@ -269,7 +270,7 @@ fun CocoonHomeScreen(
                         scaleY = 1f - z * 0.04f
                         alpha = 1f - z
                     }
-                    .blur(boardBlur)
+                    .deferredBlur { boardBlur }
             ) { Column(modifier = Modifier.fillMaxSize()) {
                 val dock: @Composable () -> Unit = {
                     CocoonDock(
@@ -790,21 +791,45 @@ private fun CocoonBoard(
                         )
                         return@Box
                     }
-                    CocoonFolderIcon(
-                        colorIndex = tile.colorIndex,
-                        glyph = tile.glyph,
-                        platformSlug = tile.platformSlug,
+                    val tapTile = remember(index, tile, onTap) { { onTap(index, tile) } }
+                    CocoonBoardFolder(
+                        tile = tile,
                         size = tileSize,
-                        modifier = Modifier
-                            .then(if (lifted) Modifier.cocoonLifted() else Modifier)
-                            .graphicsLayer { alpha = if (state.editingGrid && !lifted) 0.55f else 1f }
-                            .cocoonBrackets(focused = !state.inDock && index == state.focusedIndex && !lifted, outset = 1.dp)
-                            .clickableNoFocus { onTap(index, tile) }
+                        lifted = lifted,
+                        dimmed = state.editingGrid && !lifted,
+                        focused = isFocusedTile && !lifted,
+                        onTap = tapTile,
                     )
                 }
             }
         }
     }
+}
+
+/**
+ * One folder on the board. Its own composable with plain inputs, so moving the cursor redraws
+ * only the folder it left and the one it reached; the rest of the board is skipped.
+ */
+@Composable
+private fun CocoonBoardFolder(
+    tile: CocoonTile,
+    size: androidx.compose.ui.unit.Dp,
+    lifted: Boolean,
+    dimmed: Boolean,
+    focused: Boolean,
+    onTap: () -> Unit,
+) {
+    CocoonFolderIcon(
+        colorIndex = tile.colorIndex,
+        glyph = tile.glyph,
+        platformSlug = tile.platformSlug,
+        size = size,
+        modifier = Modifier
+            .then(if (lifted) Modifier.cocoonLifted() else Modifier)
+            .graphicsLayer { alpha = if (dimmed) 0.55f else 1f }
+            .cocoonBrackets(focused = focused, outset = 1.dp)
+            .clickableNoFocus(onClick = onTap)
+    )
 }
 
 /** Cocoon's dock: a centred row of real app icons along the top of the board. */

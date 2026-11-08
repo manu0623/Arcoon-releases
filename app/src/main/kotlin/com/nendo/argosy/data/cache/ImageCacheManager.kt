@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
@@ -65,7 +67,12 @@ data class ImageCacheRequest(
     val gameTitle: String = "",
     val isSteam: Boolean = false,
     val gameId: Long? = null,
-    val revalidateFrom: String? = null
+    val revalidateFrom: String? = null,
+    /**
+     * Download again even though a cover is cached, into a new file; the old cover stays in use
+     * until the new one is saved (a failed download leaves it as it was).
+     */
+    val sharpen: Boolean = false
 ) {
     constructor(
         url: String,
@@ -184,6 +191,9 @@ class ImageCacheManager @Inject constructor(
     private val artModelScope = SafeCoroutineScope(Dispatchers.IO, "GameArtModel")
     private val embeddedBannerRevision = kotlinx.coroutines.flow.MutableStateFlow(0)
     private val artRevision = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    // Declared before gameArt: it starts collecting at once and may reach backfill3dsBanners.
+    private val bannerBackfillStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var bannerBackfillJob: kotlinx.coroutines.Job? = null
 
     val gameArt: StateFlow<Map<Long, ResolvedGameArt>> = combine(
         gameArtDao.observeRowCount().conflate(),
@@ -195,6 +205,7 @@ class ImageCacheManager @Inject constructor(
     ) { _, useEmbeddedBanner, _, _ -> useEmbeddedBanner }
         .conflate()
         .transform {
+            if (it) backfill3dsBanners()
             val artByGame = gameArtDao.getAll().toResolvedArtByGame()
             emit(
                 if (it) {
@@ -209,7 +220,10 @@ class ImageCacheManager @Inject constructor(
             )
             delay(ART_MODEL_RELOAD_INTERVAL_MS)
         }
-        .stateIn(artModelScope, SharingStarted.Lazily, emptyMap())
+        // Loaded as soon as the app starts (in the background), so the first screen to draw covers
+        // already has every game's art: started lazily, each cover first drew its fallback and then
+        // loaded again once the real path arrived.
+        .stateIn(artModelScope, SharingStarted.Eagerly, emptyMap())
 
     fun artFor(gameId: Long): ResolvedGameArt? = gameArt.value[gameId]
 
@@ -219,6 +233,121 @@ class ImageCacheManager @Inject constructor(
         val bannerPath = embeddedMediaRepository.getCachedBannerArtFile(gameId.toString())?.absolutePath
         return art.withEmbedded3dsBanner(bannerPath)
     }
+
+
+    init {
+        // The "3DS banner art" setting drives banner work directly: switching it off cancels the
+        // background queue, stops any banner being drawn (checked every frame) and clears what the
+        // stopped work left half-written. Switching it back on lets the queue run again.
+        artModelScope.launch {
+            embeddedMediaRepository.cleanupUnfinished()
+            appPreferencesRepository.preferences
+                .map { it.useEmbedded3dsBannerForHero }
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    com.nendo.argosy.data.media.ThreeDsBannerWork.enabled = enabled
+                    if (!enabled) {
+                        val running = bannerBackfillJob
+                        bannerBackfillJob = null
+                        running?.cancel()
+                        running?.join()
+                        bannerBackfillStarted.set(false)
+                        embeddedMediaRepository.cleanupUnfinished()
+                        android.util.Log.i("ArcoonTrace", "3DS banner work stopped: setting turned off")
+                    }
+                }
+        }
+    }
+
+    /**
+     * Draws the banner of every installed 3DS game that does not have one yet, one game at a time
+     * in the background, so banners appear without opening each game's page first. Runs once per
+     * app start while 3DS banner art is on, and stops the moment the setting is turned off.
+     */
+    private fun backfill3dsBanners() {
+        if (!bannerBackfillStarted.compareAndSet(false, true)) return
+        bannerBackfillJob = artModelScope.launch {
+            // Leave the first moments after launch to the screens being drawn; banner drawing is
+            // heavy and would compete with them.
+            delay(BANNER_BACKFILL_START_DELAY_MS)
+            render3dsBanners()
+        }
+    }
+
+    private suspend fun installed3dsGames() = gameDao.getGamesWithLocalPathInfo().filter {
+        com.nendo.argosy.data.platform.PlatformDefinitions.getCanonicalSlug(it.platformSlug) == "3ds"
+    }
+
+    /**
+     * Draws the banner of every installed 3DS game that does not have one yet, one game at a time.
+     * Runs in the background queue; a game its page is already drawing is waited for, not drawn
+     * twice. Stops as soon as the 3DS banner setting is turned off.
+     */
+    suspend fun render3dsBanners(onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }) {
+        val games = installed3dsGames()
+        android.util.Log.i("ArcoonTrace", "3DS banner backfill: ${games.size} installed 3DS games")
+        for ((index, game) in games.withIndex()) {
+            if (!currentCoroutineContext().isActive || !com.nendo.argosy.data.media.ThreeDsBannerWork.enabled) break
+            val id = game.id.toString()
+            onProgress(index, games.size)
+            if (embeddedMediaRepository.getCachedBannerImageFile(id) != null) continue
+            val path = game.localPath ?: continue
+            android.util.Log.i("ArcoonTrace", "3DS banner backfill: game $id from ${java.io.File(path).name}")
+            try {
+                embeddedMediaRepository.extractAndCacheForGame(id, path)
+            } catch (stopped: kotlinx.coroutines.CancellationException) {
+                android.util.Log.i("ArcoonTrace", "3DS banner backfill: stopped during game $id")
+                break
+            } catch (error: Exception) {
+                android.util.Log.w("ArcoonTrace", "3DS banner backfill failed for game $id", error)
+            }
+            if (embeddedMediaRepository.getCachedBannerArtFile(id) != null) refreshEmbeddedBannerArt(game.id)
+        }
+        onProgress(games.size, games.size)
+        embeddedMediaRepository.cleanupUnfinished()
+        android.util.Log.i("ArcoonTrace", "3DS banner backfill: finished or stopped")
+    }
+
+    /**
+     * Covers saved before covers were downloaded at [COVER_MAX_WIDTH] were cut down to 400 pixels
+     * wide. Those are downloaded again at full size (once, from the optimizer); covers that were
+     * smaller than that to begin with are left as they are. Returns how many were queued.
+     */
+    suspend fun refreshUndersizedCovers(onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }): Int =
+        withContext(Dispatchers.IO) {
+            val rows = gameArtDao.getAll().filter {
+                it.slot == ArtSlot.COVER.name && it.overridePath == null &&
+                    !it.cachedPath.isNullOrBlank() && !it.sourceUrl.isNullOrBlank()
+            }
+            var queued = 0
+            rows.forEachIndexed { index, row ->
+                val file = File(row.cachedPath!!)
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                runCatching { BitmapFactory.decodeFile(file.absolutePath, bounds) }
+                if (bounds.outWidth in (LEGACY_COVER_WIDTH - 1)..(LEGACY_COVER_WIDTH + 1)) {
+                    val game = gameDao.getById(row.gameId)
+                    if (game != null) {
+                        val urls = listOf(row.sourceUrl!!)
+                        val rommId = game.rommId
+                        val request = if (rommId != null) {
+                            ImageCacheRequest(urls, rommId, ImageType.COVER, game.title, sharpen = true)
+                        } else {
+                            ImageCacheRequest(urls, row.gameId, ImageType.COVER, gameId = row.gameId, sharpen = true)
+                        }
+                        // handed to the download queue without waiting for it: the downloads run in
+                        // the background while the optimizer carries on
+                        scope.launch {
+                            coverQueue.send(request)
+                            startCoverProcessingIfNeeded()
+                        }
+                        queued++
+                    }
+                }
+                onProgress(index + 1, rows.size)
+            }
+            Logger.info(TAG, "Sharper covers: $queued of ${rows.size} covers queued to download again at $COVER_MAX_WIDTH px")
+            queued
+        }
 
     suspend fun refreshEmbeddedBannerArt(gameId: Long) {
         if (embeddedMediaRepository.getCachedBannerArtFile(gameId.toString()) == null) return
@@ -280,7 +409,11 @@ class ImageCacheManager @Inject constructor(
         private val BOX_FACE_SLOT_NAMES = setOf(ArtSlot.BOX_SPINE.name, ArtSlot.BOX_BACK.name)
         private const val LOGO_MAX_WIDTH = 1000
         private const val BOX_3D_MAX_WIDTH = 600
-        private const val COVER_MAX_WIDTH = 400
+        // Matches the size covers are drawn at in Cocoon folders (and their ready-made thumbnails),
+        // so a cover is never stretched up from a smaller download.
+        private const val COVER_MAX_WIDTH = 512
+        /** The width covers were cut down to before [COVER_MAX_WIDTH] was raised. */
+        private const val LEGACY_COVER_WIDTH = 400
         private const val BACKGROUND_MAX_WIDTH = 1280
         private const val BACKGROUND_JPEG_QUALITY = 87
         private val LEGACY_OVERRIDE_FILE_PREFIXES = listOf("cover_manual_", "bg_custom_")
@@ -288,6 +421,7 @@ class ImageCacheManager @Inject constructor(
         private const val SWEEP_RECENT_FILE_GRACE_MS = 10 * 60 * 1000L
         private const val ART_PATH_CHUNK = 900
         private const val ART_MODEL_RELOAD_INTERVAL_MS = 1_000L
+        private const val BANNER_BACKFILL_START_DELAY_MS = 20_000L
     }
 
     private fun ensureNoMedia(dir: File) {
@@ -1439,11 +1573,14 @@ class ImageCacheManager @Inject constructor(
             )
             return
         }
-        if (!replacing && isCachedFromSource(request, ArtSlot.COVER)) return
+        if (!replacing && !request.sharpen && isCachedFromSource(request, ArtSlot.COVER)) return
         val idLabel = if (isGameIdRequest) "gameId ${request.gameId}" else "rommId ${request.id}"
 
         for ((index, url) in request.urls.withIndex()) {
-            val baseName = "${prefix}_${url.md5Hash()}"
+            // A sharpened cover gets its own file name, so the old smaller file is not reused and
+            // stays on screen until this one is saved (it is pruned only then).
+            val baseName = if (request.sharpen) "${prefix}_${url.md5Hash()}_w$COVER_MAX_WIDTH"
+            else "${prefix}_${url.md5Hash()}"
             val existingFile = listOf("jpg", "png")
                 .map { File(coverDir, "$baseName.$it") }
                 .firstOrNull { it.exists() }
@@ -1459,7 +1596,7 @@ class ImageCacheManager @Inject constructor(
             }
 
             if (missingArt.isKnownMissing(url)) continue
-            val bitmap = downloadAndResize(url, 400)
+            val bitmap = downloadAndResize(url, COVER_MAX_WIDTH)
             if (bitmap == null) {
                 logCandidateRejected("cover", idLabel, index, request.urls.size, url, "no decodable image")
                 continue
@@ -1477,6 +1614,8 @@ class ImageCacheManager @Inject constructor(
             return
         }
 
+        // A sharpen that could not download keeps the cover it already has.
+        if (request.sharpen) return
         val steamAppId = game?.steamAppId
         if (steamAppId != null) {
             val steamBitmap = downloadSteamCoverFallback(steamAppId)
@@ -1726,7 +1865,7 @@ class ImageCacheManager @Inject constructor(
             "https://steamcdn-a.akamaihd.net/steam/apps/$steamAppId/capsule_616x353.jpg"
         )
         for (url in fallbackUrls) {
-            downloadAndResize(url, 400)?.let { return it }
+            downloadAndResize(url, COVER_MAX_WIDTH)?.let { return it }
         }
         return null
     }

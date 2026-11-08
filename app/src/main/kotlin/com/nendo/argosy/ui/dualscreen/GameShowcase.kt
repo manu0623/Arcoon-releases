@@ -170,14 +170,12 @@ internal fun CompanionDetail.withLiveArt(art: com.nendo.argosy.data.model.Resolv
         artUrl = art.coverPath ?: artUrl,
         backdropUrl = art.backgroundPath ?: backdropUrl,
         backdropIsScreenshotOrArt = art.backgroundPath != null || backdropIsScreenshotOrArt,
-        embeddedBannerBackdrop = art.backgroundFromEmbeddedBanner || embeddedBannerBackdrop,
         spineUrl = art.boxSpinePath ?: spineUrl,
         box3dUrl = art.box3dPath ?: box3dUrl,
         backUrl = art.boxBackPath ?: backUrl,
-        // An extracted 3DS banner already carries the game's logo and spins as one picture, so a
-        // separate logo over it would be drawn twice and would not turn with it.
-        logoUrl = if (art.backgroundFromEmbeddedBanner) null
-        else art.logoPath?.takeIf { it.startsWith("/") } ?: logoUrl
+        // A local logo (including an extracted 3DS banner, which takes the logo slot) wins over
+        // the remote one.
+        logoUrl = art.logoPath?.takeIf { it.startsWith("/") } ?: logoUrl
     )
 }
 

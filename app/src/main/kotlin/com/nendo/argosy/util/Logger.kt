@@ -90,7 +90,9 @@ object Logger {
         android.util.Log.e("Logger", "Uncaught exception in Logger scope", throwable)
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + loggerExceptionHandler)
-    private val logChannel = Channel<LogEntry>(Channel.BUFFERED)
+    // Unlimited, filled with trySend: lines reach the file in the order they were logged (a
+    // separate coroutine per line could deliver them out of order).
+    private val logChannel = Channel<LogEntry>(Channel.UNLIMITED)
 
     private var fileWriter: FileWriter? = null
     private var currentLogDate: LocalDate? = null
@@ -164,7 +166,7 @@ object Logger {
                 message = message,
                 throwable = throwable
             )
-            scope.launch { logChannel.send(entry) }
+            logChannel.trySend(entry)
         }
     }
 

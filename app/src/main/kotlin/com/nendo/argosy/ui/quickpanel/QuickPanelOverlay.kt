@@ -125,6 +125,8 @@ private const val THEME_WAIT_MS = 750L
 val LocalQuickPanelSurface = androidx.compose.runtime.staticCompositionLocalOf { false }
 
 private const val WARM_FRAMES = 2
+/** How long the invisible warm-up panel stays up: long enough to compose and draw it a few times. */
+private const val WARM_UP_MS = 1500L
 
 /**
  * The quick settings panel drawn in a window of its own above whatever is on a display, so it can
@@ -172,6 +174,7 @@ class QuickPanelOverlay @Inject constructor(
     ): Boolean {
         if (session != null) return true
         if (!canShow()) return false
+        endWarmUp()
         val windowContext = windowContextFor(displayId) ?: return false
         val next = Session(windowContext, resultOwner ?: DeclinedResultRegistryOwner())
         next.startOnPage(page)
@@ -205,6 +208,37 @@ class QuickPanelOverlay @Inject constructor(
         )
         if (shown) DualScreenManagerHolder.instance?.focusDisplay(upper)
         return shown
+    }
+
+    private var warmSession: Session? = null
+
+    /**
+     * Builds the panel once, invisibly, on the upper screen and takes it down again: the first
+     * real open then finds its code loaded and its drawing prepared, instead of stalling the
+     * screens while it builds (about a tenth of a second). It takes no input and no focus, plays
+     * no sound and does not count as open. Main thread only; does nothing while a panel is up.
+     */
+    fun prewarm() {
+        if (session != null || warmSession != null || !canShow()) return
+        val all = context.getSystemService(DisplayManager::class.java)?.displays.orEmpty()
+        val upper = upperScreenId(all) ?: all.firstOrNull()?.displayId ?: return
+        val windowContext = windowContextFor(upper) ?: return
+        val warm = runCatching { Session(windowContext, DeclinedResultRegistryOwner(), warmUp = true) }.getOrNull() ?: return
+        if (!warm.attach()) {
+            warm.detach()
+            return
+        }
+        warmSession = warm
+        exitScope.launch {
+            delay(WARM_UP_MS)
+            if (warmSession === warm) endWarmUp()
+        }
+    }
+
+    private fun endWarmUp() {
+        val warm = warmSession ?: return
+        warmSession = null
+        warm.detach()
     }
 
     /** The upper screen's display id, or null on a single-screen device. */
@@ -254,7 +288,9 @@ class QuickPanelOverlay @Inject constructor(
 
     private inner class Session(
         private val windowContext: Context,
-        private val resultOwner: ActivityResultRegistryOwner
+        private val resultOwner: ActivityResultRegistryOwner,
+        /** An invisible build of the panel ([prewarm]): never shown, never takes input. */
+        private val warmUp: Boolean = false,
     ) {
         private val owner = OverlayWindowOwner()
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -308,7 +344,8 @@ class QuickPanelOverlay @Inject constructor(
         fun startOnPage(page: QuickSettingsPage) {
             settings.selectPage(page)
         }
-        private var exiting = false
+        // A warm-up panel counts as leaving from the start: it is built but never shown.
+        private var exiting = warmUp
         private val root = KeyRoot(windowContext)
 
         fun beginExit(): Boolean {
@@ -327,8 +364,10 @@ class QuickPanelOverlay @Inject constructor(
                     rolesSwapped = dsm.isRolesSwapped.value
                 )
             }
-            settings.setOpen(true)
-            dispatcher.subscribeDrawer(router)
+            if (!warmUp) {
+                settings.setOpen(true)
+                dispatcher.subscribeDrawer(router)
+            }
             val view = ComposeView(windowContext).apply {
                 setViewTreeLifecycleOwner(owner)
                 setViewTreeSavedStateRegistryOwner(owner)
@@ -345,20 +384,28 @@ class QuickPanelOverlay @Inject constructor(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or (
+                    // the warm-up window is see-through, untouchable and never takes the pad
+                    if (warmUp) WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else 0
+                    ),
                 PixelFormat.TRANSLUCENT
-            )
+            ).apply { if (warmUp) alpha = 0f }
             return runCatching {
                 windowManager?.addView(root, params) ?: return false
-                root.requestFocus()
-                root.hideWindowSystemBars()
+                if (!warmUp) {
+                    root.requestFocus()
+                    root.hideWindowSystemBars()
+                }
                 true
             }.onFailure { Log.w(TAG, "addView failed", it) }.getOrDefault(false)
         }
 
         fun detach() {
-            settings.setOpen(false)
-            dispatcher.unsubscribeDrawer()
+            if (!warmUp) {
+                settings.setOpen(false)
+                dispatcher.unsubscribeDrawer()
+            }
             music.onPageHidden()
             runCatching { if (root.isAttachedToWindow) windowManager?.removeView(root) }
                 .onFailure { Log.w(TAG, "removeView failed", it) }

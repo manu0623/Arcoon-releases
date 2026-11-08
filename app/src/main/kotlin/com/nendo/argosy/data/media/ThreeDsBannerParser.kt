@@ -12,7 +12,12 @@ private const val CBMD_JINGLE_MAX_SIZE = 4 * 1024 * 1024
 private const val CWAV_HEADER_SIZE = 0x40
 
 sealed interface ThreeDsBannerResult {
-    data class Success(val cgfx: ByteArray) : ThreeDsBannerResult
+    /**
+     * [cgfx] is the container for the system language (or the common one when the banner has no
+     * language-specific scene). [common] is the shared scene when the language container is only
+     * an overlay on it (usually just the localised logo); the Home Menu draws both together.
+     */
+    data class Success(val cgfx: ByteArray, val common: ByteArray? = null) : ThreeDsBannerResult
     data class Failure(val reason: String) : ThreeDsBannerResult
 }
 
@@ -44,16 +49,36 @@ object ThreeDsBannerParser {
             return ThreeDsBannerResult.Failure("ExeFS banner is not a CBMD resource")
         }
 
+        val commonOffset = readU32(header, CBMD_COMMON_CGFX_OFFSET)
         val selectedOffset = preferredRegionIndex(locale)
             ?.let { readU32(header, CBMD_REGIONAL_CGFX_OFFSET + it * 4) }
             ?.takeIf { it > 0L }
-            ?: readU32(header, CBMD_COMMON_CGFX_OFFSET)
+            ?: commonOffset
+        val selected = when (val read = readCgfx(header, bannerSize, selectedOffset, readAt)) {
+            is ThreeDsBannerResult.Success -> read.cgfx
+            else -> return read
+        }
+        val common = if (selectedOffset != commonOffset) {
+            (readCgfx(header, bannerSize, commonOffset, readAt) as? ThreeDsBannerResult.Success)?.cgfx
+        } else {
+            null
+        }
+        return ThreeDsBannerResult.Success(selected, common)
+    }
+
+    private fun readCgfx(
+        header: ByteArray,
+        bannerSize: Long,
+        selectedOffset: Long,
+        readAt: (offset: Long, size: Int) -> ByteArray?
+    ): ThreeDsBannerResult {
         if (selectedOffset < CBMD_HEADER_SIZE || selectedOffset >= bannerSize) {
             return ThreeDsBannerResult.Failure("3DS banner does not contain a valid CGFX resource")
         }
 
         val cwavOffset = readU32(header, CBMD_CWAV_OFFSET)
         val nextResourceOffset = buildList {
+            add(readU32(header, CBMD_COMMON_CGFX_OFFSET).takeIf { it > selectedOffset && it < bannerSize } ?: bannerSize)
             for (index in 0 until CBMD_REGIONAL_CGFX_COUNT) {
                 val offset = readU32(header, CBMD_REGIONAL_CGFX_OFFSET + index * 4)
                 if (offset > selectedOffset && offset < bannerSize) add(offset)

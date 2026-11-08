@@ -14,8 +14,8 @@ data class ResolvedGameArt(
     val gradientColors: String? = null,
     val coverAspectRatio: Float? = null,
     val overriddenSlots: Set<ArtSlot> = emptySet(),
-    /** True when the background slot holds a banner extracted from the ROM, which draws its own logo. */
-    val backgroundFromEmbeddedBanner: Boolean = false
+    /** True when the logo slot holds the animated banner extracted from the ROM. */
+    val logoFromEmbeddedBanner: Boolean = false
 ) {
     fun path(slot: ArtSlot): String? = when (slot) {
         ArtSlot.COVER -> coverPath
@@ -39,11 +39,10 @@ fun resolveArtPath(overridePath: String?, cachedPath: String?, sourceUrl: String
     overridePath ?: cachedPath ?: sourceUrl
 
 /**
- * Puts an extracted 3DS banner where the hero is drawn. The guard is against a manual BACKGROUND
- * override, which is the slot this replaces - checking LOGO let the embedded banner silently
- * overwrite art the user had picked by hand, while leaving the game's logo untouched.
+ * Puts an extracted 3DS banner in the logo slot, as Cocoon does: the banner is the game's animated
+ * title art, so the hero keeps its own background behind it. A logo the user picked by hand wins.
  */
 fun ResolvedGameArt.withEmbedded3dsBanner(path: String?): ResolvedGameArt {
-    if (path.isNullOrBlank() || ArtSlot.BACKGROUND in overriddenSlots) return this
-    return copy(backgroundPath = path, backgroundFromEmbeddedBanner = true)
+    if (path.isNullOrBlank() || ArtSlot.LOGO in overriddenSlots) return this
+    return copy(logoPath = path, logoFromEmbeddedBanner = true)
 }

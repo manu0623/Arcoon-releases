@@ -45,6 +45,8 @@ import javax.inject.Inject
 
 private const val NEVER_REFRESHED = -1L
 private const val FOREGROUND_STEAM_REFRESH_INTERVAL_MS = 60 * 60 * 1000L
+private const val EMULATOR_SCAN_DELAY_MS = 4_000L
+private const val DEFERRED_SERVICES_FALLBACK_MS = 2_500L
 
 @HiltAndroidApp
 class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
@@ -64,133 +66,172 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
-    lateinit var lidSleepGuard: com.nendo.argosy.hardware.LidSleepGuard
+    lateinit var lidSleepGuardLazy: dagger.Lazy<com.nendo.argosy.hardware.LidSleepGuard>
+    private val lidSleepGuard: com.nendo.argosy.hardware.LidSleepGuard get() = lidSleepGuardLazy.get()
 
     @Inject
-    lateinit var userCertStore: com.nendo.argosy.data.remote.ssl.UserCertStore
+    lateinit var userCertStoreLazy: dagger.Lazy<com.nendo.argosy.data.remote.ssl.UserCertStore>
+    private val userCertStore: com.nendo.argosy.data.remote.ssl.UserCertStore get() = userCertStoreLazy.get()
 
     @Inject
-    lateinit var rommConnectionManager: com.nendo.argosy.data.remote.romm.RomMConnectionManager
+    lateinit var rommConnectionManagerLazy: dagger.Lazy<com.nendo.argosy.data.remote.romm.RomMConnectionManager>
+    private val rommConnectionManager: com.nendo.argosy.data.remote.romm.RomMConnectionManager get() = rommConnectionManagerLazy.get()
 
     @Inject
-    lateinit var socialSyncCoordinator: com.nendo.argosy.data.sync.SocialSyncCoordinator
+    lateinit var socialSyncCoordinatorLazy: dagger.Lazy<com.nendo.argosy.data.sync.SocialSyncCoordinator>
+    private val socialSyncCoordinator: com.nendo.argosy.data.sync.SocialSyncCoordinator get() = socialSyncCoordinatorLazy.get()
 
     @Inject
-    lateinit var saveSyncDownloadObserver: SaveSyncDownloadObserver
+    lateinit var saveSyncDownloadObserverLazy: dagger.Lazy<SaveSyncDownloadObserver>
+    private val saveSyncDownloadObserver: SaveSyncDownloadObserver get() = saveSyncDownloadObserverLazy.get()
 
     @Inject
-    lateinit var cheatsDownloadObserver: CheatsDownloadObserver
+    lateinit var cheatsDownloadObserverLazy: dagger.Lazy<CheatsDownloadObserver>
+    private val cheatsDownloadObserver: CheatsDownloadObserver get() = cheatsDownloadObserverLazy.get()
 
     @Inject
-    lateinit var titleIdDownloadObserver: TitleIdDownloadObserver
+    lateinit var titleIdDownloadObserverLazy: dagger.Lazy<TitleIdDownloadObserver>
+    private val titleIdDownloadObserver: TitleIdDownloadObserver get() = titleIdDownloadObserverLazy.get()
 
     @Inject
-    lateinit var platformDao: PlatformDao
+    lateinit var platformDaoLazy: dagger.Lazy<PlatformDao>
+    private val platformDao: PlatformDao get() = platformDaoLazy.get()
 
     @Inject
-    lateinit var biosRepository: com.nendo.argosy.data.repository.BiosRepository
+    lateinit var biosRepositoryLazy: dagger.Lazy<com.nendo.argosy.data.repository.BiosRepository>
+    private val biosRepository: com.nendo.argosy.data.repository.BiosRepository get() = biosRepositoryLazy.get()
 
     @Inject
-    lateinit var appPreferencesRepository:
-        com.nendo.argosy.data.preferences.AppPreferencesRepository
+    lateinit var appPreferencesRepositoryLazy: dagger.Lazy<com.nendo.argosy.data.preferences.AppPreferencesRepository>
+    private val appPreferencesRepository: com.nendo.argosy.data.preferences.AppPreferencesRepository get() = appPreferencesRepositoryLazy.get()
 
     @Inject
-    lateinit var gameDao: GameDao
+    lateinit var gameDaoLazy: dagger.Lazy<GameDao>
+    private val gameDao: GameDao get() = gameDaoLazy.get()
 
     @Inject
-    lateinit var activeSaveRepository: com.nendo.argosy.data.repository.ActiveSaveRepository
+    lateinit var activeSaveRepositoryLazy: dagger.Lazy<com.nendo.argosy.data.repository.ActiveSaveRepository>
+    private val activeSaveRepository: com.nendo.argosy.data.repository.ActiveSaveRepository get() = activeSaveRepositoryLazy.get()
 
     @Inject
-    lateinit var libraryDefaultPlatformMigration: com.nendo.argosy.data.repository.LibraryDefaultPlatformMigration
+    lateinit var libraryDefaultPlatformMigrationLazy: dagger.Lazy<com.nendo.argosy.data.repository.LibraryDefaultPlatformMigration>
+    private val libraryDefaultPlatformMigration: com.nendo.argosy.data.repository.LibraryDefaultPlatformMigration get() = libraryDefaultPlatformMigrationLazy.get()
 
     @Inject
-    lateinit var apkInstallManager: ApkInstallManager
+    lateinit var apkInstallManagerLazy: dagger.Lazy<ApkInstallManager>
+    private val apkInstallManager: ApkInstallManager get() = apkInstallManagerLazy.get()
 
     @Inject
-    lateinit var downloadServiceController: DownloadServiceController
+    lateinit var downloadServiceControllerLazy: dagger.Lazy<DownloadServiceController>
+    private val downloadServiceController: DownloadServiceController get() = downloadServiceControllerLazy.get()
 
     @Inject
-    lateinit var syncServiceController: SyncServiceController
+    lateinit var syncServiceControllerLazy: dagger.Lazy<SyncServiceController>
+    private val syncServiceController: SyncServiceController get() = syncServiceControllerLazy.get()
 
     @Inject
-    lateinit var coreManager: LibretroCoreManager
+    lateinit var coreManagerLazy: dagger.Lazy<LibretroCoreManager>
+    private val coreManager: LibretroCoreManager get() = coreManagerLazy.get()
 
     @Inject
-    lateinit var compatCoreCache: CompatCoreCache
+    lateinit var compatCoreCacheLazy: dagger.Lazy<CompatCoreCache>
+    private val compatCoreCache: CompatCoreCache get() = compatCoreCacheLazy.get()
 
     @Inject
-    lateinit var playSessionTracker: PlaySessionTracker
+    lateinit var playSessionTrackerLazy: dagger.Lazy<PlaySessionTracker>
+    private val playSessionTracker: PlaySessionTracker get() = playSessionTrackerLazy.get()
 
     @Inject
-    lateinit var steamGridDbArtScraper: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbArtScraper
+    lateinit var steamGridDbArtScraperLazy: dagger.Lazy<com.nendo.argosy.data.remote.steamgriddb.SteamGridDbArtScraper>
+    private val steamGridDbArtScraper: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbArtScraper get() = steamGridDbArtScraperLazy.get()
 
     @Inject
-    lateinit var coreCrashController: CoreCrashController
+    lateinit var coreCrashControllerLazy: dagger.Lazy<CoreCrashController>
+    private val coreCrashController: CoreCrashController get() = coreCrashControllerLazy.get()
 
     @Inject
-    lateinit var builtinPrefs: BuiltinEmulatorPreferencesRepository
+    lateinit var builtinPrefsLazy: dagger.Lazy<BuiltinEmulatorPreferencesRepository>
+    private val builtinPrefs: BuiltinEmulatorPreferencesRepository get() = builtinPrefsLazy.get()
 
     @Inject
-    lateinit var quayPassService: com.nendo.argosy.data.quaypass.QuayPassService
+    lateinit var quayPassServiceLazy: dagger.Lazy<com.nendo.argosy.data.quaypass.QuayPassService>
+    private val quayPassService: com.nendo.argosy.data.quaypass.QuayPassService get() = quayPassServiceLazy.get()
 
     @Inject
-    lateinit var quayPassCredentialManager: com.nendo.argosy.data.quaypass.QuayPassCredentialManager
-
-    @Suppress("unused")
-    @Inject
-    lateinit var quayPassAvatarSyncCoordinator: com.nendo.argosy.data.quaypass.QuayPassAvatarSyncCoordinator
-
-    @Suppress("unused")
-    @Inject
-    lateinit var quayPassMessageSyncCoordinator: com.nendo.argosy.data.quaypass.QuayPassMessageSyncCoordinator
-
-    @Suppress("unused")
-    @Inject
-    lateinit var quayPassFriendRequestQueueCoordinator: com.nendo.argosy.data.quaypass.QuayPassFriendRequestQueueCoordinator
-
-    @Suppress("unused")
-    @Inject
-    lateinit var quayPassEncounterReporter: com.nendo.argosy.data.quaypass.QuayPassEncounterReporter
-
-    @Suppress("unused")
-    @Inject
-    lateinit var quayPassWalletCoordinator: com.nendo.argosy.data.quaypass.QuayPassWalletCoordinator
+    lateinit var quayPassCredentialManagerLazy: dagger.Lazy<com.nendo.argosy.data.quaypass.QuayPassCredentialManager>
+    private val quayPassCredentialManager: com.nendo.argosy.data.quaypass.QuayPassCredentialManager get() = quayPassCredentialManagerLazy.get()
 
     @Inject
-    lateinit var accountSwitchCoordinator: com.nendo.argosy.data.sync.AccountSwitchCoordinator
+    lateinit var quayPassAvatarSyncCoordinatorLazy: dagger.Lazy<com.nendo.argosy.data.quaypass.QuayPassAvatarSyncCoordinator>
+    private val quayPassAvatarSyncCoordinator: com.nendo.argosy.data.quaypass.QuayPassAvatarSyncCoordinator get() = quayPassAvatarSyncCoordinatorLazy.get()
 
     @Inject
-    lateinit var pushInstallCoordinator: com.nendo.argosy.data.install.PushInstallCoordinator
+    lateinit var quayPassMessageSyncCoordinatorLazy: dagger.Lazy<com.nendo.argosy.data.quaypass.QuayPassMessageSyncCoordinator>
+    private val quayPassMessageSyncCoordinator: com.nendo.argosy.data.quaypass.QuayPassMessageSyncCoordinator get() = quayPassMessageSyncCoordinatorLazy.get()
 
     @Inject
-    lateinit var siblingGroupRepository: com.nendo.argosy.data.repository.SiblingGroupRepository
+    lateinit var quayPassFriendRequestQueueCoordinatorLazy: dagger.Lazy<com.nendo.argosy.data.quaypass.QuayPassFriendRequestQueueCoordinator>
+    private val quayPassFriendRequestQueueCoordinator: com.nendo.argosy.data.quaypass.QuayPassFriendRequestQueueCoordinator get() = quayPassFriendRequestQueueCoordinatorLazy.get()
 
     @Inject
-    lateinit var siblingGroupDownloadObserver: com.nendo.argosy.data.repository.SiblingGroupDownloadObserver
+    lateinit var quayPassEncounterReporterLazy: dagger.Lazy<com.nendo.argosy.data.quaypass.QuayPassEncounterReporter>
+    private val quayPassEncounterReporter: com.nendo.argosy.data.quaypass.QuayPassEncounterReporter get() = quayPassEncounterReporterLazy.get()
 
     @Inject
-    lateinit var raPatchDownloadObserver: com.nendo.argosy.data.repository.RAPatchDownloadObserver
+    lateinit var quayPassWalletCoordinatorLazy: dagger.Lazy<com.nendo.argosy.data.quaypass.QuayPassWalletCoordinator>
+    private val quayPassWalletCoordinator: com.nendo.argosy.data.quaypass.QuayPassWalletCoordinator get() = quayPassWalletCoordinatorLazy.get()
 
     @Inject
-    lateinit var raRepository: com.nendo.argosy.data.repository.RetroAchievementsRepository
+    lateinit var accountSwitchCoordinatorLazy: dagger.Lazy<com.nendo.argosy.data.sync.AccountSwitchCoordinator>
+    private val accountSwitchCoordinator: com.nendo.argosy.data.sync.AccountSwitchCoordinator get() = accountSwitchCoordinatorLazy.get()
 
     @Inject
-    lateinit var variantFileCleanup: com.nendo.argosy.data.emulator.VariantFileCleanup
+    lateinit var pushInstallCoordinatorLazy: dagger.Lazy<com.nendo.argosy.data.install.PushInstallCoordinator>
+    private val pushInstallCoordinator: com.nendo.argosy.data.install.PushInstallCoordinator get() = pushInstallCoordinatorLazy.get()
 
     @Inject
-    lateinit var lockScreenArtManager: com.nendo.argosy.data.wallpaper.LockScreenArtManager
+    lateinit var siblingGroupRepositoryLazy: dagger.Lazy<com.nendo.argosy.data.repository.SiblingGroupRepository>
+    private val siblingGroupRepository: com.nendo.argosy.data.repository.SiblingGroupRepository get() = siblingGroupRepositoryLazy.get()
 
     @Inject
-    lateinit var iconPackRepository: com.nendo.argosy.data.iconpack.IconPackRepository
+    lateinit var siblingGroupDownloadObserverLazy: dagger.Lazy<com.nendo.argosy.data.repository.SiblingGroupDownloadObserver>
+    private val siblingGroupDownloadObserver: com.nendo.argosy.data.repository.SiblingGroupDownloadObserver get() = siblingGroupDownloadObserverLazy.get()
 
     @Inject
-    lateinit var homeAppAvailability: com.nendo.argosy.util.HomeAppAvailability
+    lateinit var raPatchDownloadObserverLazy: dagger.Lazy<com.nendo.argosy.data.repository.RAPatchDownloadObserver>
+    private val raPatchDownloadObserver: com.nendo.argosy.data.repository.RAPatchDownloadObserver get() = raPatchDownloadObserverLazy.get()
 
     @Inject
-    lateinit var appsRepository: AppsRepository
+    lateinit var raRepositoryLazy: dagger.Lazy<com.nendo.argosy.data.repository.RetroAchievementsRepository>
+    private val raRepository: com.nendo.argosy.data.repository.RetroAchievementsRepository get() = raRepositoryLazy.get()
 
     @Inject
-    lateinit var gameNativeStoreSync: GameNativeStoreSync
+    lateinit var variantFileCleanupLazy: dagger.Lazy<com.nendo.argosy.data.emulator.VariantFileCleanup>
+    private val variantFileCleanup: com.nendo.argosy.data.emulator.VariantFileCleanup get() = variantFileCleanupLazy.get()
+
+    @Inject
+    lateinit var lockScreenArtManagerLazy: dagger.Lazy<com.nendo.argosy.data.wallpaper.LockScreenArtManager>
+    private val lockScreenArtManager: com.nendo.argosy.data.wallpaper.LockScreenArtManager get() = lockScreenArtManagerLazy.get()
+
+    @Inject
+    lateinit var iconPackRepositoryLazy: dagger.Lazy<com.nendo.argosy.data.iconpack.IconPackRepository>
+    private val iconPackRepository: com.nendo.argosy.data.iconpack.IconPackRepository get() = iconPackRepositoryLazy.get()
+
+    @Inject
+    lateinit var homeAppAvailabilityLazy: dagger.Lazy<com.nendo.argosy.util.HomeAppAvailability>
+    private val homeAppAvailability: com.nendo.argosy.util.HomeAppAvailability get() = homeAppAvailabilityLazy.get()
+
+    @Inject
+    lateinit var appsRepositoryLazy: dagger.Lazy<AppsRepository>
+    private val appsRepository: AppsRepository get() = appsRepositoryLazy.get()
+
+    @Inject
+    lateinit var gameNativeStoreSyncLazy: dagger.Lazy<GameNativeStoreSync>
+    private val gameNativeStoreSync: GameNativeStoreSync get() = gameNativeStoreSyncLazy.get()
+
+    @Inject
+    lateinit var emulatorDetectorLazy: dagger.Lazy<com.nendo.argosy.data.emulator.EmulatorDetector>
+    private val emulatorDetector: com.nendo.argosy.data.emulator.EmulatorDetector get() = emulatorDetectorLazy.get()
 
     private val lastForegroundSteamRefreshAt = AtomicLong(NEVER_REFRESHED)
 
@@ -202,7 +243,101 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
     }
 
     override fun onCreate() {
+        // Only what the first screen needs is built here. The background services (sync, social,
+        // achievements, QuayPass, Steam, wallpaper...) are built off the main thread and started
+        // right after the first screen is drawn: building all of them here took most of a second
+        // before anything could appear.
+        val started = SystemClock.uptimeMillis()
         super.onCreate()
+        val injected = SystemClock.uptimeMillis()
+        ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
+        // Safety net when no screen opens (the app started for a background job): start anyway.
+        android.os.Handler(android.os.Looper.getMainLooper())
+            .postDelayed({ onFirstScreenDrawn() }, DEFERRED_SERVICES_FALLBACK_MS)
+        val done = SystemClock.uptimeMillis()
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "startup: app created in ${done - started} ms (injection ${injected - started} ms)"
+        )
+    }
+
+    private val deferredServicesStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Every service built in the background after the first frame, by name (for the timing log). */
+    private fun deferredServices(): List<Pair<String, dagger.Lazy<*>>> = listOf(
+        "lidSleepGuard" to lidSleepGuardLazy,
+        "userCertStore" to userCertStoreLazy,
+        "rommConnectionManager" to rommConnectionManagerLazy,
+        "socialSyncCoordinator" to socialSyncCoordinatorLazy,
+        "saveSyncDownloadObserver" to saveSyncDownloadObserverLazy,
+        "cheatsDownloadObserver" to cheatsDownloadObserverLazy,
+        "titleIdDownloadObserver" to titleIdDownloadObserverLazy,
+        "platformDao" to platformDaoLazy,
+        "biosRepository" to biosRepositoryLazy,
+        "appPreferencesRepository" to appPreferencesRepositoryLazy,
+        "gameDao" to gameDaoLazy,
+        "activeSaveRepository" to activeSaveRepositoryLazy,
+        "libraryDefaultPlatformMigration" to libraryDefaultPlatformMigrationLazy,
+        "apkInstallManager" to apkInstallManagerLazy,
+        "downloadServiceController" to downloadServiceControllerLazy,
+        "syncServiceController" to syncServiceControllerLazy,
+        "coreManager" to coreManagerLazy,
+        "compatCoreCache" to compatCoreCacheLazy,
+        "playSessionTracker" to playSessionTrackerLazy,
+        "steamGridDbArtScraper" to steamGridDbArtScraperLazy,
+        "coreCrashController" to coreCrashControllerLazy,
+        "builtinPrefs" to builtinPrefsLazy,
+        "quayPassService" to quayPassServiceLazy,
+        "quayPassCredentialManager" to quayPassCredentialManagerLazy,
+        "quayPassAvatarSyncCoordinator" to quayPassAvatarSyncCoordinatorLazy,
+        "quayPassMessageSyncCoordinator" to quayPassMessageSyncCoordinatorLazy,
+        "quayPassFriendRequestQueueCoordinator" to quayPassFriendRequestQueueCoordinatorLazy,
+        "quayPassEncounterReporter" to quayPassEncounterReporterLazy,
+        "quayPassWalletCoordinator" to quayPassWalletCoordinatorLazy,
+        "accountSwitchCoordinator" to accountSwitchCoordinatorLazy,
+        "pushInstallCoordinator" to pushInstallCoordinatorLazy,
+        "siblingGroupRepository" to siblingGroupRepositoryLazy,
+        "siblingGroupDownloadObserver" to siblingGroupDownloadObserverLazy,
+        "raPatchDownloadObserver" to raPatchDownloadObserverLazy,
+        "raRepository" to raRepositoryLazy,
+        "variantFileCleanup" to variantFileCleanupLazy,
+        "lockScreenArtManager" to lockScreenArtManagerLazy,
+        "iconPackRepository" to iconPackRepositoryLazy,
+        "homeAppAvailability" to homeAppAvailabilityLazy,
+        "appsRepository" to appsRepositoryLazy,
+        "gameNativeStoreSync" to gameNativeStoreSyncLazy,
+        "emulatorDetector" to emulatorDetectorLazy,
+    )
+
+    /**
+     * Called once the main screen has drawn its first frame (or after a short safety delay):
+     * builds the background services on a worker thread, then starts them on the main thread.
+     */
+    fun onFirstScreenDrawn() {
+        if (!deferredServicesStarted.compareAndSet(false, true)) return
+        appScope.launch {
+            val buildStarted = SystemClock.uptimeMillis()
+            val timings = deferredServices().map { (name, service) ->
+                val at = SystemClock.uptimeMillis()
+                // A service that insists on the main thread fails here and is built there instead.
+                runCatching { service.get() }
+                name to (SystemClock.uptimeMillis() - at)
+            }
+            val built = SystemClock.uptimeMillis()
+            com.nendo.argosy.util.ArcoonTrace.log(
+                "startup: background services built in ${built - buildStarted} ms off the main thread; slowest: " +
+                    timings.sortedByDescending { it.second }.take(6).joinToString { "${it.first} ${it.second} ms" }
+            )
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                val startAt = SystemClock.uptimeMillis()
+                startServices()
+                com.nendo.argosy.util.ArcoonTrace.log(
+                    "startup: background services started in ${SystemClock.uptimeMillis() - startAt} ms"
+                )
+            }
+        }
+    }
+
+    private fun startServices() {
         appScope.launch { userCertStore.initialize() }
         appScope.launch { com.nendo.argosy.util.RootShell.isAvailable }
         appScope.launch { socialSyncCoordinator.discardQueueWithoutSocialAccount() }
@@ -213,7 +348,6 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
         SocialSyncWorker.schedule(this)
         CoreUpdateCheckWorker.schedule(this)
         com.nendo.argosy.data.quaypass.QuayPassCredentialRefreshWorker.schedule(this)
-        ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
         appScope.launch { observeSteamPackageChanges() }
         saveSyncDownloadObserver.start()
         cheatsDownloadObserver.start()
@@ -254,6 +388,12 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
         appScope.launch { libraryDefaultPlatformMigration.run() }
         appScope.launch { deleteRetiredSteamDownloadDirs() }
         appScope.launch { biosRepository.purgeRetiredFirmware() }
+        // The installed-emulator list, found once shortly after launch (after the first screens are
+        // up), so the first game page opens without scanning for emulators first.
+        appScope.launch {
+            kotlinx.coroutines.delay(EMULATOR_SCAN_DELAY_MS)
+            runCatching { emulatorDetector.detectEmulators() }
+        }
         syncPlatformSortOrders()
     }
 
@@ -328,6 +468,13 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
             .components {
                 add(AppIconFetcher.Factory(packageManager, iconPackRepository))
                 add(coil.decode.SvgDecoder.Factory())
+                // Animated images (the 3DS banner animation is a GIF) play instead of freezing on
+                // their first frame.
+                if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    add(coil.decode.ImageDecoderDecoder.Factory())
+                } else {
+                    add(coil.decode.GifDecoder.Factory())
+                }
             }
             .crossfade(true)
             // A bit more room for pictures than the default, so moving between Home and folders

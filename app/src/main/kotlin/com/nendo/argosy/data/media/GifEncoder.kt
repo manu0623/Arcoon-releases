@@ -17,11 +17,26 @@ internal object GifEncoder {
     private const val MAX_SAMPLES = 200_000
     private const val MAX_DICTIONARY = 4096
 
-    fun encode(frames: List<IntArray>, width: Int, height: Int, delayCentiseconds: Int): ByteArray? {
-        if (frames.isEmpty() || width <= 0 || height <= 0) return null
-        if (frames.any { it.size != width * height }) return null
+    fun encode(frames: List<IntArray>, width: Int, height: Int, delayCentiseconds: Int): ByteArray? =
+        encode(frames.size, width, height, delayCentiseconds, frames) { frames[it] }
 
-        val palette = buildPalette(frames)
+    /**
+     * Encodes [frameCount] frames produced one at a time by [frameAt], so a long animation never
+     * holds more than one frame in memory. The shared palette is built from [paletteFrames], a
+     * sample spread across the animation.
+     */
+    fun encode(
+        frameCount: Int,
+        width: Int,
+        height: Int,
+        delayCentiseconds: Int,
+        paletteFrames: List<IntArray>,
+        frameAt: (Int) -> IntArray,
+    ): ByteArray? {
+        if (frameCount <= 0 || paletteFrames.isEmpty() || width <= 0 || height <= 0) return null
+        if (paletteFrames.any { it.size != width * height }) return null
+
+        val palette = buildPalette(paletteFrames)
         val tableSize = tableSizeFor(palette.size + 1)
         val tableBits = Integer.numberOfTrailingZeros(tableSize)
         val indexOf = nearestColorLookup(palette)
@@ -30,7 +45,9 @@ internal object GifEncoder {
         writeHeader(out, width, height, tableBits)
         writeGlobalColorTable(out, palette, tableSize)
         writeLoopExtension(out)
-        for (frame in frames) {
+        for (frameIndex in 0 until frameCount) {
+            val frame = frameAt(frameIndex)
+            if (frame.size != width * height) return null
             writeGraphicControl(out, delayCentiseconds)
             writeImageDescriptor(out, width, height)
             val indices = ByteArray(frame.size)

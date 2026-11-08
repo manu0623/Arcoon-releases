@@ -67,7 +67,9 @@ class SteamGridDbArtScraper @Inject constructor(
         private const val UNAUTHORIZED = 401
         private const val FORBIDDEN = 403
         private const val LEGACY_COVER_RATIO = 2f / 3f
-        private const val SHAPE_SELECTION_VERSION = 2
+        // 3: square tiles take square grids only (asked for by size), and the Cocoon home counts
+        // as square whatever the box art setting says.
+        private const val SHAPE_SELECTION_VERSION = 3
     }
 
     private enum class Outcome {
@@ -88,7 +90,7 @@ class SteamGridDbArtScraper @Inject constructor(
     init {
         scope.launch {
             displayPreferences.preferences
-                .map { it.boxArtShape }
+                .map { it.effectiveCoverShape() }
                 .distinctUntilChanged()
                 .collect { shape -> applyCoverShape(shape) }
         }
@@ -238,7 +240,7 @@ class SteamGridDbArtScraper @Inject constructor(
         }
         appPreferences.setSteamGridDbScrapeAutoStart(true)
         appPreferences.setSteamGridDbScrapeRescanAll(rescanAll)
-        val coverShape = displayPreferences.preferences.first().boxArtShape
+        val coverShape = displayPreferences.preferences.first().effectiveCoverShape()
         val total = gameArtDao.countArtScrapeCandidates(platformSlug, rescanAll)
         if (total == 0) {
             _state.value = SteamGridDbScrapeState(stage = SteamGridDbScrapeStage.FINISHED)
@@ -294,7 +296,13 @@ class SteamGridDbArtScraper @Inject constructor(
         apiKey: String,
         coverShape: BoxArtShape
     ): Outcome {
-        val result = client.searchGrids(candidate.title, apiKey)
+        // Square tiles ask SteamGridDB for square grids by size; an unfiltered list can be all
+        // tall covers on its first page even when square ones exist.
+        val result = if (coverShape == BoxArtShape.SQUARE) {
+            client.searchSquareGrids(candidate.title, apiKey)
+        } else {
+            client.searchGrids(candidate.title, apiKey)
+        }
         val error = result.exceptionOrNull()
         if (error is SteamGridDbRateLimited) {
             val until = System.currentTimeMillis() + error.retryAfterMillis
@@ -342,6 +350,9 @@ class SteamGridDbArtScraper @Inject constructor(
         if (sized.isEmpty()) return firstOrNull()
         val target = shape.coverRatioTarget
         val fitting = sized.filter { (_, ratio) -> ratio in shape.coverRatioRange }
+        // A square tile never takes a tall or wide grid: cropped into the square it showed a
+        // sliver of a cover. With no square art the game keeps the cover it already has.
+        if (fitting.isEmpty() && shape == BoxArtShape.SQUARE) return null
         val pool = if (fitting.isEmpty()) sized else fitting
         return pool.minByOrNull { (_, ratio) -> abs(ratio - target) }?.first
     }
@@ -395,3 +406,7 @@ class SteamGridDbArtScraper @Inject constructor(
         _state.update { current -> current.copy(stage = SteamGridDbScrapeStage.RUNNING, parkedUntilMillis = null) }
     }
 }
+
+/** The tile shape covers are drawn at: always square in the Cocoon home, else the setting. */
+private fun com.nendo.argosy.data.preferences.DisplayPreferences.effectiveCoverShape(): BoxArtShape =
+    if (launcherUiMode == com.nendo.argosy.data.preferences.LauncherUiMode.COCOON) BoxArtShape.SQUARE else boxArtShape

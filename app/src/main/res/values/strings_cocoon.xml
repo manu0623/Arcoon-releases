@@ -109,6 +109,7 @@
     <string name="cocoon_opt_done_detail">Everything is ready</string>
     <string name="cocoon_opt_starting">Getting started…</string>
     <string name="cocoon_opt_covers">Preparing covers</string>
+    <string name="cocoon_opt_sharpen">Sharpening covers</string>
     <string name="cocoon_opt_icons">Loading folder art and theme</string>
     <string name="cocoon_opt_library">Warming up your library</string>
     <string name="cocoon_opt_compile">Speeding up the app</string>
@@ -196,6 +197,14 @@
     <string name="cocoon_icon_accent">Accent</string>
     <string name="cocoon_icon_flat">Flat</string>
     <string name="cocoon_personal_motion">Animation Style</string>
+    <!-- Personalization row: how a game's details page is laid out. -->
+    <string name="cocoon_personal_details_layout">Game Details</string>
+    <!-- Its values: the original page, then the four new layouts. Keep them short. -->
+    <string name="cocoon_details_layout_classic">Classic</string>
+    <string name="cocoon_details_layout_tabs">Header &amp; tabs</string>
+    <string name="cocoon_details_layout_side">Side menu</string>
+    <string name="cocoon_details_layout_tiles">Action tiles</string>
+    <string name="cocoon_details_layout_split">Split screens</string>
     <string name="cocoon_motion_comfortable">Comfortable</string>
     <string name="cocoon_motion_snappy">Snappy</string>
     <string name="cocoon_motion_reduced">Reduced</string>
@@ -364,4 +373,17 @@
     <string name="cocoon_rom_media_extract_subtitle">Reads the icon, the banner and the jingle out of a decrypted NDS or 3DS ROM</string>
     <string name="cocoon_rom_media_banner">3DS Banner Art</string>
     <string name="cocoon_rom_media_banner_subtitle">Uses a 3DS banner as the game\'s hero art</string>
+    <string name="cocoon_details_tab_overview">Overview</string>
+    <string name="cocoon_details_action_saves">Saves</string>
+    <string name="cocoon_details_action_settings">Settings</string>
+    <string name="cocoon_details_action_more">More</string>
+    <string name="cocoon_details_split_hint">Details on the top screen ↑</string>
+    <string name="cocoon_details_installed">Installed</string>
+    <string name="cocoon_details_played">Played %1$s</string>
+    <string name="cocoon_details_full_description">Full description</string>
+    <string name="cocoon_details_fact_developer">Developer</string>
+    <string name="cocoon_details_fact_publisher">Publisher</string>
+    <string name="cocoon_details_fact_released">Released</string>
+    <string name="cocoon_details_fact_genre">Genre</string>
+    <string name="cocoon_details_fact_players">Players</string>
 </resources>

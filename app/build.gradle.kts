@@ -273,6 +273,8 @@ tasks.withType<Test> {
 dependencies {
     // Core
     implementation(libs.androidx.core.ktx)
+    // Installs the startup profile (src/main/baseline-prof.txt) so release builds run compiled code from the first launch
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.bundles.lifecycle)
     implementation(libs.kotlinx.coroutines.android)
 

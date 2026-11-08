@@ -21,8 +21,39 @@ class DisplayAffinityHelper @Inject constructor(
 ) {
     private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
 
+    /*
+     * The screen list is asked for from dozens of places, some on every button press, and each
+     * ask was a call into the system. It is kept here and dropped whenever a screen is added,
+     * removed or changes (on, off, resized); the short age limit is a safety net in case a change
+     * ever arrives without an event.
+     */
+    @Volatile private var physicalDisplayCache: Array<Display>? = null
+    @Volatile private var physicalDisplayCachedAt = 0L
+
+    private val displayCacheInvalidator = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) { physicalDisplayCache = null }
+        override fun onDisplayRemoved(displayId: Int) { physicalDisplayCache = null }
+        override fun onDisplayChanged(displayId: Int) { physicalDisplayCache = null }
+    }
+
+    init {
+        displayManager.registerDisplayListener(
+            displayCacheInvalidator,
+            android.os.Handler(android.os.Looper.getMainLooper())
+        )
+    }
+
     private val physicalDisplays: Array<Display>
-        get() = displayManager.displays.filter { it.isPhysicalDisplay() }.toTypedArray()
+        get() {
+            val now = android.os.SystemClock.uptimeMillis()
+            physicalDisplayCache?.let { cached ->
+                if (now - physicalDisplayCachedAt < PHYSICAL_DISPLAY_CACHE_MS) return cached
+            }
+            val fresh = displayManager.displays.filter { it.isPhysicalDisplay() }.toTypedArray()
+            physicalDisplayCache = fresh
+            physicalDisplayCachedAt = now
+            return fresh
+        }
 
     val hasPhysicalSecondaryDisplay: Boolean
         get() = physicalDisplays.size > 1
@@ -334,6 +365,7 @@ class DisplayAffinityHelper @Inject constructor(
     }
 
     companion object {
+        private const val PHYSICAL_DISPLAY_CACHE_MS = 1_000L
         private const val DISPLAY_TYPE_BUILT_IN = 1
         private const val DISPLAY_TYPE_EXTERNAL = 2
 

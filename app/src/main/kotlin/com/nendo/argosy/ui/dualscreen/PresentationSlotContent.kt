@@ -117,7 +117,13 @@ private fun PresentationSlotBody(
 ) {
     val density = LocalDensity.current
     val manager = com.nendo.argosy.DualScreenManagerHolder.instance
-    val hints = manager?.controlHints?.collectAsState()?.value.orEmpty()
+    // The button-hint bar belongs to the Classic home; Cocoon's top screen has none.
+    val classicHome = remember(manager) {
+        manager?.preferencesRepository?.userPreferences
+            ?.map { it.launcherUiMode == com.nendo.argosy.data.preferences.LauncherUiMode.CLASSIC }
+            ?.distinctUntilChanged()
+    }?.collectAsState(false)?.value ?: false
+    val hints = if (classicHome) manager?.controlHints?.collectAsState()?.value.orEmpty() else emptyList()
     val gameDisplayId = manager?.emulatorDisplay?.collectAsState()?.value
     val displayId = ContextCompat.getDisplayOrDefault(LocalContext.current).displayId
     var measuredHintsHeight by remember { mutableStateOf(0.dp) }

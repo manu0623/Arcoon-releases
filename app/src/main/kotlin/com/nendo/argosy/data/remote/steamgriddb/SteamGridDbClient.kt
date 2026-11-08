@@ -29,6 +29,14 @@ data class SteamGridDbSearch(
     }
 }
 
+/** SteamGridDB's art kinds and their API paths. */
+enum class SteamGridDbAsset(val path: String) {
+    GRID("grids"),
+    HERO("heroes"),
+    LOGO("logos"),
+    ICON("icons")
+}
+
 class SteamGridDbRateLimited(val retryAfterMillis: Long) :
     IllegalStateException("SteamGridDB rate limited for ${retryAfterMillis}ms")
 
@@ -53,13 +61,30 @@ class SteamGridDbClient @Inject constructor() {
     private var lastRequestAtMillis = 0L
 
     suspend fun searchGrids(term: String, apiKey: String): Result<SteamGridDbSearch> =
+        search(term, apiKey, SteamGridDbAsset.GRID)
+
+    /**
+     * Square grids only (512x512 and 1024x1024), asked for by size: an unfiltered grid list can
+     * fill its first page with tall covers and leave the square ones out.
+     */
+    suspend fun searchSquareGrids(term: String, apiKey: String): Result<SteamGridDbSearch> =
+        search(term, apiKey, SteamGridDbAsset.GRID, dimensions = SQUARE_DIMENSIONS)
+
+    /** Any kind of art for [term]: grids (covers), heroes (backgrounds), logos or icons. */
+    suspend fun search(
+        term: String,
+        apiKey: String,
+        asset: SteamGridDbAsset,
+        dimensions: String? = null
+    ): Result<SteamGridDbSearch> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val trimmed = term.trim()
                 if (trimmed.isEmpty() || apiKey.isBlank()) return@runCatching SteamGridDbSearch.EMPTY
                 val match = autocomplete(trimmed, apiKey) ?: return@runCatching SteamGridDbSearch.EMPTY
+                val sizes = dimensions?.let { "&dimensions=$it" }.orEmpty()
                 val grids = parseGrids(
-                    get("$BASE_URL/grids/game/${match.id}?types=static&nsfw=false&humor=false", apiKey)
+                    get("$BASE_URL/${asset.path}/game/${match.id}?types=static&nsfw=false&humor=false$sizes", apiKey)
                 )
                 SteamGridDbSearch(match.name, grids)
             }
@@ -131,6 +156,7 @@ class SteamGridDbClient @Inject constructor() {
 
     private companion object {
         const val BASE_URL = "https://www.steamgriddb.com/api/v2"
+        const val SQUARE_DIMENSIONS = "512x512,1024x1024"
         const val AUTHORIZATION = "Authorization"
         const val ACCEPT = "Accept"
         const val RETRY_AFTER = "Retry-After"

@@ -59,6 +59,7 @@ private enum class PersonalRow(val labelRes: Int) {
     HERO_STYLE(R.string.cocoon_personal_hero),
     HERO_SIZE(R.string.cocoon_personal_hero_size),
     NOW_PLAYING(R.string.cocoon_personal_now_playing),
+    DETAILS_LAYOUT(R.string.cocoon_personal_details_layout),
     DOCK_POSITION(R.string.cocoon_personal_dock_position),
     DOCK_BACKGROUND(R.string.cocoon_personal_dock_background),
     DOCK_AUTOHIDE(R.string.cocoon_personal_dock_autohide),
@@ -135,6 +136,10 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
             PersonalRow.NOW_PLAYING -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.setNowPlaying(
                 context,
                 cycle(com.nendo.argosy.ui.cocoon.CocoonNowPlayingStyle.entries.toList(), com.nendo.argosy.ui.cocoon.CocoonHomeStore.nowPlaying, delta)
+            )
+            PersonalRow.DETAILS_LAYOUT -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.setDetailsLayout(
+                context,
+                cycle(listOf("CLASSIC", "TABS", "SIDE", "TILES", "SPLIT"), com.nendo.argosy.ui.cocoon.CocoonHomeStore.detailsLayout, delta)
             )
             PersonalRow.DOCK_POSITION -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.let { it.setDock(context, bottom = !it.dockBottom) }
             PersonalRow.DOCK_BACKGROUND -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.let { it.setDock(context, background = !it.dockBackground) }
@@ -232,6 +237,15 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
             false -> context.getString(R.string.cocoon_surface_solid)
         }
         PersonalRow.NOW_PLAYING -> context.getString(com.nendo.argosy.ui.cocoon.CocoonHomeStore.nowPlaying.labelRes)
+        PersonalRow.DETAILS_LAYOUT -> context.getString(
+            when (com.nendo.argosy.ui.cocoon.CocoonHomeStore.detailsLayout) {
+                "TABS" -> R.string.cocoon_details_layout_tabs
+                "SIDE" -> R.string.cocoon_details_layout_side
+                "TILES" -> R.string.cocoon_details_layout_tiles
+                "SPLIT" -> R.string.cocoon_details_layout_split
+                else -> R.string.cocoon_details_layout_classic
+            }
+        )
         PersonalRow.ICON_STYLE -> context.getString(
             when (com.nendo.argosy.ui.cocoon.CocoonHomeStore.iconStyle) {
                 "ACCENT" -> R.string.cocoon_icon_accent

@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui.components
 
+import androidx.compose.ui.graphics.graphicsLayer
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -315,11 +316,15 @@ private fun ArtworkScrapeIndicator(color: Color, modifier: Modifier = Modifier) 
         ),
         label = "artworkScrapeAlpha"
     )
+    // The pulse is applied while drawing (graphicsLayer), so it repaints the icon instead of
+    // recomposing it on every frame for as long as the artwork search runs.
     Icon(
         imageVector = Icons.Outlined.Image,
         contentDescription = null,
-        tint = color.copy(alpha = alpha),
-        modifier = modifier.size(Dimens.iconSm)
+        tint = color,
+        modifier = modifier
+            .size(Dimens.iconSm)
+            .graphicsLayer { this.alpha = alpha }
     )
 }
 
