@@ -94,9 +94,35 @@ object CocoonThemeEngine {
         listeners.forEach { runCatching { it(theme) } }
     }
 
+    /**
+     * Answers of [folderArt], remembered: finding a file means listing folders on storage, which
+     * is slow enough to stall a frame when the top screen asks for a folder's logo as it shows it.
+     * Forgotten whenever the theme or the enabled packs change.
+     */
+    private val folderArtCache = java.util.concurrent.ConcurrentHashMap<String, java.util.Optional<File>>()
+    @Volatile private var folderArtRoots: List<File> = emptyList()
+
     /** Folder art from asset packs or the theme: [part] is icon, hero or logo. */
     fun folderArt(glyph: com.nendo.argosy.ui.cocoon.CocoonGlyph, platformSlug: String?, part: String): File? {
-        for (root in artRoots()) {
+        val roots = artRoots()
+        if (roots != folderArtRoots) {
+            folderArtCache.clear()
+            folderArtRoots = roots
+        }
+        val key = "${glyph.name}|${platformSlug.orEmpty()}|${part.lowercase()}"
+        folderArtCache[key]?.let { return it.orElse(null) }
+        val found = findFolderArt(roots, glyph, platformSlug, part)
+        folderArtCache[key] = java.util.Optional.ofNullable(found)
+        return found
+    }
+
+    private fun findFolderArt(
+        roots: List<File>,
+        glyph: com.nendo.argosy.ui.cocoon.CocoonGlyph,
+        platformSlug: String?,
+        part: String,
+    ): File? {
+        for (root in roots) {
             val folders = File(root, "smart_folders")
             if (!folders.isDirectory) continue
             val dir = when (glyph) {
@@ -190,6 +216,7 @@ object CocoonThemeEngine {
         packs.value.filter { it.enabled }.map { it.dir } + listOfNotNull(active.value?.dir)
 
     fun refresh() {
+        folderArtCache.clear()
         val enabled = prefs()?.getStringSet("packs_enabled", emptySet()).orEmpty()
         packs.value = appContext?.let { packsRoot(it) }?.listFiles().orEmpty().toList()
             .filter { it.isDirectory }

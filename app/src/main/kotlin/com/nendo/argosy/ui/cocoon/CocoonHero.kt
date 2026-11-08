@@ -40,24 +40,27 @@ fun CocoonHeroScene(slot: PresentationSlot.CocoonHero) {
         CocoonWallpaper()
         BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             val iconSize = (maxHeight * 0.5f).coerceAtMost(320.dp)
-            // Cocoon's "reverse zoom": the old folder fades out fast, the new one settles in from
-            // slightly larger while fading in.
+            // As Cocoon does it (measured from a recording): the old folder dims away quickly, then
+            // the new one comes up out of the dark from slightly larger and settles, about a
+            // quarter of a second in all, with no sideways slide.
             androidx.compose.animation.AnimatedContent(
                 targetState = slot,
                 transitionSpec = {
                     (androidx.compose.animation.fadeIn(
                         androidx.compose.animation.core.tween(
-                            230,
+                            HERO_IN_MS,
+                            delayMillis = HERO_IN_DELAY_MS,
                             easing = com.nendo.argosy.ui.theme.Motion.argosyEase
                         )
-                    ) + androidx.compose.animation.slideInHorizontally(
+                    ) + androidx.compose.animation.scaleIn(
                         androidx.compose.animation.core.tween(
-                            230,
+                            HERO_IN_MS + HERO_IN_DELAY_MS,
                             easing = com.nendo.argosy.ui.theme.Motion.argosyEase
-                        )
-                    ) { width -> -width / 12 }) togetherWith androidx.compose.animation.fadeOut(
-                        androidx.compose.animation.core.tween(100)
-                    )
+                        ),
+                        initialScale = HERO_IN_SCALE
+                    )) togetherWith androidx.compose.animation.fadeOut(
+                        androidx.compose.animation.core.tween(HERO_OUT_MS)
+                    ) using null
                 },
                 contentAlignment = Alignment.Center,
                 label = "cocoon-hero"
@@ -100,8 +103,13 @@ fun CocoonHeroScene(slot: PresentationSlot.CocoonHero) {
                         )
                     }
                     if (logo != null) {
+                        // The size the board warms every folder's logo at, so this comes from memory.
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        val logoRequest = remember(logo) {
+                            coil.request.ImageRequest.Builder(context).data(logo).size(1024).build()
+                        }
                         coil.compose.AsyncImage(
-                            model = logo,
+                            model = logoRequest,
                             contentDescription = null,
                             contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                             modifier = Modifier.size(width = iconSize * 1.6f, height = iconSize * 0.8f)
@@ -193,3 +201,8 @@ fun CocoonHeroCard(
         }
     }
 }
+
+private const val HERO_OUT_MS = 110
+private const val HERO_IN_DELAY_MS = 40
+private const val HERO_IN_MS = 190
+private const val HERO_IN_SCALE = 1.06f

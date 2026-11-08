@@ -1,0 +1,28 @@
+# Arcoon startup profile: the code Android compiles ahead of time when the app is installed, so a
+# release build runs at full speed from the first launch instead of after days of use (needs no
+# system access, unlike the optimizer's full compile). Debug builds ignore this file.
+#
+# The rules cover the launcher's own screens and what they lean on at start; libraries such as
+# Compose ship their own profiles. Names are rewritten for shrunk (stable) builds automatically.
+HSPLcom/nendo/argosy/*;->**(**)**
+Lcom/nendo/argosy/*;
+HSPLcom/nendo/argosy/ui/**;->**(**)**
+Lcom/nendo/argosy/ui/**;
+HSPLcom/nendo/argosy/core/**;->**(**)**
+Lcom/nendo/argosy/core/**;
+HSPLcom/nendo/argosy/util/**;->**(**)**
+Lcom/nendo/argosy/util/**;
+HSPLcom/nendo/argosy/hardware/**;->**(**)**
+Lcom/nendo/argosy/hardware/**;
+HSPLcom/nendo/argosy/data/cache/**;->**(**)**
+Lcom/nendo/argosy/data/cache/**;
+HSPLcom/nendo/argosy/data/repository/**;->**(**)**
+Lcom/nendo/argosy/data/repository/**;
+HSPLcom/nendo/argosy/data/local/**;->**(**)**
+Lcom/nendo/argosy/data/local/**;
+HSPLcom/nendo/argosy/data/model/**;->**(**)**
+Lcom/nendo/argosy/data/model/**;
+HSPLcom/nendo/argosy/domain/**;->**(**)**
+Lcom/nendo/argosy/domain/**;
+HSPLcoil/**;->**(**)**
+Lcoil/**;

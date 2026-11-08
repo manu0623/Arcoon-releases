@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -77,6 +78,19 @@ import com.nendo.argosy.ui.input.ModalInputEffect
 import com.nendo.argosy.ui.navigation.Screen
 import com.nendo.argosy.ui.screens.gamedetail.components.AchievementListOverlay
 import com.nendo.argosy.ui.screens.gamedetail.components.AchievementsSection
+import com.nendo.argosy.ui.screens.gamedetail.components.GameDetailTabsBar
+import com.nendo.argosy.ui.screens.gamedetail.components.GameDetailSideMenu
+import com.nendo.argosy.ui.screens.gamedetail.components.GameDetailTilesBar
+import com.nendo.argosy.ui.screens.gamedetail.components.GameDetailSplitPanel
+import com.nendo.argosy.ui.screens.gamedetail.components.GameDetailTabsOverview
+import com.nendo.argosy.ui.screens.gamedetail.components.splitNeighbor
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import com.nendo.argosy.ui.screens.gamedetail.components.isTabAction
+import com.nendo.argosy.ui.cocoon.CocoonHomeStore
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.SideEffect
 import com.nendo.argosy.ui.screens.gamedetail.components.ExpandedHeader
 import com.nendo.argosy.ui.screens.gamedetail.components.StickyCollapsedHeader
 import com.nendo.argosy.ui.screens.gamedetail.components.DescriptionSection
@@ -214,11 +228,63 @@ fun GameDetailScreen(
     }
 
     val descriptionEndSlack = with(LocalDensity.current) { Dimens.spacingXl.roundToPx() }
+
+    // Layout A ("Header & tabs"): the tab that stays open while focus is up on the actions row.
+    val lastTabState = remember { mutableStateOf<MenuItem>(MenuItem.Details) }
+    fun tabsMode() = CocoonHomeStore.detailsLayout == "TABS" || CocoonHomeStore.detailsLayout == "TILES"
+    fun sideMode() = CocoonHomeStore.detailsLayout == "SIDE"
+    fun splitMode() = CocoonHomeStore.detailsLayout == "SPLIT" &&
+        DualScreenManagerHolder.instance?.isCompanionActive?.value == true
+    fun moveSplit(dRow: Int, dCol: Int) {
+        val s = viewModel.uiState.value
+        val here = menuLayout.itemAtFocusIndex(s.menuFocusIndex, s.menuLayoutState)
+        val next = splitNeighbor(s.menuLayoutState, here, dRow, dCol)
+        val index = menuLayout.focusIndexOf(next, s.menuLayoutState)
+        if (index >= 0) viewModel.setMenuFocusIndex(index)
+    }
+    fun currentItem(): MenuItem? {
+        val s = viewModel.uiState.value
+        return menuLayout.itemAtFocusIndex(s.menuFocusIndex, s.menuLayoutState)
+    }
+    fun focusItem(item: MenuItem) {
+        val s = viewModel.uiState.value
+        val index = menuLayout.focusIndexOf(item, s.menuLayoutState)
+        if (index >= 0) viewModel.setMenuFocusIndex(index)
+        else viewModel.setMenuFocusIndex(menuLayout.focusIndexOf(MenuItem.Details, s.menuLayoutState))
+    }
+    fun switchTab(delta: Int) {
+        val s = viewModel.uiState.value
+        val tabs = menuLayout.focusableItems(s.menuLayoutState).filter { !it.isTabAction() }
+        if (tabs.isEmpty()) return
+        val here = currentItem()?.takeIf { !it.isTabAction() } ?: lastTabState.value
+        val index = tabs.indexOf(here).coerceAtLeast(0)
+        val next = tabs[(index + delta).coerceIn(0, tabs.size - 1)]
+        lastTabState.value = next
+        focusItem(next)
+    }
+    fun moveAction(delta: Int) {
+        val s = viewModel.uiState.value
+        val target = menuLayout.itemAtFocusIndex(s.menuFocusIndex + delta, s.menuLayoutState)
+        if (target != null && target.isTabAction()) viewModel.moveMenuFocus(delta)
+    }
+    fun scrollTabBy(direction: Int): Boolean {
+        val canMove = if (direction < 0) scrollState.value > 0 else scrollState.value < scrollState.maxValue
+        if (!canMove) return false
+        coroutineScope.launch { scrollState.animateScrollBy(scrollState.viewportSize * 0.6f * direction) }
+        return true
+    }
     val inputHandler = remember(onBack) {
         viewModel.createInputHandler(
             onBack = onBack,
             onNavigateToPlatformSettings = onNavigateToPlatformSettings,
-            onSnapUp = {
+            onSnapUp = snapUp@{
+                if (splitMode()) { moveSplit(-1, 0); return@snapUp true }
+                if (sideMode()) { viewModel.moveMenuFocus(-1); return@snapUp true }
+                if (tabsMode()) {
+                    val item = currentItem()
+                    if (item != null && !item.isTabAction() && !scrollTabBy(-1)) focusItem(MenuItem.Play)
+                    return@snapUp true
+                }
                 val current = viewModel.uiState.value
                 val onDescription = menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState) == MenuItem.Description
                 val target = descriptionScrollTarget(
@@ -235,7 +301,14 @@ fun GameDetailScreen(
                 }
                 true
             },
-            onSnapDown = {
+            onSnapDown = snapDown@{
+                if (splitMode()) { moveSplit(1, 0); return@snapDown true }
+                if (sideMode()) { viewModel.moveMenuFocus(1); return@snapDown true }
+                if (tabsMode()) {
+                    val item = currentItem()
+                    if (item == null || item.isTabAction()) focusItem(lastTabState.value) else scrollTabBy(1)
+                    return@snapDown true
+                }
                 val current = viewModel.uiState.value
                 val onDescription = menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState) == MenuItem.Description
                 val target = descriptionScrollTarget(
@@ -262,7 +335,15 @@ fun GameDetailScreen(
                 }
                 true
             },
-            onSectionLeft = {
+            onSectionLeft = sectionLeft@{
+                if (splitMode()) { moveSplit(0, -1); return@sectionLeft }
+                if (tabsMode()) {
+                    when (currentItem()) {
+                        null -> return@sectionLeft
+                        MenuItem.Details, MenuItem.Description, MenuItem.Reviews -> { switchTab(-1); return@sectionLeft }
+                        else -> if (currentItem()!!.isTabAction()) { moveAction(-1); return@sectionLeft }
+                    }
+                }
                 val current = viewModel.uiState.value
                 when (menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState)) {
                     MenuItem.Screenshots -> if (screenshotCount > 0) {
@@ -280,7 +361,15 @@ fun GameDetailScreen(
                     else -> {}
                 }
             },
-            onSectionRight = {
+            onSectionRight = sectionRight@{
+                if (splitMode()) { moveSplit(0, 1); return@sectionRight }
+                if (tabsMode()) {
+                    when (currentItem()) {
+                        null -> return@sectionRight
+                        MenuItem.Details, MenuItem.Description, MenuItem.Reviews -> { switchTab(1); return@sectionRight }
+                        else -> if (currentItem()!!.isTabAction()) { moveAction(1); return@sectionRight }
+                    }
+                }
                 val current = viewModel.uiState.value
                 when (menuLayout.itemAtFocusIndex(current.menuFocusIndex, current.menuLayoutState)) {
                     MenuItem.Screenshots -> if (screenshotCount > 0) {
@@ -298,8 +387,8 @@ fun GameDetailScreen(
                     else -> {}
                 }
             },
-            onPrevGame = { viewModel.navigateToPreviousGame() },
-            onNextGame = { viewModel.navigateToNextGame() },
+            onPrevGame = { if (tabsMode()) switchTab(-1) else viewModel.navigateToPreviousGame() },
+            onNextGame = { if (tabsMode()) switchTab(1) else viewModel.navigateToNextGame() },
             onNavigateToGame = onNavigateToGame,
             isInScreenshotsSection = {
                 val current = viewModel.uiState.value
@@ -371,12 +460,40 @@ fun GameDetailScreen(
     val documentReader by viewModel.documentReader.collectAsState()
     ModalInputEffect(active = documentReader != null, handler = viewModel.documentReaderInput)
 
+    // The page eases in (a short fade with a slight rise) once its content has loaded, instead of
+    // the placeholder snapping to the full page. Coming back to a page already loaded shows it
+    // as it is.
+    val contentReady = !uiState.isLoading && game != null
+    val contentIn = remember(gameId) {
+        androidx.compose.animation.core.Animatable(if (contentReady) 1f else 0f)
+    }
+    LaunchedEffect(gameId, contentReady) {
+        if (contentReady && contentIn.value < 1f) {
+            contentIn.animateTo(
+                1f,
+                androidx.compose.animation.core.tween(260, easing = com.nendo.argosy.ui.theme.Motion.argosyEase)
+            )
+        }
+    }
+    val contentRise = with(androidx.compose.ui.platform.LocalDensity.current) { 14.dp.toPx() }
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (cocoonSheet != null && (uiState.isLoading || game == null)) {
             CocoonSheetBackdrop()
         } else if (uiState.isLoading || game == null) {
             GameDetailSkeleton()
-        } else {
+        } else Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (cocoonSheet != null) Modifier
+                    else Modifier.graphicsLayer {
+                        val p = contentIn.value
+                        alpha = p
+                        translationY = (1f - p) * contentRise
+                    }
+                )
+        ) {
             GameDetailContent(
                 game = game,
                 uiState = uiState,
@@ -397,7 +514,8 @@ fun GameDetailScreen(
                 onRelatedPositioned = { relatedTopY = it },
                 onBack = onBack,
                 onNavigateToPlatformSettings = onNavigateToPlatformSettings,
-                onNavigateToGame = onNavigateToGame
+                onNavigateToGame = onNavigateToGame,
+                lastTabState = lastTabState
             )
         }
         documentReader?.let { reader ->
@@ -432,9 +550,15 @@ private fun GameDetailContent(
     onRelatedPositioned: (Int) -> Unit,
     onBack: () -> Unit,
     onNavigateToPlatformSettings: (Long) -> Unit,
-    onNavigateToGame: (Long) -> Unit
+    onNavigateToGame: (Long) -> Unit,
+    lastTabState: MutableState<MenuItem>
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val tabsMode = CocoonHomeStore.detailsLayout == "TABS"
+    val sideMode = CocoonHomeStore.detailsLayout == "SIDE"
+    val tilesMode = CocoonHomeStore.detailsLayout == "TILES"
+    val singleSection = tabsMode || sideMode || tilesMode
+    val splitLayout = CocoonHomeStore.detailsLayout == "SPLIT"
     val pickerState by viewModel.pickerModalDelegate.state.collectAsState()
     val downloadProgressState = viewModel.downloadProgress.collectAsState()
     val isAnySyncing = uiState.isSyncing || uiState.syncOverlayState != null
@@ -464,9 +588,31 @@ private fun GameDetailContent(
     val headerScrollThreshold = 200
     val heroOnOtherScreen = DualScreenManagerHolder.instance
         ?.isCompanionActive?.collectAsState()?.value == true
-    val isHeaderCollapsed = !heroOnOtherScreen && scrollState.value > headerScrollThreshold
+    val isHeaderCollapsed = !singleSection && !heroOnOtherScreen && scrollState.value > headerScrollThreshold
 
     val menuLayoutState = uiState.menuLayoutState
+    val splitMode = splitLayout && heroOnOtherScreen
+    if (splitMode) {
+        // Split screens: the top screen's info panel (description, facts, screenshots) stays open.
+        DisposableEffect(Unit) {
+            val info = com.nendo.argosy.ui.cocoon.CocoonHeroInfo
+            val wasVisible = info.visible.value
+            val wasJourney = info.journey.value
+            info.journey.value = false
+            info.visible.value = true
+            onDispose {
+                info.visible.value = wasVisible
+                info.journey.value = wasJourney
+            }
+        }
+        LaunchedEffect(Unit) {
+            val item = menuLayout.itemAtFocusIndex(viewModel.uiState.value.menuFocusIndex, menuLayoutState)
+            if (item == null || !item.isTabAction() && item != MenuItem.Achievements && item != MenuItem.Screenshots &&
+                item != MenuItem.Reviews && item != MenuItem.Documents) {
+                viewModel.setMenuFocusIndex(0)
+            }
+        }
+    }
 
     val menuDisplayState = GameDetailMenuState(
         focusedIndex = uiState.menuFocusIndex,
@@ -483,7 +629,12 @@ private fun GameDetailContent(
 
     var programmaticScrollInFlight by remember { mutableStateOf(false) }
 
+    val activeTab = if (focusedItem != null && !focusedItem.isTabAction()) focusedItem else lastTabState.value
+    SideEffect { if (singleSection && activeTab != lastTabState.value) lastTabState.value = activeTab }
+    LaunchedEffect(activeTab, singleSection) { if (singleSection) scrollState.scrollTo(0) }
+
     LaunchedEffect(uiState.menuFocusIndex) {
+        if (singleSection) return@LaunchedEffect
         try {
             programmaticScrollInFlight = true
             when (focusedItem) {
@@ -507,6 +658,7 @@ private fun GameDetailContent(
             .distinctUntilChanged()
             .collect { scrollY ->
                 if (programmaticScrollInFlight) return@collect
+                if (CocoonHomeStore.detailsLayout in listOf("TABS", "SIDE", "TILES", "SPLIT")) return@collect
                 val currentFocus = menuLayout.itemAtFocusIndex(uiState.menuFocusIndex, menuLayoutState)
                 if (currentFocus !in listOf(MenuItem.Details, MenuItem.Description, MenuItem.Screenshots, MenuItem.Achievements, MenuItem.RelatedGames)) {
                     return@collect
@@ -587,8 +739,42 @@ private fun GameDetailContent(
                 val displayAspectRatio = configuration.screenWidthDp.toFloat() / configuration.screenHeightDp
                 val isCompactMenu = displayAspectRatio <= 1.3f
 
-                Row(modifier = Modifier.fillMaxSize()) {
-                    Box(
+                if (splitMode) GameDetailSplitPanel(
+                    game = game,
+                    layoutState = menuLayoutState,
+                    displayState = menuDisplayState,
+                    downloadProgress = downloadProgressState,
+                    focusedItem = focusedItem,
+                    onActivate = { item ->
+                        val index = menuLayout.focusIndexOf(item, menuLayoutState)
+                        if (index >= 0) {
+                            viewModel.setMenuFocusIndex(index)
+                            viewModel.executeMenuAction()
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                ) else Row(modifier = Modifier.fillMaxSize()) {
+                    if (sideMode) GameDetailSideMenu(
+                        game = game,
+                        layoutState = menuLayoutState,
+                        displayState = menuDisplayState,
+                        downloadProgress = downloadProgressState,
+                        focusedItem = focusedItem,
+                        activeTab = activeTab,
+                        onItemClick = { item ->
+                            when (item) {
+                                MenuItem.Play -> viewModel.primaryAction()
+                                MenuItem.Saves -> viewModel.syncSavesNow()
+                                MenuItem.Favorite -> viewModel.toggleFavorite()
+                                MenuItem.Privacy -> viewModel.togglePrivacy()
+                                MenuItem.PerGameSettings -> viewModel.showPerGameSettings()
+                                MenuItem.Options -> viewModel.toggleMoreOptions()
+                                else -> {}
+                            }
+                        },
+                        onFocusChange = viewModel::setMenuFocusIndex,
+                        modifier = Modifier.fillMaxWidth(0.34f)
+                    ) else if (!tabsMode && !tilesMode) Box(
                         modifier = Modifier
                             .then(
                                 if (isCompactMenu) Modifier.width(56.dp)
@@ -651,20 +837,84 @@ private fun GameDetailContent(
                     }
 
                     Column(modifier = Modifier.weight(1f)) {
+                        if (tabsMode) {
+                            GameDetailTabsBar(
+                                game = game,
+                                layoutState = menuLayoutState,
+                                displayState = menuDisplayState,
+                                downloadProgress = downloadProgressState,
+                                focusedItem = focusedItem,
+                                activeTab = activeTab,
+                                onItemClick = { item ->
+                                    when (item) {
+                                        MenuItem.Play -> viewModel.primaryAction()
+                                        MenuItem.Saves -> viewModel.syncSavesNow()
+                                        MenuItem.Favorite -> viewModel.toggleFavorite()
+                                        MenuItem.Privacy -> viewModel.togglePrivacy()
+                                        MenuItem.PerGameSettings -> viewModel.showPerGameSettings()
+                                        MenuItem.Options -> viewModel.toggleMoreOptions()
+                                        else -> {}
+                                    }
+                                },
+                                onFocusChange = viewModel::setMenuFocusIndex,
+                                modifier = Modifier.padding(start = Dimens.spacingLg, end = Dimens.spacingLg, top = Dimens.spacingMd)
+                            )
+                        } else if (tilesMode) {
+                            GameDetailTilesBar(
+                                game = game,
+                                layoutState = menuLayoutState,
+                                displayState = menuDisplayState,
+                                downloadProgress = downloadProgressState,
+                                focusedItem = focusedItem,
+                                activeTab = activeTab,
+                                onItemClick = { item ->
+                                    when (item) {
+                                        MenuItem.Play -> viewModel.primaryAction()
+                                        MenuItem.Saves -> viewModel.syncSavesNow()
+                                        MenuItem.Favorite -> viewModel.toggleFavorite()
+                                        MenuItem.Privacy -> viewModel.togglePrivacy()
+                                        MenuItem.PerGameSettings -> viewModel.showPerGameSettings()
+                                        MenuItem.Options -> viewModel.toggleMoreOptions()
+                                        else -> {}
+                                    }
+                                },
+                                onFocusChange = viewModel::setMenuFocusIndex,
+                                modifier = Modifier.padding(start = Dimens.spacingLg, end = Dimens.spacingLg, top = Dimens.spacingMd)
+                            )
+                        }
 
-                        Box(modifier = Modifier.weight(1f)) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .then(
+                                    if (tilesMode) Modifier
+                                        .padding(start = Dimens.spacingLg, end = Dimens.spacingLg, top = Dimens.spacingMd, bottom = Dimens.spacingMd)
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(Color.White.copy(alpha = 0.07f))
+                                        .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(18.dp))
+                                    else Modifier
+                                )
+                        ) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .verticalScroll(scrollState)
                                     .padding(start = Dimens.spacingMd, top = Dimens.spacingXl, end = Dimens.spacingXl, bottom = Dimens.spacingXl)
                             ) {
-                                if (!heroOnOtherScreen) {
+                                if (singleSection) {
+                                    if (activeTab == MenuItem.Details && tabsMode) {
+                                        GameDetailTabsOverview(game = game, onScreenshotTap = { viewModel.openScreenshotViewer(it) })
+                                        Spacer(modifier = Modifier.height(Dimens.spacingLg))
+                                    } else if (activeTab == MenuItem.Details) {
+                                        ExpandedHeader(game = game, friends = uiState.friendsActivity)
+                                        Spacer(modifier = Modifier.height(Dimens.spacingXl))
+                                    }
+                                } else if (!heroOnOtherScreen) {
                                     ExpandedHeader(game = game, friends = uiState.friendsActivity)
                                     Spacer(modifier = Modifier.height(Dimens.spacingXl))
                                 }
 
-                            if (!game.description.isNullOrBlank()) {
+                            if (!game.description.isNullOrBlank() && (!singleSection || activeTab == MenuItem.Description)) {
                                 DescriptionSection(
                                     description = game.description,
                                     onPositioned = { y, height ->
@@ -675,7 +925,7 @@ private fun GameDetailContent(
                                 Spacer(modifier = Modifier.height(Dimens.spacingLg))
                             }
 
-                            if (game.screenshots.isNotEmpty()) {
+                            if (game.screenshots.isNotEmpty() && (!singleSection || activeTab == MenuItem.Screenshots)) {
                                 ScreenshotsSection(
                                     screenshots = game.screenshots,
                                     listState = screenshotListState,
@@ -694,7 +944,7 @@ private fun GameDetailContent(
                                 Spacer(modifier = Modifier.height(Dimens.spacingLg))
                             }
 
-                            if (uiState.documents.isNotEmpty()) {
+                            if (uiState.documents.isNotEmpty() && (!singleSection || activeTab == MenuItem.Documents)) {
                                 com.nendo.argosy.ui.screens.gamedetail.components.DocumentsSection(
                                     documents = uiState.documents,
                                     focusedIndex = uiState.documentFocusIndex,
@@ -710,7 +960,7 @@ private fun GameDetailContent(
                                 Spacer(modifier = Modifier.height(Dimens.spacingLg))
                             }
 
-                            if (uiState.hasSocialAccount) {
+                            if (uiState.hasSocialAccount && (!singleSection || activeTab == MenuItem.Reviews)) {
                                 ReviewSummarySection(
                                     summary = uiState.reviewSummary,
                                     isActive = focusedItem == MenuItem.Reviews,
@@ -724,7 +974,7 @@ private fun GameDetailContent(
                                 Spacer(modifier = Modifier.height(Dimens.spacingLg))
                             }
 
-                            if (game.achievements.isNotEmpty()) {
+                            if (game.achievements.isNotEmpty() && (!singleSection || activeTab == MenuItem.Achievements)) {
                                 AchievementsSection(
                                     achievements = game.achievements,
                                     listState = achievementListState,
@@ -737,7 +987,7 @@ private fun GameDetailContent(
                                 Spacer(modifier = Modifier.height(Dimens.spacingLg))
                             }
 
-                            if (uiState.relatedGames.isNotEmpty()) {
+                            if (uiState.relatedGames.isNotEmpty() && (!singleSection || activeTab == MenuItem.RelatedGames)) {
                                 RelatedGamesSection(
                                     games = uiState.relatedGames,
                                     listState = relatedListState,

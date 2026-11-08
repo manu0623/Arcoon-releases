@@ -54,7 +54,9 @@ fun Modifier.cocoonBrackets(
     // Only the surface underneath the panel goes dark: the panel window still needs its ring,
     // because the pad is driving that menu and the ring is where the focus is.
     val inPanel = com.nendo.argosy.ui.quickpanel.LocalQuickPanelSurface.current
-    val lit = focused && !(panelOpen.value && !inPanel) &&
+    // A menu that is closing has no highlight any more: the cursor leaves it at once instead of
+    // waiting on its item while the menu fades out.
+    val lit = focused && !LocalCocoonCursorSuppressed.current && !(panelOpen.value && !inPanel) &&
         com.nendo.argosy.ui.cocoon.cocoonPopulateLetsCursorShow()
     val cursor = LocalCocoonCursor.current
     if (cursor != null && cursor.view === androidx.compose.ui.platform.LocalView.current) {
@@ -223,6 +225,9 @@ class CocoonCursor {
 
 val LocalCocoonCursor = androidx.compose.runtime.staticCompositionLocalOf<CocoonCursor?> { null }
 
+/** True inside a menu that is closing (or closed but still drawn): its items draw no cursor. */
+val LocalCocoonCursorSuppressed = androidx.compose.runtime.compositionLocalOf { false }
+
 private class TargetBounds {
     var rect: Rect? = null
 }
@@ -377,6 +382,12 @@ fun CocoonCursorHost(
  * jumped most of the way and only the end looked animated.
  */
 private const val GLIDE_SECONDS = 0.26f
+/**
+ * A move that comes while the last glide is still running (a held direction repeats every
+ * 60-80 ms) glides this fast instead, so the brackets keep up with the highlight rather than
+ * trailing further behind with every step.
+ */
+private const val QUICK_GLIDE_SECONDS = 0.07f
 /** A cursor entering a newly opened menu fresh fades in over this long. */
 private const val ENTRY_FADE_NANOS = 200_000_000L
 private val GLIDE_EASE = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
@@ -396,6 +407,8 @@ private class CursorFollower {
     private var startR = 0f
     private var startB = 0f
     private var elapsed = 1f
+    private var glideSeconds = GLIDE_SECONDS
+    private var lastMoveNanos = 0L
 
     val drawnKey: Any? get() = key
 
@@ -417,10 +430,16 @@ private class CursorFollower {
                 // Starts as a square at the item's left edge; only the right side travels.
                 growNext = false
                 startL = 0f; startT = 0f; startB = 0f
+                glideSeconds = GLIDE_SECONDS
                 startR = (goal.left + goal.height) - goal.right
                 gapL = 0f; gapT = 0f; gapB = 0f; gapR = startR
                 elapsed = 0f
             } else if (current != null) {
+                // moves closer together than one full glide are a held direction: keep up with it
+                val now = System.nanoTime()
+                val sinceLast = (now - lastMoveNanos) / 1e9f
+                lastMoveNanos = now
+                glideSeconds = if (sinceLast < GLIDE_SECONDS) QUICK_GLIDE_SECONDS else GLIDE_SECONDS
                 startL = current.left - goal.left
                 startT = current.top - goal.top
                 startR = current.right - goal.right
@@ -437,7 +456,7 @@ private class CursorFollower {
     /** Called once a frame; true while the cursor is still gliding (so it redraws). */
     fun decay(dt: Float): Boolean {
         if (elapsed >= 1f) return false
-        elapsed = (elapsed + dt / GLIDE_SECONDS).coerceAtMost(1f)
+        elapsed = (elapsed + dt / glideSeconds).coerceAtMost(1f)
         val remaining = 1f - GLIDE_EASE.transform(elapsed)
         gapL = startL * remaining; gapT = startT * remaining
         gapR = startR * remaining; gapB = startB * remaining

@@ -31,9 +31,12 @@ interface CocoonOptimizeEntryPoint {
     fun gameDao(): com.nendo.argosy.data.local.dao.GameDao
     fun imageCacheManager(): com.nendo.argosy.data.cache.ImageCacheManager
     fun database(): com.nendo.argosy.data.local.ALauncherDatabase
+    fun quickPanelOverlay(): com.nendo.argosy.ui.quickpanel.QuickPanelOverlay
 }
 
 enum class CocoonOptimizeStep(@StringRes val labelRes: Int, val weight: Float) {
+    /** One time: covers saved at the old smaller size are downloaded again, sharper. */
+    SHARPEN(R.string.cocoon_opt_sharpen, 1f),
     COVERS(R.string.cocoon_opt_covers, 6f),
     ICONS(R.string.cocoon_opt_icons, 1f),
     APPS(R.string.cocoon_opt_apps, 1f),
@@ -73,10 +76,34 @@ object CocoonOptimizer {
     private const val PREFS = "cocoon_optimize"
     /** Fewer covers than this left to prepare finish quietly, without the intro. */
     private const val INTRO_THRESHOLD = 25
+    private const val KEY_COVERS_SHARPENED = "covers_sharpened_512"
+    /** How many of the most recently played games get their background and logo warmed. */
+    private const val RECENT_ART_WARMUP = 8
+    /** The size the board decodes theme folder icons at (see CocoonFolderIcon). */
+    private const val FOLDER_ICON_PX = 320
+    /** The size the top screen asks for a folder's logo at (see CocoonHeroScene). */
+    private const val FOLDER_LOGO_PX = 1024
+    /** The size the top screen's full-screen folder pictures are decoded at (as the board's prefetch). */
+    private const val FOLDER_HERO_PX = 2048
+    /** How many folders get their full-screen top-screen picture decoded ahead (they are large). */
+    private const val FOLDER_HERO_WARMUP = 4
+    /** On an ordinary start, the quick menu is warmed this long after the optimizer check. */
+    private const val QUICK_PANEL_WARM_DELAY_MS = 2500L
+
+    /** Builds the R1 / L1 panel once, invisibly, so its first opening does not stall (main thread). */
+    private suspend fun prewarmQuickPanel(entry: CocoonOptimizeEntryPoint) {
+        runCatching {
+            kotlinx.coroutines.withContext(Dispatchers.Main) { entry.quickPanelOverlay().prewarm() }
+        }
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** The main screens' code, loaded ahead so opening them the first time doesn't stall. */
+    /**
+     * The main screens' code, loaded ahead so opening them the first time doesn't stall. Release
+     * builds keep these names (proguard-rules.pro, "Arcoon optimizer warm-up"), or the shrunk app
+     * would not find them and this step would silently do nothing.
+     */
     private val WARM_CLASSES = listOf(
         "com.nendo.argosy.ui.cocoon.CocoonHomeScreenKt",
         "com.nendo.argosy.ui.cocoon.CocoonHomeViewModel",
@@ -92,9 +119,29 @@ object CocoonOptimizer {
         "com.nendo.argosy.ui.screens.apps.AppsScreenKt",
         "com.nendo.argosy.ui.screens.search.SearchScreenKt",
         "com.nendo.argosy.ui.components.QuickSettingsPanelKt",
+        "com.nendo.argosy.ui.quickpanel.QuickPanelOverlay",
         "com.nendo.argosy.ui.components.GameCardKt",
         "com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationKt",
         "com.nendo.argosy.ui.cocoon.theme.CocoonThemePickerKt",
+        // the top screen, the game page, menus, the cursor and the shared drawing pieces
+        "com.nendo.argosy.ui.dualscreen.GameShowcaseKt",
+        "com.nendo.argosy.ui.dualscreen.PresentationSlotContentKt",
+        "com.nendo.argosy.ui.cocoon.CocoonGameHeroKt",
+        "com.nendo.argosy.ui.cocoon.CocoonHeroKt",
+        "com.nendo.argosy.ui.quickmenu.QuickMenuOverlayKt",
+        "com.nendo.argosy.ui.primitives.CocoonBracketsKt",
+        "com.nendo.argosy.ui.components.BoxArtFrameKt",
+        "com.nendo.argosy.ui.cocoon.CocoonFolderKt",
+        "com.nendo.argosy.ui.cocoon.CocoonFolderMenuKt",
+        "com.nendo.argosy.ui.cocoon.CocoonFoldersKt",
+        "com.nendo.argosy.ui.screens.gamedetail.components.GameDetailTabsKt",
+        "com.nendo.argosy.ui.screens.gamedetail.components.GameDetailSectionsKt",
+        "com.nendo.argosy.ui.common.DeferredBlurKt",
+        "com.nendo.argosy.ui.navigation.NavGraphKt",
+        "com.nendo.argosy.ui.ArgosyAppKt",
+        "com.nendo.argosy.ui.components.SystemStatusBarKt",
+        "coil.compose.AsyncImageKt",
+        "coil.compose.AsyncImagePainter",
     )
     private var job: Job? = null
     private val _state = MutableStateFlow(CocoonOptimizeState())
@@ -176,13 +223,21 @@ object CocoonOptimizer {
             prefs.getLong("compiled_for", 0L) != installStamp &&
             com.nendo.argosy.util.RootShell.isAvailable
         val newInstall = prefs.getLong("install", 0L) != installStamp
-        if (!force && pending.isEmpty() && !needCompile && !newInstall) {
-            // nothing to optimize: just have the dock and app icons ready, quietly
+        // One time after covers started downloading at 512 px: the older, smaller ones are fetched again.
+        val needSharpen = !prefs.getBoolean(KEY_COVERS_SHARPENED, false)
+        // 3DS banners are not part of this: drawing them takes minutes per game, so they are made
+        // in the background queue instead (see ImageCacheManager.render3dsBanners).
+        if (!force && pending.isEmpty() && !needCompile && !newInstall && !needSharpen) {
+            // nothing to optimize: just have the dock and app icons ready, quietly, and the quick
+            // menu built once out of sight a moment after start-up
             warmAppIcons(app)
+            delay(QUICK_PANEL_WARM_DELAY_MS)
+            prewarmQuickPanel(entry)
             return
         }
 
         val steps = buildList {
+            if (needSharpen) add(CocoonOptimizeStep.SHARPEN)
             if (pending.isNotEmpty() || force) add(CocoonOptimizeStep.COVERS)
             add(CocoonOptimizeStep.ICONS)
             add(CocoonOptimizeStep.APPS)
@@ -219,6 +274,15 @@ object CocoonOptimizer {
         fun finish(step: CocoonOptimizeStep) {
             _state.update { it.copy(done = it.done + step) }
             report(step, 1, 1)
+        }
+
+        // 0. Sharper covers (once): covers cut down to the old 400 px are queued to download again
+        // at full size. The downloads themselves run in the image cache's own background queue.
+        if (CocoonOptimizeStep.SHARPEN in steps) {
+            runCatching {
+                icm.refreshUndersizedCovers { done, total -> report(CocoonOptimizeStep.SHARPEN, done, total) }
+            }.onSuccess { prefs.edit().putBoolean(KEY_COVERS_SHARPENED, true).apply() }
+            finish(CocoonOptimizeStep.SHARPEN)
         }
 
         // 1. Covers, platform by platform; a platform's folder pops in on the top screen when its
@@ -259,22 +323,36 @@ object CocoonOptimizer {
             finish(CocoonOptimizeStep.COVERS)
         }
 
-        // 2. Folder art from the theme and icon packs, and the wallpaper.
+        // 2. Folder art from the theme and icon packs, and the wallpaper. Every folder the board
+        // can show (each platform in the library, the smart folders, Apps and Emulators): its
+        // board icon at the size the board draws it, and the logo the top screen shows, so the
+        // first highlight of each folder neither waits nor pops its logo in.
         run {
             val loader = coil.Coil.imageLoader(app)
-            val arts = platforms.mapNotNull { slug ->
-                runCatching {
-                    com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.folderArt(CocoonGlyph.PLATFORM, slug, "icon")
-                }.getOrNull()
+            val engine = com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine
+            val folders: List<Pair<CocoonGlyph, String?>> =
+                covers.map { it.first }.distinct().map { CocoonGlyph.PLATFORM to it } +
+                    CocoonSmartKind.entries.map { CocoonGlyph.SMART to it.name } +
+                    listOf(CocoonGlyph.APPS to null, CocoonGlyph.EMULATORS to null)
+            // (picture, size it is decoded at)
+            val arts = ArrayList<Pair<Any, Int>>()
+            // The folders with the most games (the first ones on the board) also get their
+            // full-screen top-screen picture decoded; the rest are only looked up, as they are large.
+            val heroWarm = platforms.take(FOLDER_HERO_WARMUP).toSet()
+            folders.forEach { (glyph, slug) ->
+                runCatching { engine.folderArt(glyph, slug, "icon") }.getOrNull()?.let { arts += it to FOLDER_ICON_PX }
+                runCatching { engine.folderArt(glyph, slug, "logo") }.getOrNull()?.let { arts += it to FOLDER_LOGO_PX }
+                val hero = runCatching { engine.folderArt(glyph, slug, "hero") }.getOrNull()
+                if (hero != null && glyph == CocoonGlyph.PLATFORM && slug in heroWarm) arts += hero to FOLDER_HERO_PX
             }
-            val wallpaper = com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.active.value?.wallpaperMain
+            val wallpaper = engine.active.value?.wallpaperMain
                 ?.takeIf { it.extension.lowercase() in setOf("png", "jpg", "jpeg", "webp", "gif") }
-            val all: List<Any> = arts + listOfNotNull(wallpaper)
-            all.forEachIndexed { i, data ->
+            if (wallpaper != null) arts += wallpaper to FOLDER_ICON_PX
+            arts.forEachIndexed { i, (data, px) ->
                 runCatching {
-                    loader.execute(coil.request.ImageRequest.Builder(app).data(data).size(320).build())
+                    loader.execute(coil.request.ImageRequest.Builder(app).data(data).size(px).build())
                 }
-                report(CocoonOptimizeStep.ICONS, i + 1, all.size)
+                report(CocoonOptimizeStep.ICONS, i + 1, arts.size)
             }
             finish(CocoonOptimizeStep.ICONS)
         }
@@ -300,10 +378,34 @@ object CocoonOptimizer {
                 val path = runCatching { icm.loadArt(id) }.getOrNull()?.coverPath
                 CocoonThumbs.model(app, path)?.let { data ->
                     runCatching {
-                        loader.execute(coil.request.ImageRequest.Builder(app).data(data).size(COCOON_COVER_DECODE_PX).build())
+                        // the same request a folder tile makes (size and trim), so the folder reuses it
+                        loader.execute(
+                            coil.request.ImageRequest.Builder(app)
+                                .data(data)
+                                .size(COCOON_COVER_DECODE_PX)
+                                .transformations(CocoonCoverTrim)
+                                .build()
+                        )
                     }
                 }
                 report(CocoonOptimizeStep.LIBRARY, i + 1, recent.size)
+            }
+            // The most recent games' backgrounds and logos too, decoded at full size, so the top
+            // screen and their game pages show them the first time without loading.
+            recent.take(RECENT_ART_WARMUP).forEach { id ->
+                val art = runCatching { icm.loadArt(id) }.getOrNull() ?: return@forEach
+                listOfNotNull(art.backgroundPath, art.logoPath)
+                    .filter { it.startsWith("/") && !it.endsWith(".webp") && !it.endsWith(".gif") }
+                    .forEach { path ->
+                        runCatching {
+                            loader.execute(
+                                coil.request.ImageRequest.Builder(app)
+                                    .data(File(path))
+                                    .size(coil.size.Size.ORIGINAL)
+                                    .build()
+                            )
+                        }
+                    }
             }
             finish(CocoonOptimizeStep.LIBRARY)
         }
@@ -318,6 +420,8 @@ object CocoonOptimizer {
                 runCatching { Class.forName(name, false, loader) }
                 report(CocoonOptimizeStep.WARMUP, i + 1, names.size + 1)
             }
+            // the R1 / L1 quick menu, built once out of sight
+            prewarmQuickPanel(entry)
             if (_state.value.introVisible) {
                 _state.update { it.copy(warmingUp = true) }
                 delay(1400)

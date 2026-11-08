@@ -1,5 +1,6 @@
 package com.nendo.argosy.data.media
 
+import kotlinx.coroutines.sync.withLock
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
@@ -24,8 +25,12 @@ private const val MEDIA_DIRECTORY = "extracted_media"
 private const val METADATA_FILENAME = "metadata.properties"
 private const val ICON_FILENAME = "icon.webp"
 private const val BANNER_CGFX_FILENAME = "banner.cgfx"
-private const val BANNER_IMAGE_FILENAME = "banner.png"
-private const val BANNER_GIF_FILENAME = "banner.gif"
+// "scene" names: banners drawn by the full CGFX scene renderer. Renders cached under the old
+// names came from the earlier compositor and are redrawn the next time the game is opened.
+private const val BANNER_COMMON_CGFX_FILENAME = "banner-common.cgfx"
+private const val BANNER_IMAGE_FILENAME = "banner-scene4.png"
+// Animated WebP (full colour and alpha); the constant keeps its old name.
+private const val BANNER_GIF_FILENAME = "banner-scene4.webp"
 private const val JINGLE_FILENAME = "jingle.wav"
 
 @Singleton
@@ -74,14 +79,53 @@ class EmbeddedMediaRepository @Inject constructor(
         return CachedEmbeddedMedia(iconFile, metadata?.title, metadata?.publisher)
     }
 
-    suspend fun extractAndCacheForGame(gameId: String, romPath: String): File? = withContext(Dispatchers.IO) {
+    /**
+     * Deletes temporary files left in the cache by work that never finished (the app was killed,
+     * or banner drawing was stopped part way). Finished files are written whole and renamed into
+     * place, so only these "*.tmp" leftovers can ever be incomplete.
+     */
+    fun cleanupUnfinished() {
+        runCatching {
+            mediaRoot.listFiles()?.forEach { dir ->
+                dir.listFiles()?.forEach { file -> if (file.name.endsWith(".tmp")) file.delete() }
+            }
+        }
+    }
+
+    /** One extraction per game at a time; a second caller waits and reuses the first one's result. */
+    private val gameLocks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+
+    /**
+     * Extracts and caches a game's icon, title and (with [renderBanner]) its 3DS banner. The game
+     * page and the background banner queue can ask for the same game at once; they used to draw
+     * the same banner twice side by side. Now the second waits, and skips whatever the first made.
+     */
+    suspend fun extractAndCacheForGame(
+        gameId: String,
+        romPath: String,
+        renderBanner: Boolean = true
+    ): File? {
+        val lock = gameLocks.getOrPut(gameId) { kotlinx.coroutines.sync.Mutex() }
+        return lock.withLock {
+            val icon = getCachedIconFile(gameId)
+            val needsBanner = renderBanner && getCachedBannerImageFile(gameId) == null
+            if (icon != null && !needsBanner) icon
+            else extractAndCacheLocked(gameId, romPath, needsBanner)
+        }
+    }
+
+    private suspend fun extractAndCacheLocked(
+        gameId: String,
+        romPath: String,
+        renderBanner: Boolean
+    ): File? = withContext(Dispatchers.IO) {
         if (!isSafeGameId(gameId)) {
             Log.e(TAG, "Refusing to cache embedded media for invalid game id")
             return@withContext null
         }
-        val result = mediaManager.extractForGame(romPath)
+        val result = mediaManager.extractForGame(romPath, renderBanner)
         if (!result.success || result.iconBitmap == null) {
-            Log.w(TAG, "Extraction failed for game $gameId: ${result.message}")
+            Log.w(TAG, "Extraction failed for game $gameId (${File(romPath).name}): ${result.message}")
             return@withContext null
         }
 
@@ -95,6 +139,7 @@ class EmbeddedMediaRepository @Inject constructor(
             val metadata = EmbeddedMediaMetadataCodec.encode(result.title, result.publisher)
             val metadataTempFile = metadata?.let { File.createTempFile("metadata-", ".tmp", gameDir) }
             val bannerTempFile = result.bannerCgfx?.let { File.createTempFile("banner-", ".tmp", gameDir) }
+            val bannerCommonTempFile = result.bannerCommonCgfx?.let { File.createTempFile("banner-common-", ".tmp", gameDir) }
             val bannerImageTempFile = result.bannerBitmap?.let { File.createTempFile("banner-image-", ".tmp", gameDir) }
             val bannerGifTempFile = result.bannerGif?.let { File.createTempFile("banner-gif-", ".tmp", gameDir) }
             val jingleTempFile = result.bannerJingleWav?.let { File.createTempFile("jingle-", ".tmp", gameDir) }
@@ -123,6 +168,9 @@ class EmbeddedMediaRepository @Inject constructor(
                         out.fd.sync()
                     }
                 }
+                if (result.bannerCommonCgfx != null && bannerCommonTempFile != null) {
+                    FileOutputStream(bannerCommonTempFile).use { out -> out.write(result.bannerCommonCgfx) }
+                }
                 if (result.bannerBitmap != null && bannerImageTempFile != null) {
                     FileOutputStream(bannerImageTempFile).use { out ->
                         if (!result.bannerBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
@@ -150,23 +198,32 @@ class EmbeddedMediaRepository @Inject constructor(
                 } else if (metadataFile.exists() && !metadataFile.delete()) {
                     throw IOException("Could not remove stale extracted-media metadata")
                 }
-                val bannerFile = File(gameDir, BANNER_CGFX_FILENAME)
-                if (bannerTempFile != null) {
-                    replaceFile(bannerTempFile, bannerFile)
-                } else if (bannerFile.exists() && !bannerFile.delete()) {
-                    throw IOException("Could not remove stale extracted-media banner")
-                }
-                val bannerImageFile = File(gameDir, BANNER_IMAGE_FILENAME)
-                if (bannerImageTempFile != null) {
-                    replaceFile(bannerImageTempFile, bannerImageFile)
-                } else if (bannerImageFile.exists() && !bannerImageFile.delete()) {
-                    throw IOException("Could not remove stale extracted 3DS banner image")
-                }
-                val bannerGifFile = File(gameDir, BANNER_GIF_FILENAME)
-                if (bannerGifTempFile != null) {
-                    replaceFile(bannerGifTempFile, bannerGifFile)
-                } else if (bannerGifFile.exists() && !bannerGifFile.delete()) {
-                    throw IOException("Could not remove stale extracted 3DS banner animation")
+                // A run that did not draw the banner leaves the cached banner files as they are.
+                if (result.bannerRendered) {
+                    val bannerFile = File(gameDir, BANNER_CGFX_FILENAME)
+                    if (bannerTempFile != null) {
+                        replaceFile(bannerTempFile, bannerFile)
+                    } else if (bannerFile.exists() && !bannerFile.delete()) {
+                        throw IOException("Could not remove stale extracted-media banner")
+                    }
+                    val bannerCommonFile = File(gameDir, BANNER_COMMON_CGFX_FILENAME)
+                    if (bannerCommonTempFile != null) {
+                        replaceFile(bannerCommonTempFile, bannerCommonFile)
+                    } else if (bannerCommonFile.exists()) {
+                        bannerCommonFile.delete()
+                    }
+                    val bannerImageFile = File(gameDir, BANNER_IMAGE_FILENAME)
+                    if (bannerImageTempFile != null) {
+                        replaceFile(bannerImageTempFile, bannerImageFile)
+                    } else if (bannerImageFile.exists() && !bannerImageFile.delete()) {
+                        throw IOException("Could not remove stale extracted 3DS banner image")
+                    }
+                    val bannerGifFile = File(gameDir, BANNER_GIF_FILENAME)
+                    if (bannerGifTempFile != null) {
+                        replaceFile(bannerGifTempFile, bannerGifFile)
+                    } else if (bannerGifFile.exists() && !bannerGifFile.delete()) {
+                        throw IOException("Could not remove stale extracted 3DS banner animation")
+                    }
                 }
                 val jingleFile = File(gameDir, JINGLE_FILENAME)
                 if (jingleTempFile != null) {
@@ -185,6 +242,7 @@ class EmbeddedMediaRepository @Inject constructor(
                 bannerTempFile?.delete()
                 bannerImageTempFile?.delete()
                 bannerGifTempFile?.delete()
+                bannerCommonTempFile?.delete()
                 jingleTempFile?.delete()
                 result.bannerBitmap?.recycle()
             }

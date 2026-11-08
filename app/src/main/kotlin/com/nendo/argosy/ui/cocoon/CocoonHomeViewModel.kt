@@ -44,9 +44,66 @@ class CocoonHomeViewModel @Inject constructor(
      */
     private var prefetchedKey: String? = null
 
+    /**
+     * The top screen's picture for a highlighted tile (a theme's platform hero and logo, or a
+     * game's art), loaded into memory for the highlighted tile and its four neighbours. The first
+     * time a folder was highlighted these were read from storage while the top screen was already
+     * fading in, so it showed empty and then the picture popped in on top: a flash, only the first
+     * time. Neighbours only, because these are full-screen pictures.
+     */
+    private var heroPrefetch: kotlinx.coroutines.Job? = null
+
+    private fun prefetchHeroArt() {
+        val state = _state.value
+        val center = state.focusedIndex
+        val rows = COCOON_BOARD_ROWS
+        val nearby = listOf(center, center - 1, center + 1, center - rows, center + rows)
+            .filter { it in state.tiles.indices && (it == center || (it % rows == center % rows) || (it / rows == center / rows)) }
+            .mapNotNull { state.tiles.getOrNull(it) }
+            .filter { it.target !is CocoonTileTarget.Gap && it.target !is CocoonTileTarget.Covered }
+        heroPrefetch?.cancel()
+        heroPrefetch = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // Wait until the cursor rests a moment: holding a direction no longer decodes large
+            // pictures for every tile it passes (that churn could stall a frame).
+            kotlinx.coroutines.delay(HERO_PREFETCH_SETTLE_MS)
+            val loader = coil.Coil.imageLoader(context)
+            for (tile in nearby) {
+                val glyph = tile.glyph
+                val slug = tile.platformSlug
+                val hero = runCatching {
+                    com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.folderArt(glyph, slug, "hero")
+                }.getOrNull()
+                val logo = runCatching {
+                    com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.folderArt(glyph, slug, "logo")
+                }.getOrNull()
+                val gameId = (tile.target as? CocoonTileTarget.NowPlaying)?.gameId
+                    ?: (tile.target as? CocoonTileTarget.Game)?.gameId
+                val gameArt = if (logo == null && gameId != null) {
+                    val art = imageCacheManager.artFor(gameId) ?: runCatching { imageCacheManager.loadArt(gameId) }.getOrNull()
+                    art?.backgroundPath ?: art?.coverPath
+                } else null
+                // The same pictures the top screen asks for, decoded at about its full size (so the
+                // top screen is served from memory at whatever size it draws them). One already in
+                // memory is only looked up, so moving back and forth costs nothing.
+                val models: List<Any> = listOfNotNull(hero, logo, com.nendo.argosy.ui.common.fileImageModel(gameArt))
+                for (model in models) {
+                    runCatching {
+                        loader.execute(
+                            coil.request.ImageRequest.Builder(context)
+                                .data(model)
+                                .size(HERO_PREFETCH_PX, HERO_PREFETCH_PX)
+                                .build()
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     private fun prefetchCovers(tile: CocoonTile?) {
         if (tile?.key == prefetchedKey) return
         prefetchedKey = tile?.key
+        prefetchHeroArt()
         coverPrefetch?.cancel()
         val platformId = (tile?.target as? CocoonTileTarget.Platform)?.platformId ?: return
         coverPrefetch = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -62,7 +119,13 @@ class CocoonHomeViewModel @Inject constructor(
                 val path = (imageCacheManager.artFor(game.id) ?: runCatching { imageCacheManager.loadArt(game.id) }.getOrNull())
                     ?.coverPath ?: return@forEach
                 val data: Any = CocoonThumbs.model(context, path) ?: return@forEach
-                val request = coil.request.ImageRequest.Builder(context).data(data).size(COCOON_COVER_DECODE_PX).build()
+                // Exactly the request a folder tile makes (same size and the same trim): the image
+                // cache keys pictures by both, and without the trim these prefetches were never used.
+                val request = coil.request.ImageRequest.Builder(context)
+                    .data(data)
+                    .size(COCOON_COVER_DECODE_PX)
+                    .transformations(CocoonCoverTrim)
+                    .build()
                 synchronized(coverRequests) { coverRequests.add(loader.enqueue(request)) }
             }
         }
@@ -933,6 +996,43 @@ class CocoonHomeViewModel @Inject constructor(
         }
         // The folder under the cursor at start-up (or on return) gets its covers warmed too.
         prefetchCovers(_state.value.focusedTile)
+        warmFolderLogos()
+    }
+
+    private var folderLogosWarmed: Set<String> = emptySet()
+
+    /**
+     * Every folder's theme art (its board icon and the logo the top screen shows) looked up and
+     * decoded in the background as soon as the board is up, so the first highlight of a folder
+     * neither waits on storage nor pops its logo in late.
+     */
+    private fun warmFolderLogos() {
+        val tiles = _state.value.tiles.filter {
+            it.target !is CocoonTileTarget.Gap && it.target !is CocoonTileTarget.Covered
+        }
+        val keys = tiles.map { it.key }.toSet()
+        if (keys == folderLogosWarmed) return
+        folderLogosWarmed = keys
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val loader = coil.Coil.imageLoader(context)
+            for (tile in tiles) {
+                for (part in listOf("icon", "logo")) {
+                    val file = runCatching {
+                        com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.folderArt(tile.glyph, tile.platformSlug, part)
+                    }.getOrNull() ?: continue
+                    runCatching {
+                        loader.execute(
+                            coil.request.ImageRequest.Builder(context)
+                                .data(file)
+                                .size(if (part == "icon") COCOON_FOLDER_ICON_WARM_PX else HERO_LOGO_WARM_PX)
+                                .build()
+                        )
+                    }
+                }
+                // the hero lookup only (no decode: those are large); the cursor's neighbours get theirs decoded
+                runCatching { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.folderArt(tile.glyph, tile.platformSlug, "hero") }
+            }
+        }
     }
 
     // ---- Folder appearance (Y ▸ Appearance) ----
@@ -1515,3 +1615,11 @@ private const val BOARD_LOAD_WAIT_MS = 700L
 object CocoonBoardCache {
     @Volatile var tiles: List<CocoonTile> = emptyList()
 }
+
+/** Top-screen pictures are warmed at up to this size: the top screen's full width. */
+private const val HERO_PREFETCH_PX = 2048
+private const val HERO_PREFETCH_SETTLE_MS = 140L
+/** Same size the board's folder art decodes at, so the warm copy is the one it uses. */
+private const val COCOON_FOLDER_ICON_WARM_PX = 320
+/** Big enough for the top screen's logo, which then comes from memory. */
+private const val HERO_LOGO_WARM_PX = 1024

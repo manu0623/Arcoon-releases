@@ -353,7 +353,8 @@ fun NavGraph(
             // Cocoon sheets (?sheet=…) open in place over a still of the folder: no cross-fade.
             enterTransition = {
                 if (targetState.arguments?.getString("sheet") != null) androidx.compose.animation.EnterTransition.None
-                else fadeIn(animationSpec = tween(100))
+                // a touch longer than the other screens' cross-fade: the page then eases in
+                else fadeIn(animationSpec = tween(160))
             },
             popExitTransition = {
                 if (initialState.arguments?.getString("sheet") != null) androidx.compose.animation.ExitTransition.None

@@ -177,27 +177,33 @@ internal object CgfxTextureDecoder {
         // selectors MSB-first instead leaves a block's base colour right and randomises its sixteen
         // pixels, which is the confetti this used to draw. The colour word itself is little-endian
         // in CTR data, and an ETC1A4 block carries its 4-bit alpha plane ahead of the colour half.
+        // CTR stores each ETC1 block as one little-endian 64-bit word (both halves little-endian):
+        // the low half holds the per-pixel selectors, the high half the colours and control bits.
+        // An ETC1A4 block carries its 4-bit alpha plane ahead of the colour block.
         val blockBase = offset + if (withAlpha) 8 else 0
-        val low = readU32Be(bytes, blockBase)
+        val low = readU32Le(bytes, blockBase)
         val high = readU32Le(bytes, blockBase + 4)
 
         val tableIndexA = (high ushr 5) and 7
         val tableIndexB = (high ushr 2) and 7
         val flipped = (high and 1) != 0
-
-        val red1 = (high ushr 28) and 0xF
-        val green1 = (high ushr 20) and 0xF
-        val blue1 = (high ushr 12) and 0xF
-        var red2 = (high ushr 24) and 0xF
-        var green2 = (high ushr 16) and 0xF
-        var blue2 = (high ushr 8) and 0xF
+        val first: IntArray
+        val second: IntArray
         if (((high ushr 1) and 1) != 0) {
-            red2 = (red1 + signExtend3(red2)).coerceIn(0, 15)
-            green2 = (green1 + signExtend3(green2)).coerceIn(0, 15)
-            blue2 = (blue1 + signExtend3(blue2)).coerceIn(0, 15)
+            // Differential mode: 5-bit base colour plus a signed 3-bit delta for the second half.
+            val red1 = (high ushr 27) and 0x1F
+            val green1 = (high ushr 19) and 0x1F
+            val blue1 = (high ushr 11) and 0x1F
+            val red2 = (red1 + signExtend3((high ushr 24) and 7)).coerceIn(0, 31)
+            val green2 = (green1 + signExtend3((high ushr 16) and 7)).coerceIn(0, 31)
+            val blue2 = (blue1 + signExtend3((high ushr 8) and 7)).coerceIn(0, 31)
+            first = intArrayOf(expand5(red1), expand5(green1), expand5(blue1))
+            second = intArrayOf(expand5(red2), expand5(green2), expand5(blue2))
+        } else {
+            // Individual mode: two 4-bit colours.
+            first = intArrayOf(((high ushr 28) and 0xF) * 17, ((high ushr 20) and 0xF) * 17, ((high ushr 12) and 0xF) * 17)
+            second = intArrayOf(((high ushr 24) and 0xF) * 17, ((high ushr 16) and 0xF) * 17, ((high ushr 8) and 0xF) * 17)
         }
-        val first = intArrayOf(red1 * 17, green1 * 17, blue1 * 17)
-        val second = intArrayOf(red2 * 17, green2 * 17, blue2 * 17)
 
         val tableA = MODIFIERS[tableIndexA]
         val tableB = MODIFIERS[tableIndexB]
@@ -230,18 +236,20 @@ internal object CgfxTextureDecoder {
         }
     }
 
+    /** CTR stores RGBA8 texels as A, B, G, R bytes. */
     private fun rgba8(bytes: ByteArray, offset: Int) = argb(
-        bytes[offset + 3].toInt() and 0xFF,
         bytes[offset].toInt() and 0xFF,
-        bytes[offset + 1].toInt() and 0xFF,
+        bytes[offset + 3].toInt() and 0xFF,
         bytes[offset + 2].toInt() and 0xFF,
+        bytes[offset + 1].toInt() and 0xFF,
     )
 
+    /** CTR stores RGB8 texels as B, G, R bytes. */
     private fun rgb8(bytes: ByteArray, offset: Int) = argb(
         255,
-        bytes[offset].toInt() and 0xFF,
-        bytes[offset + 1].toInt() and 0xFF,
         bytes[offset + 2].toInt() and 0xFF,
+        bytes[offset + 1].toInt() and 0xFF,
+        bytes[offset].toInt() and 0xFF,
     )
 
     private fun packed16(bytes: ByteArray, offset: Int, format: Int): Int {

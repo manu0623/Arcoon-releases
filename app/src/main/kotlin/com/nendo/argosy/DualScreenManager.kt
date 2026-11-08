@@ -1057,12 +1057,7 @@ class DualScreenManager(
         eachCompanion { it.onLibraryRefresh() }
     }
 
-    var onEmulatorDispatcherChanged: (() -> Unit)? = null
     var emulatorKeyDispatcher: ((android.view.KeyEvent) -> Boolean)? = null
-        set(value) {
-            field = value
-            onEmulatorDispatcherChanged?.invoke()
-        }
     var emulatorMotionDispatcher: ((android.view.MotionEvent) -> Boolean)? = null
 
     private val _emulatorDisplay = MutableStateFlow(
@@ -1608,12 +1603,7 @@ class DualScreenManager(
     private val _keyboardToggleEvent = MutableStateFlow(0L)
     val keyboardToggleEvent: StateFlow<Long> = _keyboardToggleEvent
 
-    var onOverlayFocusChanged: ((Boolean) -> Unit)? = null
     var isOverlayFocused = false
-        set(value) {
-            field = value
-            onOverlayFocusChanged?.invoke(isOverlayFocused)
-        }
 
     private val _swappedIsGameActive = MutableStateFlow(false)
     val swappedIsGameActive: StateFlow<Boolean> = _swappedIsGameActive
@@ -2841,7 +2831,21 @@ class DualScreenManager(
 
     private val unlockReceiver = CompanionUnlockReceiver { ensureCompanionLaunched() }
 
+    /** True while the receivers and listeners below are registered (they must be, exactly once). */
+    private var receiversRegistered = false
+
+    /**
+     * Registers the unlock receiver, display listener and settings observer. The main screen calls
+     * this from every onCreate, including a recreate (a language change) that keeps this manager;
+     * registering again then would deliver every display and settings change twice.
+     */
     fun registerReceivers() {
+        if (receiversRegistered) {
+            refreshScreenDisplayIds()
+            syncDockedState()
+            return
+        }
+        receiversRegistered = true
         androidx.core.content.ContextCompat.registerReceiver(
             appContext,
             unlockReceiver,
@@ -2862,6 +2866,8 @@ class DualScreenManager(
     }
 
     fun unregisterReceivers() {
+        if (!receiversRegistered) return
+        receiversRegistered = false
         appContext.unregisterReceiver(unlockReceiver)
         preferencesObserverJob?.cancel()
         preferencesObserverJob = null

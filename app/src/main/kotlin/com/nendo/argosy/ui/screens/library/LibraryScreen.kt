@@ -1,5 +1,6 @@
 package com.nendo.argosy.ui.screens.library
 
+import com.nendo.argosy.ui.common.deferredBlur
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
@@ -364,7 +365,7 @@ fun LibraryScreen(
             leavingFolder[0] = true
             leaveScope.launch {
                 launch {
-                    headerOut.animateTo(1f, androidx.compose.animation.core.tween(170, easing = androidx.compose.animation.core.FastOutLinearInEasing))
+                    headerOut.animateTo(1f, androidx.compose.animation.core.tween(130, easing = androidx.compose.animation.core.FastOutLinearInEasing))
                 }
                 coverWave.playOut()
                 onNavigateToDefault()
@@ -473,7 +474,7 @@ fun LibraryScreen(
         }
         if (folderEnter.value > 0f) {
             launch {
-                folderEnter.animateTo(0f, androidx.compose.animation.core.tween(240, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
+                folderEnter.animateTo(0f, androidx.compose.animation.core.tween(180, easing = com.nendo.argosy.ui.theme.Motion.argosyEase))
             }
         }
         if (coversReady && !coverWave.played) {
@@ -524,8 +525,6 @@ fun LibraryScreen(
     )
 
     // Cocoon's Quit / Switch sheet blurs the folder behind it as it opens.
-    val sessionDialogBlur = Motion.blurRadiusModal * com.nendo.argosy.ui.cocoon.CocoonSessionDialog.blurFraction
-    val combinedBlur = if (sessionDialogBlur > modalBlur) sessionDialogBlur else modalBlur
 
     // Coming back from a suspended game (or opening its folder), the cursor lands on that game.
     val sessionManager = com.nendo.argosy.DualScreenManagerHolder.instance?.gameSessionManager
@@ -579,7 +578,13 @@ fun LibraryScreen(
             }
     ) {
         // One sliding cursor for the dock and the covers, as in Cocoon.
-        com.nendo.argosy.ui.primitives.CocoonCursorHost(modifier = Modifier.fillMaxSize().blur(combinedBlur)) {
+        com.nendo.argosy.ui.primitives.CocoonCursorHost(
+            // read while drawing, so the blur animation repaints instead of recomposing the folder
+            modifier = Modifier.fillMaxSize().deferredBlur {
+                val sessionDialogBlur = Motion.blurRadiusModal * com.nendo.argosy.ui.cocoon.CocoonSessionDialog.blurFraction
+                if (sessionDialogBlur > modalBlur) sessionDialogBlur else modalBlur
+            }
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -751,11 +756,13 @@ fun LibraryScreen(
                     val dockApps by (com.nendo.argosy.DualScreenManagerHolder.instance?.homeAppsFlow
                         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList<String>()) }).collectAsState()
                     val dockContext = androidx.compose.ui.platform.LocalContext.current
-                    val z = com.nendo.argosy.ui.cocoon.CocoonFolderZoom.progress?.value ?: 1f
                     Column(
                         modifier = Modifier
                             .onSizeChanged { folderTopPx = it.height }
                             .graphicsLayer {
+                                // read while drawing, so the folder zoom repaints the header and
+                                // dock instead of rebuilding them on every frame
+                                val z = com.nendo.argosy.ui.cocoon.CocoonFolderZoom.progress?.value ?: 1f
                                 val s = androidx.compose.ui.util.lerp(0.92f, 1f, z)
                                 scaleX = s
                                 scaleY = s

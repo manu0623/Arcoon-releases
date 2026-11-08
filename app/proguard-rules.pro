@@ -68,3 +68,42 @@
 -keep class discordpp.** { *; }
 -dontwarn com.discord.socialsdk.**
 -dontwarn discordpp.**
+
+# Arcoon optimizer warm-up: classes it loads by name (CocoonOptimizer.WARM_CLASSES).
+# Keep this list in step with that one.
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonHomeScreenKt
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonHomeViewModel
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonFolderCoversKt
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonWidgetsKt
+-keepnames class com.nendo.argosy.ui.screens.library.LibraryScreenKt
+-keepnames class com.nendo.argosy.ui.screens.library.LibraryViewModel
+-keepnames class com.nendo.argosy.ui.screens.settings.SettingsScreenKt
+-keepnames class com.nendo.argosy.ui.screens.settings.SettingsViewModel
+-keepnames class com.nendo.argosy.ui.screens.settings.SettingsInitRouterKt
+-keepnames class com.nendo.argosy.ui.screens.gamedetail.GameDetailScreenKt
+-keepnames class com.nendo.argosy.ui.screens.gamedetail.GameDetailViewModel
+-keepnames class com.nendo.argosy.ui.screens.apps.AppsScreenKt
+-keepnames class com.nendo.argosy.ui.screens.search.SearchScreenKt
+-keepnames class com.nendo.argosy.ui.components.QuickSettingsPanelKt
+-keepnames class com.nendo.argosy.ui.components.GameCardKt
+-keepnames class com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationKt
+-keepnames class com.nendo.argosy.ui.cocoon.theme.CocoonThemePickerKt
+-keepnames class com.nendo.argosy.ui.dualscreen.GameShowcaseKt
+-keepnames class com.nendo.argosy.ui.dualscreen.PresentationSlotContentKt
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonGameHeroKt
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonHeroKt
+-keepnames class com.nendo.argosy.ui.quickmenu.QuickMenuOverlayKt
+-keepnames class com.nendo.argosy.ui.primitives.CocoonBracketsKt
+-keepnames class com.nendo.argosy.ui.components.BoxArtFrameKt
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonFolderKt
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonFolderMenuKt
+-keepnames class com.nendo.argosy.ui.cocoon.CocoonFoldersKt
+-keepnames class com.nendo.argosy.ui.screens.gamedetail.components.GameDetailTabsKt
+-keepnames class com.nendo.argosy.ui.screens.gamedetail.components.GameDetailSectionsKt
+-keepnames class com.nendo.argosy.ui.common.DeferredBlurKt
+-keepnames class com.nendo.argosy.ui.navigation.NavGraphKt
+-keepnames class com.nendo.argosy.ui.ArgosyAppKt
+-keepnames class com.nendo.argosy.ui.components.SystemStatusBarKt
+-keepnames class coil.compose.AsyncImageKt
+-keepnames class coil.compose.AsyncImagePainter
+-keepnames class com.nendo.argosy.ui.quickpanel.QuickPanelOverlay

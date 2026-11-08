@@ -24,7 +24,7 @@ object DebugLogcat {
         "MediaDimRamp", "GamepadInput", "AmbientAudio", "AudioTrack", "AAudio", "AAudioStream",
         "AudioStreamBuilder", "AudioStreamTrack", "OboeAudio", "libretrodroid", "chatty",
         "TrafficStats", "OkHttp", "InputDispatcher", "InputReader", "audit", "SELinux",
-        "Choreographer", "BufferQueueProducer", "BLASTBufferQueue", "SurfaceComposerClient",
+        "BufferQueueProducer", "BLASTBufferQueue", "SurfaceComposerClient",
         "qdgralloc", "AdrenoGLES-0", "Gralloc4", "ion", "CCodec", "MediaCodec", "BatteryService"
     )
 

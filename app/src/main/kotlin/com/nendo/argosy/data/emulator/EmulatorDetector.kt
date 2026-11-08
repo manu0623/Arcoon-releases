@@ -1,5 +1,6 @@
 package com.nendo.argosy.data.emulator
 
+import kotlinx.coroutines.sync.withLock
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
@@ -45,7 +46,23 @@ class EmulatorDetector @Inject constructor(
 
     private val packageManager: PackageManager = context.packageManager
 
-    suspend fun detectEmulators(): List<InstalledEmulator> = withContext(Dispatchers.IO) {
+    private val scanMutex = kotlinx.coroutines.sync.Mutex()
+    @Volatile private var scanGeneration = 0L
+
+    /**
+     * Scans for installed emulators. Callers that arrive while a scan is already running share
+     * its result instead of starting their own: opening a game page asked for two scans at once,
+     * and the page waited for them before showing anything.
+     */
+    suspend fun detectEmulators(): List<InstalledEmulator> {
+        val seen = scanGeneration
+        return scanMutex.withLock {
+            if (scanGeneration != seen) return@withLock _installedEmulators.value
+            scanInstalled().also { scanGeneration++ }
+        }
+    }
+
+    private suspend fun scanInstalled(): List<InstalledEmulator> = withContext(Dispatchers.IO) {
         val installed = mutableListOf<InstalledEmulator>()
         val detectedPackages = mutableSetOf<String>()
 

@@ -13,6 +13,7 @@ room = "2.7.1"
 datastore = "1.1.1"
 navigation = "2.8.5"
 coil = "2.7.0"
+profileinstaller = "1.4.1"
 retrofit = "2.9.0"
 okhttp = "4.12.0"
 moshi = "1.15.2"
@@ -90,6 +91,7 @@ media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "medi
 media3-datasource-okhttp = { group = "androidx.media3", name = "media3-datasource-okhttp", version.ref = "media3" }
 
 # Image loading
+androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 coil-svg = { group = "io.coil-kt", name = "coil-svg", version.ref = "coil" }
 

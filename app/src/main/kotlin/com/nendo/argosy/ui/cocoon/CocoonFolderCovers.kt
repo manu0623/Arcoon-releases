@@ -258,12 +258,14 @@ class CocoonCoverWave {
     }
 
     companion object {
-        private const val COLUMN_STEP = 34f
-        private const val ROW_STEP = 14f
-        private const val IN_MS = 240f
+        // Quicker than before (34/14/240 in, 14/120 out): the folder read as a long black fade
+        // before its covers showed. Same wave, about a third shorter.
+        private const val COLUMN_STEP = 22f
+        private const val ROW_STEP = 9f
+        private const val IN_MS = 180f
         private const val MAX_COLUMNS = 8
-        private const val OUT_STEP = 14f
-        private const val OUT_MS = 120f
+        private const val OUT_STEP = 10f
+        private const val OUT_MS = 90f
         const val IN_TOTAL = MAX_COLUMNS * COLUMN_STEP + 6 * ROW_STEP + IN_MS
         const val OUT_TOTAL = MAX_COLUMNS * OUT_STEP + OUT_MS
     }
