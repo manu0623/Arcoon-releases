@@ -736,15 +736,17 @@ class GameSessionService : Service() {
         // corner is behind it and takes no taps. Sit past the system insets instead.
         val insets = runCatching {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                displayWindowManager.currentWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
-                    android.view.WindowInsets.Type.navigationBars() or
-                        android.view.WindowInsets.Type.statusBars() or
-                        android.view.WindowInsets.Type.displayCutout()
+                androidx.core.view.WindowInsetsCompat.toWindowInsetsCompat(
+                    displayWindowManager.currentWindowMetrics.windowInsets
+                ).getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.navigationBars() or
+                        androidx.core.view.WindowInsetsCompat.Type.statusBars() or
+                        androidx.core.view.WindowInsetsCompat.Type.displayCutout()
                 )
             } else {
-                android.graphics.Insets.NONE
+                androidx.core.graphics.Insets.NONE
             }
-        }.getOrDefault(android.graphics.Insets.NONE)
+        }.getOrDefault(androidx.core.graphics.Insets.NONE)
         // A secondary display can report a bar it has hidden while that bar's window still takes
         // every touch in the band, so the area apps may not use is the floor for the offset.
         val realMetrics = android.util.DisplayMetrics().also { display.getRealMetrics(it) }

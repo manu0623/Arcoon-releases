@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Hilt's generated WorkerAssistedFactory/HiltModule code calls androidx.hilt internals.
+         Generated sources are not ours to restructure; hand-written source stays checked. -->
+    <issue id="RestrictedApi">
+        <ignore path="**/generated/**" />
+        <ignore path="**/build/generated/**" />
+    </issue>
+</lint>

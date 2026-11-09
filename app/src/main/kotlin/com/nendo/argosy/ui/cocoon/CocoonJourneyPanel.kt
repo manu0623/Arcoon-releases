@@ -14,8 +14,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -67,15 +68,9 @@ fun CocoonJourneyPanel(gameId: Long, platformName: String?, modifier: Modifier =
         EntryPointAccessors.fromApplication(context.applicationContext, JourneyStoryEntryPoint::class.java)
             .loadJourneyStory()
     }
-    val load by produceState<JourneyLoad>(JourneyLoad.Loading, gameId) {
-        value = try {
-            JourneyLoad.Ready(loader(gameId, platformName))
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            com.nendo.argosy.util.Logger.warn("CocoonJourney", "Journey for game $gameId failed: ${e.message}")
-            JourneyLoad.Failed
-        }
+    var load by remember(gameId) { mutableStateOf<JourneyLoad>(JourneyLoad.Loading) }
+    LaunchedEffect(gameId) {
+        load = cocoonJourneyLoad(loader, gameId, platformName)
     }
     val scroll = rememberScrollState()
     val stepPx = with(LocalDensity.current) { SCROLL_STEP_DP.dp.toPx() }
@@ -267,3 +262,16 @@ private fun Note(text: String) {
 private val DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
 
 private fun date(at: Instant): String = DATE_FORMAT.format(at.atZone(ZoneId.systemDefault()))
+
+private suspend fun cocoonJourneyLoad(
+    loader: LoadJourneyStoryUseCase,
+    gameId: Long,
+    platformName: String?
+): JourneyLoad = try {
+    JourneyLoad.Ready(loader(gameId, platformName))
+} catch (e: kotlinx.coroutines.CancellationException) {
+    throw e
+} catch (e: Exception) {
+    com.nendo.argosy.util.Logger.warn("CocoonJourney", "Journey for game $gameId failed: ${e.message}")
+    JourneyLoad.Failed
+}
