@@ -47,6 +47,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import android.content.Intent
 import com.nendo.argosy.ui.util.doubleTapNoFocus
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -573,6 +574,27 @@ fun ArgosyApp(
         }
     }
 
+    // Settings opens on the other screen, which builds it from scratch: started while the drawer
+    // slides shut, that froze the drawer for a moment and it jumped closed. Settings now opens
+    // once the drawer has finished closing; other pages still open at once.
+    val closeDrawerThenNavigate: (String) -> Unit = remember(scope, drawerState, navigateFromDrawer) {
+        { route ->
+            if (route.substringBefore("?") == Screen.Settings.route.substringBefore("?")) {
+                scope.launch {
+                    try {
+                        drawerState.close()
+                    } finally {
+                        navigateFromDrawer(route)
+                    }
+                }
+            } else {
+                scope.launch { drawerState.close() }
+                navigateFromDrawer(route)
+            }
+            Unit
+        }
+    }
+
     val resumeSuspendedGame: () -> Unit = remember(dsm, inputDispatcher, viewModel, scope, drawerState) {
         {
             inputDispatcher.unsubscribeDrawer()
@@ -584,14 +606,14 @@ fun ArgosyApp(
     }
 
     val currentDrawerItems = rememberUpdatedState(drawerItems)
+    val currentRouteNow = rememberUpdatedState(currentRoute)
     val drawerInputHandler = remember(viewModel, resumeSuspendedGame) {
         viewModel.createDrawerInputHandler(
             items = { currentDrawerItems.value },
             onNavigate = { route ->
                 inputDispatcher.unsubscribeDrawer()
                 viewModel.setDrawerOpen(false)
-                scope.launch { drawerState.close() }
-                navigateFromDrawer(route)
+                closeDrawerThenNavigate(route)
             },
             onDismiss = {
                 inputDispatcher.unsubscribeDrawer()
@@ -610,7 +632,7 @@ fun ArgosyApp(
             viewModel.setDrawerOpen(true)
             val parentRoute = navController.previousBackStackEntry?.destination?.route
             viewModel.initDrawerFocus(
-                currentRoute = currentRoute,
+                currentRoute = currentRouteNow.value,
                 parentRoute = parentRoute,
                 items = drawerItems,
                 preferFirstItem = hasBuiltInSuspendedGame
@@ -1164,15 +1186,20 @@ fun ArgosyApp(
                     GamepadEvent.PrevSection, GamepadEvent.NextSection -> {
                         val onCocoonBoard = navController.currentDestination?.route == Screen.Home.route &&
                             !com.nendo.argosy.ui.cocoon.CocoonMode.useClassicHome.value
-                        if (onCocoonBoard && !input.isRepeat && !isDrawerOpen && !quickMenuState.isVisible) {
-                            // Cocoon: R1 opens quick settings, L1 opens friends.
-                            val page = if (event == GamepadEvent.NextSection) QuickSettingsPage.QUICK else QuickSettingsPage.FRIENDS
-                            if (isQuickSettingsOpen) {
-                                closeQuickSettings()
-                            } else {
-                                openQuickSettingsPage(page)
+                        if (onCocoonBoard && !input.isRepeat) {
+                            if (isDrawerOpen) {
+                                closeDrawer()
+                                return@collect
                             }
-                            return@collect
+                            if (!quickMenuState.isVisible) {
+                                val page = if (event == GamepadEvent.NextSection) QuickSettingsPage.QUICK else QuickSettingsPage.FRIENDS
+                                if (isQuickSettingsOpen) {
+                                    closeQuickSettings()
+                                } else {
+                                    openQuickSettingsPage(page)
+                                }
+                                return@collect
+                            }
                         }
                         val delta = if (event == GamepadEvent.PrevSection) -1 else 1
                         val target = if (
@@ -1516,11 +1543,13 @@ fun ArgosyApp(
                         currentRoute = currentRoute,
                         drawerState = drawerUiState,
                         isOpen = isDrawerOpen,
+                        isSettled = isDrawerOpen &&
+                            drawerState.currentValue == androidx.compose.material3.DrawerValue.Open &&
+                            !drawerState.isAnimationRunning,
                         onNavigate = { route ->
                             inputDispatcher.unsubscribeDrawer()
                             viewModel.setDrawerOpen(false)
-                            scope.launch { drawerState.close() }
-                            navigateFromDrawer(route)
+                            closeDrawerThenNavigate(route)
                         },
                         onResumeGame = resumeSuspendedGame,
                         modifier = Modifier.onSizeChanged { drawerWidthPx = it.width.toFloat() }
@@ -1581,7 +1610,65 @@ fun ArgosyApp(
                         LocalFrostedBackdrop provides screenFrostedBackdrop,
                         LocalNavBarClearance provides navBarClearance
                     ) {
+                        // The pages and the board kept alive under them share the drawer's blur and
+                        // the frosted-glass backdrop, as the pages alone used to.
+                        Box(
+                            modifier = Modifier
+                            .fillMaxSize()
+                            .frostedBackdropSource(frostedBackdrop)
+                            // Read while drawing: the animated blur repaints, it no longer re-runs
+                            // this whole screen on every frame of the drawer or a menu opening.
+                            .deferredBlur {
+                                maxOf(
+                                    (drawerBlurProgress * Motion.blurRadiusDrawer.value).dp,
+                                    quickMenuBlur,
+                                    quickSettingsBlur,
+                                    launchRecapBlur,
+                                    monthlyRecapBlur
+                                )
+                            }
+                            // Settings opened on the lower screen floats up to the upper one;
+                            // this screen never draws its own copy, not even for the moment
+                            // before the move.
+                            .then(
+                                if (hidesSettingsHere) {
+                                    Modifier.graphicsLayer { alpha = 0f }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                        ) {
+                        // The Cocoon board kept alive underneath the pages: hidden (not drawn, no
+                        // input) while a folder or Settings is open, shown again at once on return.
+                        val classicHome by com.nendo.argosy.ui.cocoon.CocoonMode.useClassicHome.collectAsState()
+                        val keepHomeAlive = com.nendo.argosy.ui.navigation.KEEP_COCOON_HOME_ALIVE &&
+                            !asLiftedPanel && !classicHome
+                        val homeActive = currentRoute == Screen.Home.route
+                        var homeSeen by remember { mutableStateOf(false) }
+                        if (homeActive) homeSeen = true
+                        if (keepHomeAlive && homeSeen) {
+                            val homeAlpha by animateFloatAsState(
+                                targetValue = if (homeActive) 1f else 0f,
+                                animationSpec = tween(if (homeActive) 120 else 100),
+                                label = "cocoonHomeLayer"
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .layout { measurable, constraints ->
+                                        val placeable = measurable.measure(constraints)
+                                        layout(placeable.width, placeable.height) {
+                                            // fully hidden: not placed, so not drawn and not touchable
+                                            if (homeAlpha > 0f) placeable.place(0, 0)
+                                        }
+                                    }
+                                    .graphicsLayer { alpha = homeAlpha }
+                            ) {
+                                com.nendo.argosy.ui.navigation.CocoonHomeHost(navController, active = homeActive)
+                            }
+                        }
                         NavGraph(
+                            cocoonHomeOutside = keepHomeAlive,
                             navController = navController,
                             startDestination = startDestination,
                             // The floating panel closes straight from Settings: going Home first
@@ -1607,30 +1694,9 @@ fun ArgosyApp(
                                         )
                                     )
                             },
-                            modifier = Modifier
-                                .frostedBackdropSource(frostedBackdrop)
-                                // Read while drawing: the animated blur repaints, it no longer re-runs
-                                // this whole screen on every frame of the drawer or a menu opening.
-                                .deferredBlur {
-                                    maxOf(
-                                        (drawerBlurProgress * Motion.blurRadiusDrawer.value).dp,
-                                        quickMenuBlur,
-                                        quickSettingsBlur,
-                                        launchRecapBlur,
-                                        monthlyRecapBlur
-                                    )
-                                }
-                                // Settings opened on the lower screen floats up to the upper one;
-                                // this screen never draws its own copy, not even for the moment
-                                // before the move.
-                                .then(
-                                    if (hidesSettingsHere) {
-                                        Modifier.graphicsLayer { alpha = 0f }
-                                    } else {
-                                        Modifier
-                                    }
-                                )
+                            modifier = Modifier.fillMaxSize()
                         )
+                        }
                     }
 
                     FloatingNavBar(

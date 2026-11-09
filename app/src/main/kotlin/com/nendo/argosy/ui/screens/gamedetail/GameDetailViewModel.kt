@@ -591,11 +591,17 @@ class GameDetailViewModel @Inject constructor(
                 val iconCached = embeddedMediaRepository.getCachedIconFile(embeddedGameId) != null
                 val bannerCached = embeddedMediaRepository.getCachedBannerImageFile(embeddedGameId) != null
                 if (!iconCached || (refresh3dsBanner && !bannerCached)) {
-                    embeddedMediaRepository.extractAndCacheForGame(
-                        embeddedGameId,
-                        game.localPath ?: return@launch,
-                        renderBanner = refresh3dsBanner
-                    )
+                    val drawsBanner = refresh3dsBanner && !bannerCached
+                    if (drawsBanner) com.nendo.argosy.data.media.ThreeDsBannerWork.begin(game.title)
+                    try {
+                        embeddedMediaRepository.extractAndCacheForGame(
+                            embeddedGameId,
+                            game.localPath ?: return@launch,
+                            renderBanner = refresh3dsBanner
+                        )
+                    } finally {
+                        if (drawsBanner) com.nendo.argosy.data.media.ThreeDsBannerWork.end()
+                    }
                 }
                 imageCacheManager.refreshEmbeddedBannerArt(game.id)
             } finally {

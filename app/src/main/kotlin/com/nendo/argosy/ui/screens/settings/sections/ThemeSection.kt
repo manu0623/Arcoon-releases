@@ -3,6 +3,7 @@ package com.nendo.argosy.ui.screens.settings.sections
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -54,6 +55,9 @@ internal sealed class ThemeItem(val key: String, val section: String) {
     data object Backdrop : ThemeItem("backdrop", "identity")
     data object Fonts : ThemeItem("fonts", "identity")
     data object IconPack : ThemeItem("iconPack", "identity")
+    data object Jingles : ThemeItem("cocoonJingles", "identity")
+
+    data class CocoonRow(val option: CocoonOption) : ThemeItem(option.key, "identity")
 
     companion object {
         private val AppearanceHeader =
@@ -67,7 +71,11 @@ internal sealed class ThemeItem(val key: String, val section: String) {
                 AppearanceHeader,
                 Mode, AccentColor, AccentFooter, SecondaryColor, TintBleed,
                 IdentitySpacer, IdentityHeader,
-                CocoonThemes, Backdrop, Fonts, IconPack
+                CocoonThemes, Backdrop, Fonts, IconPack,
+                CocoonRow(CocoonOption.Surface),
+                CocoonRow(CocoonOption.IconStyle),
+                CocoonRow(CocoonOption.Motion),
+                Jingles
             )
     }
 }
@@ -219,6 +227,28 @@ fun ThemeSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
                 subtitle = fontsSubtitle(context, display.displayFontName, display.bodyFontName),
                 isFocused = isFocused(item),
                 onClick = { openFrom(item) { viewModel.navigateToThemeFonts() } }
+            )
+
+            is ThemeItem.CocoonRow -> {
+                if (isFocused(item)) CocoonOptionDemo("settings.themeDemo", item.option)
+                CocoonOptionRow(
+                    option = item.option,
+                    isFocused = isFocused(item),
+                    uiState = uiState,
+                    viewModel = viewModel
+                )
+            }
+
+            ThemeItem.Jingles -> NavigationPreference(
+                icon = Icons.Outlined.MusicNote,
+                title = stringResource(R.string.cocoon_jingles),
+                subtitle = stringResource(R.string.cocoon_jingles),
+                isFocused = isFocused(item),
+                onClick = {
+                    openFrom(item) {
+                        com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
+                    }
+                }
             )
 
             ThemeItem.IconPack -> IconPackRow(

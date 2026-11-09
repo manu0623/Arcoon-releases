@@ -942,6 +942,7 @@ class SecondaryHomeActivity :
 
     override fun refocusSelf() {
         if (dsm.isKeyguardShowing || dsm.isMovingGame) return
+        if (!refocusGuard.allow()) return
         startActivity(
             Intent(this, SecondaryHomeActivity::class.java).apply {
                 addFlags(
@@ -1177,3 +1178,6 @@ private const val HAND_BACK_THROTTLE_MS = 1500L
  */
 private const val SWAP_PREPARE_TIMEOUT_MS = 400L
 private const val SESSION_END_POLL_MS = 3000L
+
+/** Shared by every lower-screen window: taking the controller back must not become a tug-of-war. */
+private val refocusGuard = com.nendo.argosy.util.TugOfWarGuard("taking the controller back to the lower screen", limit = 10, backoffMs = 30_000L)

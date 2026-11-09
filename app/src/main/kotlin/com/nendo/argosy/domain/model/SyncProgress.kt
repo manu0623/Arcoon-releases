@@ -77,8 +77,13 @@ sealed class SyncProgress {
         val channelName: String?,
         val serverSaveId: Long? = null,
         val restoreFailed: Boolean = false,
-        val snapshotConflict: Boolean = false
+        val snapshotConflict: Boolean = false,
+        /** First sync on this device: its own save against the cloud's, the cloud save offered first. */
+        val firstSync: Boolean = false
     ) : SyncProgress()
+
+    /** A game never synced on this device, and RomM couldn't be checked before launching it. */
+    data class CloudUnchecked(val gameId: Long, val channelName: String?) : SyncProgress()
 
     data class PostSessionConflict(
         val gameTitle: String,

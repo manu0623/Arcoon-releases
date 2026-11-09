@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -117,53 +118,67 @@ fun CocoonWallpaper(modifier: Modifier = Modifier, animated: Boolean = true) {
             var next = 0L
             while (true) {
                 androidx.compose.runtime.withFrameMillis { t ->
-                    now = t
                     if (next == 0L) next = t + 300
                     if (t >= next) {
                         pulses.add(WallpaperPulse(random.nextInt(0, 1000), random.nextInt(0, 1000), t))
                         next = t + random.nextLong(380, 900)
                     }
                     if (pulses.any { t - it.start > PULSE_MS }) pulses.removeAll { t - it.start > PULSE_MS }
+                    // The tiles move slowly: 30 updates a second look the same as 60 and cost half.
+                    // With no tile moving nothing is redrawn at all.
+                    if (pulses.isNotEmpty() && t - now >= PULSE_FRAME_MS) now = t
                 }
             }
         }
     }
-    androidx.compose.foundation.layout.Spacer(
-        modifier = modifier
-            .fillMaxSize()
-            .drawWithCache {
-                val geo = WallpaperGeometry(size.width, size.height)
-                val base = geo.tilePath(1f, 0f)
-                val still = androidx.compose.ui.graphics.ImageBitmap(
-                    size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)
-                )
-                androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(
-                    this, layoutDirection, androidx.compose.ui.graphics.Canvas(still), size
-                ) {
-                    drawRect(WallpaperBackground)
-                    for (row in 0 until geo.rows) {
-                        for (col in 0 until geo.cols) {
-                            translate(geo.centerX(col), geo.centerY(row)) { drawPath(base, WallpaperTile) }
+    androidx.compose.foundation.layout.Box(modifier = modifier.fillMaxSize()) {
+        // The still field: recorded once into its own layer and only replayed afterwards, so the
+        // moving tiles never make the whole screen redraw.
+        androidx.compose.foundation.layout.Spacer(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer()
+                .drawWithCache {
+                    val geo = WallpaperGeometry(size.width, size.height)
+                    val base = geo.tilePath(1f, 0f)
+                    onDrawBehind {
+                        drawRect(WallpaperBackground)
+                        for (row in 0 until geo.rows) {
+                            for (col in 0 until geo.cols) {
+                                translate(geo.centerX(col), geo.centerY(row)) { drawPath(base, WallpaperTile) }
+                            }
                         }
                     }
                 }
-                onDrawBehind {
-                    drawImage(still)
-                    val t = now
-                    pulses.forEach { pulse ->
-                        val col = pulse.col % geo.cols
-                        val row = pulse.row % geo.rows
-                        val p = ((t - pulse.start).toFloat() / PULSE_MS).coerceIn(0f, 1f)
-                        val dip = kotlin.math.sin(p * kotlin.math.PI.toFloat())
-                        translate(geo.centerX(col), geo.centerY(row)) {
-                            drawPath(base, WallpaperBackground)
-                            drawPath(geo.tilePath(1f - 0.65f * dip, dip), WallpaperTile)
+        )
+        // Only the tiles that are moving, redrawn on their own small layer.
+        androidx.compose.foundation.layout.Spacer(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer()
+                .drawWithCache {
+                    val geo = WallpaperGeometry(size.width, size.height)
+                    val base = geo.tilePath(1f, 0f)
+                    onDrawBehind {
+                        val t = now
+                        pulses.forEach { pulse ->
+                            val col = pulse.col % geo.cols
+                            val row = pulse.row % geo.rows
+                            val p = ((t - pulse.start).toFloat() / PULSE_MS).coerceIn(0f, 1f)
+                            val dip = kotlin.math.sin(p * kotlin.math.PI.toFloat())
+                            translate(geo.centerX(col), geo.centerY(row)) {
+                                drawPath(base, WallpaperBackground)
+                                drawPath(geo.tilePath(1f - 0.65f * dip, dip), WallpaperTile)
+                            }
                         }
                     }
                 }
-            }
-    )
+        )
+    }
 }
+
+/** How often the moving tiles are redrawn (about 30 times a second). */
+private const val PULSE_FRAME_MS = 32L
 
 private val WallpaperBackground = Color(0xFF000000)
 private val WallpaperTile = Color(0xFF0A0A0A)

@@ -186,9 +186,59 @@ class ImageCacheManager @Inject constructor(
     private val volumeHealth: StorageVolumeHealth,
     private val fileAccessLayer: FileAccessLayer,
     private val appPreferencesRepository: AppPreferencesRepository,
-    private val embeddedMediaRepository: EmbeddedMediaRepository
+    private val embeddedMediaRepository: EmbeddedMediaRepository,
+    // Always supplied by the app; null only in tests that predate the banner progress bar.
+    private val notificationManager: com.nendo.argosy.core.notification.NotificationManager? = null
 ) {
     private val artModelScope = SafeCoroutineScope(Dispatchers.IO, "GameArtModel")
+
+    init {
+        artModelScope.launch { showBannerProgress() }
+    }
+
+    /**
+     * While a 3DS banner is drawn: the same progress notification a platform sync shows, with
+     * the game's name and how far it is, gone when the banner is done or the work stops.
+     */
+    private suspend fun showBannerProgress() {
+        val notifications = notificationManager ?: return
+        var shown = false
+        com.nendo.argosy.data.media.ThreeDsBannerWork.progress
+            .map { p -> p?.let { it.title to (it.fraction * 100).toInt().coerceIn(0, 100) } }
+            .distinctUntilChanged()
+            .collect { state ->
+                if (state == null) {
+                    if (shown) notifications.dismissPersistent(BANNER_PROGRESS_KEY)
+                    shown = false
+                    return@collect
+                }
+                val (title, percent) = state
+                val subtitle = if (title != null) {
+                    com.nendo.argosy.core.notification.NotificationText.Res(
+                        com.nendo.argosy.R.string.cocoon_banner_progress_game, listOf(title, percent)
+                    )
+                } else {
+                    com.nendo.argosy.core.notification.NotificationText.Res(
+                        com.nendo.argosy.R.string.cocoon_banner_progress_percent, listOf(percent)
+                    )
+                }
+                val progress = com.nendo.argosy.core.notification.NotificationProgress(percent, 100)
+                if (!shown) {
+                    notifications.showPersistent(
+                        title = com.nendo.argosy.core.notification.NotificationText.Res(
+                            com.nendo.argosy.R.string.cocoon_banner_progress_title
+                        ),
+                        subtitle = subtitle,
+                        key = BANNER_PROGRESS_KEY,
+                        progress = progress,
+                        platformSlug = "3ds"
+                    )
+                    shown = true
+                } else {
+                    notifications.updatePersistent(BANNER_PROGRESS_KEY, subtitle = subtitle, progress = progress)
+                }
+            }
+    }
     private val embeddedBannerRevision = kotlinx.coroutines.flow.MutableStateFlow(0)
     private val artRevision = kotlinx.coroutines.flow.MutableStateFlow(0L)
     // Declared before gameArt: it starts collecting at once and may reach backfill3dsBanners.
@@ -293,6 +343,7 @@ class ImageCacheManager @Inject constructor(
             if (embeddedMediaRepository.getCachedBannerImageFile(id) != null) continue
             val path = game.localPath ?: continue
             android.util.Log.i("ArcoonTrace", "3DS banner backfill: game $id from ${java.io.File(path).name}")
+            com.nendo.argosy.data.media.ThreeDsBannerWork.begin(runCatching { gameDao.getById(game.id)?.title }.getOrNull())
             try {
                 embeddedMediaRepository.extractAndCacheForGame(id, path)
             } catch (stopped: kotlinx.coroutines.CancellationException) {
@@ -300,6 +351,8 @@ class ImageCacheManager @Inject constructor(
                 break
             } catch (error: Exception) {
                 android.util.Log.w("ArcoonTrace", "3DS banner backfill failed for game $id", error)
+            } finally {
+                com.nendo.argosy.data.media.ThreeDsBannerWork.end()
             }
             if (embeddedMediaRepository.getCachedBannerArtFile(id) != null) refreshEmbeddedBannerArt(game.id)
         }
@@ -399,6 +452,7 @@ class ImageCacheManager @Inject constructor(
     fun getCurrentCachePath(): String = cacheDir.absolutePath
 
     companion object {
+        private const val BANNER_PROGRESS_KEY = "3ds-banner-progress"
         private const val MAX_IN_MEMORY_IMAGE_BYTES = 8 * 1024 * 1024
         private const val DEFAULT_IMAGE_BUFFER_BYTES = 64 * 1024
         private const val CACHE_SUBFOLDER = "argosy_images"

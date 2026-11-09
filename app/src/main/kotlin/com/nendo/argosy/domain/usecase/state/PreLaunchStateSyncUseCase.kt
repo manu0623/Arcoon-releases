@@ -157,6 +157,7 @@ class PreLaunchStateSyncUseCase @Inject constructor(
             val linked = localByRommId[serverState.id]
             val localState = linked ?: localBySlot[slotNumber to stateChannelKey(parsed.channelName)]
             val serverUpdatedAt = com.nendo.argosy.data.repository.SaveSyncApiClient.parseTimestampOrNull(serverState.updatedAt)
+            val serverWrittenAt = stateCacheManager.serverStateWrittenAt(serverState)
 
             val shouldDownload = when {
                 localState == null -> {
@@ -179,6 +180,10 @@ class PreLaunchStateSyncUseCase @Inject constructor(
                 }
                 serverUpdatedAt == null -> {
                     Log.w(TAG, "Server state ${serverState.fileName} has unparseable updated_at, skipping")
+                    false
+                }
+                isOwnSyncedCopy(localState, linked, serverWrittenAt) -> {
+                    Log.d(TAG, "Server state ${serverState.fileName} is the copy already here (written $serverWrittenAt)")
                     false
                 }
                 localState.serverUpdatedAt == null || serverUpdatedAt.isAfter(localState.serverUpdatedAt) -> {
@@ -232,6 +237,17 @@ class PreLaunchStateSyncUseCase @Inject constructor(
             Result.Ready
         }
     }
+
+    private fun isOwnSyncedCopy(
+        localState: StateCacheEntity,
+        linked: StateCacheEntity?,
+        serverWrittenAt: Instant?
+    ): Boolean = linked != null &&
+        localState.lastUploadedHash != null &&
+        localState.syncStatus == StateCacheEntity.STATUS_SYNCED &&
+        serverWrittenAt != null &&
+        localState.serverUpdatedAt != null &&
+        !serverWrittenAt.isAfter(localState.serverUpdatedAt)
 
     /**
      * The one state per slot worth bringing down: the newest.

@@ -400,4 +400,19 @@
          the default one. %1$s is the core that failed, %2$s the one used instead. Both
          are core names from the libretro project; leave them as they are. -->
     <string name="sync_launch_core_fallback">Failed to load %1$s, using %2$s instead</string>
+    <!-- First sync on this device: the device has a save that never came from the cloud -->
+    <string name="sync_first_sync_title">Two Saves Found</string>
+    <string name="sync_first_sync_message">RomM has a save for \"%1$s\" from another device, and this device has one of its own.</string>
+    <string name="sync_first_sync_question">Which one do you want to continue? The other one is kept and can be restored later.</string>
+    <string name="sync_first_sync_cloud">Continue the Cloud Save</string>
+    <string name="sync_first_sync_cloud_subtitle">Your progress from the other device</string>
+    <string name="sync_first_sync_local">Keep This Device\'s Save</string>
+    <string name="sync_first_sync_local_subtitle">It becomes the save in RomM</string>
+    <string name="sync_progress_first_sync">Two saves found</string>
+    <!-- First launch on this device and RomM couldn't be checked -->
+    <string name="sync_cloud_unchecked_title">Cloud Save Not Checked</string>
+    <string name="sync_cloud_unchecked_message">Arcoon couldn\'t reach RomM to get your save for \"%1$s\". If you play now, you may not continue where you left off on another device.</string>
+    <string name="sync_cloud_unchecked_play">Play Anyway</string>
+    <string name="sync_cloud_unchecked_play_subtitle">Nothing is uploaded until RomM\'s save has been checked</string>
+    <string name="sync_progress_cloud_unchecked">Cloud save not checked</string>
 </resources>

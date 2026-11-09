@@ -121,6 +121,11 @@ fun CocoonHomeScreen(
     onOpenSettings: () -> Unit,
     onEditPlatform: (Long) -> Unit = {},
     onNavigate: (String) -> Unit = {},
+    /**
+     * False while Home is kept alive underneath another screen (a folder, Settings): it then takes
+     * no input and does not drive the top screen. Becoming true again is "coming back".
+     */
+    active: Boolean = true,
     viewModel: CocoonHomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -208,21 +213,33 @@ fun CocoonHomeScreen(
         )
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val isActive by androidx.compose.runtime.rememberUpdatedState(active)
     DisposableEffect(lifecycleOwner, inputHandler) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
+            if (event == Lifecycle.Event.ON_RESUME && isActive) {
                 inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_HOME)
                 viewModel.refreshCollections()
                 if (CocoonFolderZoom.returning) returningFromFolder = true
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_HOME)
+        if (isActive) inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_HOME)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // Kept alive underneath: coming back to Home does what a fresh Home used to do on arrival
+    // (take the pad, refresh, zoom back out of the folder) without rebuilding the board.
+    var wasActive by remember { androidx.compose.runtime.mutableStateOf(active) }
+    LaunchedEffect(active) {
+        if (active && !wasActive) {
+            inputDispatcher.subscribeView(inputHandler, forRoute = Screen.ROUTE_HOME)
+            viewModel.refreshCollections()
+            if (CocoonFolderZoom.returning) returningFromFolder = true
+        }
+        wasActive = active
     }
 
     val focused = state.focusedTile
-    if (focused != null) {
+    if (focused != null && active) {
         val artGameId = (focused.target as? CocoonTileTarget.NowPlaying)?.gameId
             ?: (focused.target as? CocoonTileTarget.Game)?.gameId
         val art = artGameId?.let { com.nendo.argosy.ui.common.rememberResolvedArt(it) }

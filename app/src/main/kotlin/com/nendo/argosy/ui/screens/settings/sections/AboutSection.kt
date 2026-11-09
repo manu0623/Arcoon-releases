@@ -83,6 +83,11 @@ internal sealed class AboutItem(
     data object SystemSpacer : AboutItem("systemSpacer", "system")
     data object SystemizeHelper : AboutItem("systemizeHelper", "system")
     data object RestartApp : AboutItem("restartApp", "system")
+    data class CocoonRow(val option: CocoonOption) : AboutItem(
+        key = option.key,
+        section = if (option == CocoonOption.BackupHome) "backup" else "system"
+    )
+
     data object SectionSpacer : AboutItem("spacer", "debug")
     data object FileLogging : AboutItem("fileLogging", "debug")
     data object LogLevel : AboutItem(
@@ -106,7 +111,9 @@ internal sealed class AboutItem(
             get() = listOf(
                 VersionHeader, VersionInfo, CheckUpdates, ChangelogPreview, BetaUpdates,
                 BackupSpacer, BackupHeader, ExportSettings, ImportSettings,
+                CocoonRow(CocoonOption.BackupHome),
                 SystemSpacer, SystemHeader, SystemizeHelper, RestartApp,
+                CocoonRow(CocoonOption.Optimize), CocoonRow(CocoonOption.FreeMemory),
                 SectionSpacer, DebugHeader, FileLogging, LogLevel, SaveDebugLogging
             )
     }
@@ -300,6 +307,13 @@ fun AboutSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
                     subtitle = stringResource(R.string.settings_about_restart_subtitle),
                     isFocused = isFocused(item),
                     onClick = { viewModel.restartApp() }
+                )
+
+                is AboutItem.CocoonRow -> CocoonOptionRow(
+                    option = item.option,
+                    isFocused = isFocused(item),
+                    uiState = uiState,
+                    viewModel = viewModel
                 )
 
                 AboutItem.SectionSpacer -> Spacer(modifier = Modifier.height(Dimens.spacingMd))

@@ -61,7 +61,12 @@ fun SyncProgress.statusMessage(): String = when (this) {
     is SyncProgress.Error -> message
     is SyncProgress.Skipped -> stringResource(R.string.sync_progress_skipped)
     is SyncProgress.HardcoreConflict -> stringResource(R.string.sync_progress_hardcore_conflict)
-    is SyncProgress.LocalModified -> stringResource(R.string.sync_progress_local_modified)
+    is SyncProgress.LocalModified -> if (firstSync) {
+        stringResource(R.string.sync_progress_first_sync)
+    } else {
+        stringResource(R.string.sync_progress_local_modified)
+    }
+    is SyncProgress.CloudUnchecked -> stringResource(R.string.sync_progress_cloud_unchecked)
     is SyncProgress.PostSessionConflict -> stringResource(R.string.sync_progress_save_conflict)
     is SyncProgress.BlockedReason.PermissionRequired ->
         stringResource(R.string.sync_blocked_permission_title)

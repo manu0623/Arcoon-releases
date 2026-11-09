@@ -22,6 +22,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nendo.argosy.R
 import com.nendo.argosy.data.preferences.HomeBackgroundMode
+import com.nendo.argosy.data.preferences.LauncherUiMode
 import com.nendo.argosy.domain.model.HomeLayoutKind
 import com.nendo.argosy.ui.components.ActionPreference
 import com.nendo.argosy.ui.components.CyclePreference
@@ -87,6 +88,12 @@ internal sealed class HomeScreenItem(
         key = "videoMuted",
         section = "video",
         visibleWhen = { it.videoWallpaperEnabled && drawsBackgroundArt(it) }
+    )
+
+    data class CocoonRow(val option: CocoonOption) : HomeScreenItem(
+        key = option.key,
+        section = "cocoon",
+        visibleWhen = { it.launcherUiMode == LauncherUiMode.COCOON }
     )
 
     data object LayoutPreview : HomeScreenItem("layoutPreview", "layout")
@@ -161,7 +168,17 @@ internal sealed class HomeScreenItem(
                 BackgroundHeader,
                 Background, GameArtwork, CustomImage, Blur, Saturation, Opacity,
                 VideoHeader,
-                VideoWallpaper, VideoDelay, VideoMuted
+                VideoWallpaper, VideoDelay, VideoMuted,
+                Header("cocoonHeader", "cocoon", R.string.cocoon_personal_title),
+                CocoonRow(CocoonOption.Cursor),
+                CocoonRow(CocoonOption.Thickness),
+                CocoonRow(CocoonOption.DockShape),
+                CocoonRow(CocoonOption.DockPosition),
+                CocoonRow(CocoonOption.DockBackground),
+                CocoonRow(CocoonOption.DockAutoHide),
+                CocoonRow(CocoonOption.NowPlaying),
+                CocoonRow(CocoonOption.SingleScreen),
+                CocoonRow(CocoonOption.RestoreHome)
             )
     }
 }
@@ -177,6 +194,7 @@ private val homeScreenLayout = SettingsLayout<HomeScreenItem, DisplayState>(
             "background" -> R.string.settings_home_screen_section_background
             "video" -> R.string.settings_home_screen_section_video
             "content" -> R.string.settings_home_screen_section_content
+            "cocoon" -> R.string.cocoon_personal_title
             else -> null
         }
     }
@@ -204,9 +222,16 @@ fun HomeScreenSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     val presentsPreview = com.nendo.argosy.DualScreenManagerHolder.instance
         ?.isCompanionActive?.collectAsState()?.value == true
     if (presentsPreview) {
+        val cocoon = display.launcherUiMode == LauncherUiMode.COCOON
+        val demo = cocoonDemoKindAtFocus(uiState)
         com.nendo.argosy.ui.dualscreen.PresentOnCompanion(
             owner = com.nendo.argosy.ui.dualscreen.SlotOwner("settings.homeScreen"),
-            slot = com.nendo.argosy.ui.dualscreen.PresentationSlot.HomeLayoutPreview(display.homeLayout)
+            slot = when {
+                cocoon -> com.nendo.argosy.ui.dualscreen.PresentationSlot.CocoonDemo(
+                    demo ?: com.nendo.argosy.ui.cocoon.theme.CocoonPreviewKind.HOME
+                )
+                else -> com.nendo.argosy.ui.dualscreen.PresentationSlot.HomeLayoutPreview(display.homeLayout)
+            }
         )
     }
 
@@ -218,7 +243,8 @@ fun HomeScreenSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
         display.homeLayout.selected,
         display.homeLayout.customGrid.gridKind,
         display.box3dCapableGames,
-        display.homeLayout.boxArt3d
+        display.homeLayout.boxArt3d,
+        display.launcherUiMode
     ) {
         homeScreenLayout.visibleItems(display)
     }
@@ -231,6 +257,7 @@ fun HomeScreenSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
         display.homeLayout.customGrid.gridKind,
         display.box3dCapableGames,
         display.homeLayout.boxArt3d,
+        display.launcherUiMode,
         context
     ) {
         homeScreenLayout.buildSections(display, context)
@@ -408,6 +435,13 @@ fun HomeScreenSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
                     isEnabled = display.installedOnlyHome,
                     isFocused = isFocused(item),
                     onToggle = { viewModel.setInstalledOnlyHome(it) }
+                )
+
+                is HomeScreenItem.CocoonRow -> CocoonOptionRow(
+                    option = item.option,
+                    isFocused = isFocused(item),
+                    uiState = uiState,
+                    viewModel = viewModel
                 )
             }
     }

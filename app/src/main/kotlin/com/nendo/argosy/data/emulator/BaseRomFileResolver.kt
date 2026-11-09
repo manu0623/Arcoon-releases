@@ -22,7 +22,9 @@ private const val TAG = "BaseRomFileResolver"
 @Singleton
 class BaseRomFileResolver @Inject constructor(
     private val gameDao: GameDao,
-    private val platformFolderResolver: PlatformFolderResolver
+    private val platformFolderResolver: PlatformFolderResolver,
+    // Always supplied by the app; null only in tests written before packs were told apart.
+    private val azaharTexturePacks: AzaharTexturePacks? = null
 ) {
     /**
      * An update or DLC file is unbootable alone, so redirect to the base rom and persist it.
@@ -44,7 +46,14 @@ class BaseRomFileResolver @Inject constructor(
         val candidates = (gameFolder.listFiles()?.filter { it.isFile } ?: return romFile)
             .filterNot { isUpdateOrDlc(it.name) }
         val base = if (excluded) {
-            candidates.maxByOrNull { it.length() }
+            // A 3DS game's folder can also hold its HD texture pack, often bigger than the game:
+            // chosen as "the largest file", the pack was launched and the core refused it
+            // (Ocarina of Time 3D). Packs are never the game, and a plain ROM file beats any archive.
+            val games = candidates.filterNot { isTexturePack(game, it) }.ifEmpty { candidates }
+            val romExtensions = com.nendo.argosy.data.platform.PlatformDefinitions
+                .definitionFor(game.platformSlug)?.extensions.orEmpty() - ARCHIVE_EXTENSIONS
+            games.filter { it.extension.lowercase() in romExtensions }.maxByOrNull { it.length() }
+                ?: games.maxByOrNull { it.length() }
         } else {
             candidates.firstOrNull { it.extension.equals("m3u", ignoreCase = true) }
                 ?: candidates.maxByOrNull { it.length() }
@@ -53,6 +62,12 @@ class BaseRomFileResolver @Inject constructor(
         Logger.info(TAG, "redirecting ${romFile.name} -> ${base.name} for ${game.title}")
         gameDao.updateLocalPath(game.id, base.absolutePath, game.source, game.fileOrigin)
         return base
+    }
+
+    private fun isTexturePack(game: GameEntity, file: File): Boolean {
+        val packs = azaharTexturePacks ?: return false
+        return packs.appliesTo(game.platformSlug) &&
+            runCatching { packs.looksLikeTexturePack(file.name, null, file) }.getOrDefault(false)
     }
 
     private fun isUpdateOrDlc(fileName: String): Boolean {
@@ -78,5 +93,6 @@ class BaseRomFileResolver @Inject constructor(
     private companion object {
         val UPDATE_DLC_SUFFIX = Regex("(?i)[ _-]+(update|dlc)([ _-]?\\d+)?$")
         val UPDATE_DLC_TAG = Regex("(?i)\\[(upd|update|dlc)]")
+        val ARCHIVE_EXTENSIONS = setOf("zip", "7z")
     }
 }

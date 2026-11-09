@@ -32,7 +32,13 @@ object LibretroCoreRegistry {
          * timer and never at unload, so pausing or quitting inside the window loses the save.
          */
         val saveFlushWindowMs: Long = 0L,
-        val requires64BitProcess: Boolean = false
+        val requires64BitProcess: Boolean = false,
+        /**
+         * Arcoon ships its own build of this core inside the app, used ahead of a downloaded one
+         * and never replaced by a buildbot update. melonDS DS: the OpenGL ES build, whose GPU
+         * renderer can upscale 3D (the buildbot build only renders in software on Android).
+         */
+        val prefersBundledBuild: Boolean = false
     )
 
     private val cores: List<CoreInfo> by lazy { coresFor(LibretroBuildbot.processIs64Bit) }
@@ -283,7 +289,8 @@ object LibretroCoreRegistry {
             fileName = "melondsds_libretro_android.so",
             displayName = "melonDS DS",
             platforms = setOf("nds", "ds", "dsi"),
-            requiresBios = listOf("bios7.bin", "bios9.bin", "firmware.bin")
+            requiresBios = listOf("bios7.bin", "bios9.bin", "firmware.bin"),
+            prefersBundledBuild = true
         ),
 
         CoreInfo(
@@ -626,7 +633,12 @@ object LibretroCoreRegistry {
         return hwCoreSaveStatesEnabled || !serializeMayCrash(coreId)
     }
 
-    fun getCoreByFileName(fileName: String): CoreInfo? = cores.find { it.fileName == fileName }
+    /**
+     * Also matches the copy built into the app, which Android requires to be named "lib" + the
+     * file name (libmelondsds_libretro_android.so for melondsds_libretro_android.so).
+     */
+    fun getCoreByFileName(fileName: String): CoreInfo? =
+        cores.find { it.fileName == fileName || "lib${it.fileName}" == fileName }
 
     fun getCoresForPlatform(platformSlug: String): List<CoreInfo> {
         val canonical = PlatformDefinitions.getCanonicalSlug(platformSlug)

@@ -85,13 +85,22 @@ class CocoonHomeViewModel @Inject constructor(
                 // The same pictures the top screen asks for, decoded at about its full size (so the
                 // top screen is served from memory at whatever size it draws them). One already in
                 // memory is only looked up, so moving back and forth costs nothing.
-                val models: List<Any> = listOfNotNull(hero, logo, com.nendo.argosy.ui.common.fileImageModel(gameArt))
-                for (model in models) {
+                // The logo at the size the top screen asks for it (1024), which the board already
+                // warmed at start-up, so it is only looked up. Asking for it at 2048 decoded every
+                // logo again at four times the pixels, about 16 MB each, the first time each
+                // folder was highlighted: that burst is what made the first highlights skip frames.
+                val models: List<Pair<Any, Int>> = listOfNotNull(
+                    hero?.let { it to HERO_PREFETCH_PX },
+                    logo?.let { it to HERO_LOGO_WARM_PX },
+                    com.nendo.argosy.ui.common.fileImageModel(gameArt)?.let { it to HERO_PREFETCH_PX }
+                )
+                for ((model, px) in models) {
                     runCatching {
                         loader.execute(
                             coil.request.ImageRequest.Builder(context)
                                 .data(model)
-                                .size(HERO_PREFETCH_PX, HERO_PREFETCH_PX)
+                                .size(px, px)
+                                .dispatcher(CocoonPrefetch.dispatcher)
                                 .build()
                         )
                     }
@@ -107,8 +116,10 @@ class CocoonHomeViewModel @Inject constructor(
         coverPrefetch?.cancel()
         val platformId = (tile?.target as? CocoonTileTarget.Platform)?.platformId ?: return
         coverPrefetch = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            kotlinx.coroutines.delay(60)
-            val games = runCatching { gameDao.getByPlatformTitleOrdered(platformId, null, 30, 0) }
+            // Only once the cursor rests on the folder: holding a direction used to start (and
+            // cancel) a batch of covers for every folder passed, which competed with drawing.
+            kotlinx.coroutines.delay(COVER_PREFETCH_SETTLE_MS)
+            val games = runCatching { gameDao.getByPlatformTitleOrdered(platformId, null, COVER_PREFETCH_COUNT, 0) }
                 .getOrNull() ?: return@launch
             val loader = coil.Coil.imageLoader(context)
             synchronized(coverRequests) {
@@ -121,11 +132,8 @@ class CocoonHomeViewModel @Inject constructor(
                 val data: Any = CocoonThumbs.model(context, path) ?: return@forEach
                 // Exactly the request a folder tile makes (same size and the same trim): the image
                 // cache keys pictures by both, and without the trim these prefetches were never used.
-                val request = coil.request.ImageRequest.Builder(context)
-                    .data(data)
-                    .size(COCOON_COVER_DECODE_PX)
-                    .transformations(CocoonCoverTrim)
-                    .build()
+                // two low-priority threads, so the screens are always drawn first
+                val request = CocoonThumbs.coverRequest(context, data, COCOON_COVER_DECODE_PX, CocoonPrefetch.dispatcher)
                 synchronized(coverRequests) { coverRequests.add(loader.enqueue(request)) }
             }
         }
@@ -1020,19 +1028,57 @@ class CocoonHomeViewModel @Inject constructor(
                     val file = runCatching {
                         com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.folderArt(tile.glyph, tile.platformSlug, part)
                     }.getOrNull() ?: continue
+                    if (part == "icon" && CocoonFolderIconCache.get(file) != null) continue
                     runCatching {
-                        loader.execute(
+                        val result = loader.execute(
                             coil.request.ImageRequest.Builder(context)
                                 .data(file)
                                 .size(if (part == "icon") COCOON_FOLDER_ICON_WARM_PX else HERO_LOGO_WARM_PX)
+                                .dispatcher(CocoonPrefetch.dispatcher)
                                 .build()
                         )
+                        if (part == "icon") CocoonFolderIconCache.keep(file, result.drawable)
                     }
                 }
                 // the hero lookup only (no decode: those are large); the cursor's neighbours get theirs decoded
                 runCatching { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.folderArt(tile.glyph, tile.platformSlug, "hero") }
             }
+            warmFolderCovers(tiles, loader)
         }
+    }
+
+    /**
+     * The first covers of every platform folder, loaded into memory in the background a moment
+     * after Home is up, nearest folders first: highlighting or opening a folder then finds them
+     * ready instead of loading them on the spot. Kept within [FOLDER_COVER_BUDGET] pictures in all,
+     * so it never pushes out what is on screen. Low priority, so drawing always comes first.
+     */
+    private suspend fun warmFolderCovers(tiles: List<CocoonTile>, loader: coil.ImageLoader) {
+        kotlinx.coroutines.delay(FOLDER_COVER_WARM_DELAY_MS)
+        val center = _state.value.focusedIndex
+        val folders = tiles
+            .mapIndexedNotNull { i, tile -> (tile.target as? CocoonTileTarget.Platform)?.let { i to it.platformId } }
+            .sortedBy { (i, _) -> kotlin.math.abs(i / COCOON_BOARD_ROWS - center / COCOON_BOARD_ROWS) }
+            .map { it.second }
+            .distinct()
+        if (folders.isEmpty()) return
+        val perFolder = (FOLDER_COVER_BUDGET / folders.size).coerceIn(FOLDER_COVER_MIN, COVER_PREFETCH_COUNT)
+        var warmed = 0
+        for (platformId in folders) {
+            val games = runCatching { gameDao.getByPlatformTitleOrdered(platformId, null, perFolder, 0) }
+                .getOrNull() ?: continue
+            for (game in games) {
+                if (warmed >= FOLDER_COVER_BUDGET) return
+                val path = (imageCacheManager.artFor(game.id) ?: runCatching { imageCacheManager.loadArt(game.id) }.getOrNull())
+                    ?.coverPath ?: continue
+                val data: Any = CocoonThumbs.model(context, path) ?: continue
+                runCatching {
+                    loader.execute(CocoonThumbs.coverRequest(context, data, COCOON_COVER_DECODE_PX, CocoonPrefetch.dispatcher))
+                }
+                warmed++
+            }
+        }
+        com.nendo.argosy.util.ArcoonTrace.log("home: $warmed folder covers ready in memory (${folders.size} folders)")
     }
 
     // ---- Folder appearance (Y ▸ Appearance) ----
@@ -1073,7 +1119,10 @@ class CocoonHomeViewModel @Inject constructor(
         val now = _state.value.focusedTile
         focusSettled = true
         rememberFocus()
-        if (now?.key != before) prefetchCovers(now)
+        if (now?.key != before) {
+            com.nendo.argosy.util.ArcoonTrace.log("home focus ${now?.key}")
+            prefetchCovers(now)
+        }
     }
 
     /** The board slot one step from [index] on the column-major board, or null at an edge. */
@@ -1618,7 +1667,18 @@ object CocoonBoardCache {
 
 /** Top-screen pictures are warmed at up to this size: the top screen's full width. */
 private const val HERO_PREFETCH_PX = 2048
-private const val HERO_PREFETCH_SETTLE_MS = 140L
+/** After the top screen's own fade (about 230 ms) is done, so preparing never competes with it. */
+private const val HERO_PREFETCH_SETTLE_MS = 320L
+/** How long the cursor must rest on a folder before its covers are prepared. */
+private const val COVER_PREFETCH_SETTLE_MS = 280L
+/** Covers prepared ahead: about what a folder shows when it opens. */
+private const val COVER_PREFETCH_COUNT = 15
+/** Covers of all folders held ready in memory at most (each is about 1 MB). */
+private const val FOLDER_COVER_BUDGET = 120
+/** Every folder gets at least this many ready, however many folders there are. */
+private const val FOLDER_COVER_MIN = 6
+/** Home settles (and its own pictures load) before the folders' covers are warmed. */
+private const val FOLDER_COVER_WARM_DELAY_MS = 3000L
 /** Same size the board's folder art decodes at, so the warm copy is the one it uses. */
 private const val COCOON_FOLDER_ICON_WARM_PX = 320
 /** Big enough for the top screen's logo, which then comes from memory. */

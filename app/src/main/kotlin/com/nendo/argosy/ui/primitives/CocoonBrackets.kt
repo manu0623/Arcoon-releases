@@ -37,6 +37,9 @@ object CocoonBracketSpec {
     /** How far the brackets drift outward at the top of each breath, and the half-cycle length. */
     val breath: Dp = 2.dp
     const val breathMs = 900
+    const val glideMs = 260
+    val glideEasing: androidx.compose.animation.core.Easing =
+        androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
 }
 
 /**
@@ -384,10 +387,17 @@ fun CocoonCursorHost(
 private const val GLIDE_SECONDS = 0.26f
 /**
  * A move that comes while the last glide is still running (a held direction repeats every
- * 60-80 ms) glides this fast instead, so the brackets keep up with the highlight rather than
- * trailing further behind with every step.
+ * 60-80 ms, or a double tap) glides this long instead. Each glide starts where the brackets are,
+ * so a held direction becomes one continuous slide a step behind at most. It was 70 ms on a
+ * strongly front-loaded curve: four frames, nearly a jump.
  */
-private const val QUICK_GLIDE_SECONDS = 0.07f
+private const val QUICK_GLIDE_SECONDS = 0.12f
+/** Fast moves keep an even speed and only soften at the end, so a run of them flows. */
+private val QUICK_GLIDE_EASE = androidx.compose.animation.core.CubicBezierEasing(0.33f, 0.33f, 0.55f, 1f)
+/** One 60 Hz frame: how far a glide moves on its first frame, however late that frame is. */
+private const val FRAME_SECONDS = 0.0167f
+/** A slow frame moves the glide at most this far (a little more than one frame). */
+private const val MAX_STEP_SECONDS = 0.025f
 /** A cursor entering a newly opened menu fresh fades in over this long. */
 private const val ENTRY_FADE_NANOS = 200_000_000L
 private val GLIDE_EASE = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
@@ -408,6 +418,7 @@ private class CursorFollower {
     private var startB = 0f
     private var elapsed = 1f
     private var glideSeconds = GLIDE_SECONDS
+    private var glideEase: androidx.compose.animation.core.Easing = GLIDE_EASE
     private var lastMoveNanos = 0L
 
     val drawnKey: Any? get() = key
@@ -431,6 +442,7 @@ private class CursorFollower {
                 growNext = false
                 startL = 0f; startT = 0f; startB = 0f
                 glideSeconds = GLIDE_SECONDS
+                glideEase = GLIDE_EASE
                 startR = (goal.left + goal.height) - goal.right
                 gapL = 0f; gapT = 0f; gapB = 0f; gapR = startR
                 elapsed = 0f
@@ -439,7 +451,9 @@ private class CursorFollower {
                 val now = System.nanoTime()
                 val sinceLast = (now - lastMoveNanos) / 1e9f
                 lastMoveNanos = now
-                glideSeconds = if (sinceLast < GLIDE_SECONDS) QUICK_GLIDE_SECONDS else GLIDE_SECONDS
+                val quick = sinceLast < GLIDE_SECONDS
+                glideSeconds = if (quick) QUICK_GLIDE_SECONDS else GLIDE_SECONDS
+                glideEase = if (quick) QUICK_GLIDE_EASE else GLIDE_EASE
                 startL = current.left - goal.left
                 startT = current.top - goal.top
                 startR = current.right - goal.right
@@ -456,8 +470,14 @@ private class CursorFollower {
     /** Called once a frame; true while the cursor is still gliding (so it redraws). */
     fun decay(dt: Float): Boolean {
         if (elapsed >= 1f) return false
-        elapsed = (elapsed + dt / glideSeconds).coerceAtMost(1f)
-        val remaining = 1f - GLIDE_EASE.transform(elapsed)
+        // The first frame of a glide often comes late (the press that started it also rebuilt
+        // the screens); counted in full, the fast start of the ease jumped the cursor most of the
+        // way at once, which felt like being held and then pulled. The glide starts with one
+        // ordinary frame's step, and a slow frame later on stretches it a little instead of
+        // skipping ahead.
+        val step = if (elapsed == 0f) minOf(dt, FRAME_SECONDS) else minOf(dt, MAX_STEP_SECONDS)
+        elapsed = (elapsed + step / glideSeconds).coerceAtMost(1f)
+        val remaining = 1f - glideEase.transform(elapsed)
         gapL = startL * remaining; gapT = startT * remaining
         gapR = startR * remaining; gapB = startB * remaining
         return true

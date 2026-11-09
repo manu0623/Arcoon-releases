@@ -47,6 +47,14 @@ sealed interface PresentationSlot {
 
     data class Detail(val detail: CompanionDetail) : PresentationSlot
 
+    /**
+     * A settings demo drawn whole-panel while its option is highlighted: the screen the setting
+     * changes, not a thumbnail of it in the list.
+     */
+    data class CocoonDemo(
+        val kind: com.nendo.argosy.ui.cocoon.theme.CocoonPreviewKind
+    ) : PresentationSlot
+
     /** The Cocoon board's focused tile, drawn large with its name card. */
     data class CocoonHero(
         val title: String?,

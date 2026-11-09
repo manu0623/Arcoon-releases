@@ -159,6 +159,10 @@ private fun nextRommAuthMethod(current: RomMAuthMethod): RomMAuthMethod = when (
 
 internal fun routeConfirm(vm: SettingsViewModel): InputResult {
     val state = vm._uiState.value
+    com.nendo.argosy.ui.screens.settings.sections.cocoonOptionKeyAtFocus(state)?.let { key ->
+        com.nendo.argosy.ui.screens.settings.sections.routeCocoonOptionConfirm(vm, key)
+        return InputResult.HANDLED
+    }
     return when (state.currentSection) {
         SettingsSection.MAIN -> {
             val item = mainSettingsItemAtFocusIndex(state.focusedIndex, state.controls)
@@ -767,9 +771,6 @@ private fun routeInterfaceConfirm(vm: SettingsViewModel, state: SettingsUiState)
                     com.nendo.argosy.data.preferences.LauncherUiMode.CLASSIC
                 else com.nendo.argosy.data.preferences.LauncherUiMode.COCOON
             )
-        }
-        InterfaceItem.Personalization -> {
-            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
         }
         else -> {}
     }

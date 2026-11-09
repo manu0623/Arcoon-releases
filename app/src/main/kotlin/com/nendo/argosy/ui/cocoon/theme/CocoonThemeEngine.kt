@@ -107,6 +107,7 @@ object CocoonThemeEngine {
         val roots = artRoots()
         if (roots != folderArtRoots) {
             folderArtCache.clear()
+            com.nendo.argosy.ui.cocoon.CocoonFolderIconCache.clear()
             folderArtRoots = roots
         }
         val key = "${glyph.name}|${platformSlug.orEmpty()}|${part.lowercase()}"
@@ -217,6 +218,7 @@ object CocoonThemeEngine {
 
     fun refresh() {
         folderArtCache.clear()
+        com.nendo.argosy.ui.cocoon.CocoonFolderIconCache.clear()
         val enabled = prefs()?.getStringSet("packs_enabled", emptySet()).orEmpty()
         packs.value = appContext?.let { packsRoot(it) }?.listFiles().orEmpty().toList()
             .filter { it.isDirectory }

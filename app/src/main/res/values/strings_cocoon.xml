@@ -386,4 +386,8 @@
     <string name="cocoon_details_fact_released">Released</string>
     <string name="cocoon_details_fact_genre">Genre</string>
     <string name="cocoon_details_fact_players">Players</string>
+    <!-- Progress notification while a 3DS game's banner is drawn -->
+    <string name="cocoon_banner_progress_title">Creating 3DS banner</string>
+    <string name="cocoon_banner_progress_game">%1$s · %2$d%%</string>
+    <string name="cocoon_banner_progress_percent">%1$d%% done</string>
 </resources>

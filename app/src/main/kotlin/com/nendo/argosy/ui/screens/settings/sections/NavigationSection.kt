@@ -3,6 +3,7 @@ package com.nendo.argosy.ui.screens.settings.sections
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -90,6 +91,8 @@ internal sealed class NavigationItem(
         visibleWhen = { it.quickNavigation }
     )
 
+    data class CocoonRow(val option: CocoonOption) : NavigationItem(option.key, "menus")
+
     data object OpenNavigationShortcut : NavigationItem("openNavigationKey", "shortcuts")
     data object OpenQuickPanelShortcut : NavigationItem("openQuickPanelKey", "shortcuts")
 
@@ -121,6 +124,7 @@ internal sealed class NavigationItem(
                 HapticFeedback, VibrationStrength,
                 MenusSpacer, MenusHeader,
                 MenuWrap, SelectLCombo, SelectRCombo, SelectSwap,
+                CocoonRow(CocoonOption.HomeMenu),
                 NavBarSpacer, NavBarHeader,
                 QuickNavigation, NavBarAutoHide, NavBarPages,
                 ShortcutsSpacer, ShortcutsHeader,
@@ -331,6 +335,16 @@ fun NavigationSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
                 ),
                 onClick = { viewModel.showNavRingModal() }
             )
+
+            is NavigationItem.CocoonRow -> {
+                if (isFocused(item)) CocoonOptionDemo("settings.navigationDemo", item.option)
+                CocoonOptionRow(
+                    option = item.option,
+                    isFocused = isFocused(item),
+                    uiState = uiState,
+                    viewModel = viewModel
+                )
+            }
 
             NavigationItem.OpenNavigationShortcut -> ShortcutKeyPreference(
                 title = stringResource(R.string.settings_navigation_open_navigation_title),

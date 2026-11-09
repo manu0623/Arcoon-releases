@@ -52,7 +52,6 @@ private enum class PersonalRow(val labelRes: Int) {
     CURSOR(R.string.cocoon_personal_cursor),
     THICKNESS(R.string.cocoon_personal_thickness),
     DOCK_SHAPE(R.string.cocoon_personal_dock_shape),
-    GRID_ROWS(R.string.cocoon_personal_grid_rows),
     SURFACE(R.string.cocoon_personal_surface),
     ICON_STYLE(R.string.cocoon_personal_icon_style),
     MOTION(R.string.cocoon_personal_motion),
@@ -114,10 +113,6 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
             PersonalRow.CURSOR -> CocoonThemeEngine.setPersonal(p.copy(cursorStyle = cycle(CURSOR_STYLES, p.cursorStyle, delta)))
             PersonalRow.THICKNESS -> CocoonThemeEngine.setPersonal(p.copy(highlightThickness = cycle(THICKNESSES, p.highlightThickness, delta)))
             PersonalRow.DOCK_SHAPE -> CocoonThemeEngine.setPersonal(p.copy(dockIconShape = cycle(DOCK_SHAPES, p.dockIconShape, delta)))
-            PersonalRow.GRID_ROWS -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.setRows(
-                context,
-                listOf(2, 3, 4).let { cycle(it, com.nendo.argosy.ui.cocoon.CocoonHomeStore.rows, delta) }
-            )
             PersonalRow.SURFACE -> CocoonThemeEngine.setPersonal(
                 p.copy(glass = cycle(listOf<Boolean?>(null, false, true), p.glass, delta))
             )
@@ -230,7 +225,6 @@ fun CocoonPersonalizationScreen(onDismiss: () -> Unit, jinglesOnly: Boolean = fa
             "ROUNDED_SQUARE" -> context.getString(R.string.cocoon_shape_rounded)
             else -> context.getString(R.string.cocoon_shape_square)
         }
-        PersonalRow.GRID_ROWS -> com.nendo.argosy.ui.cocoon.CocoonHomeStore.rows.toString()
         PersonalRow.SURFACE -> when (personal.glass) {
             null -> themeLabel
             true -> context.getString(R.string.cocoon_surface_glass)

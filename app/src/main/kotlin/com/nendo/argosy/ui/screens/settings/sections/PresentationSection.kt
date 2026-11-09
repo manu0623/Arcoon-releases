@@ -2,6 +2,7 @@ package com.nendo.argosy.ui.screens.settings.sections
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -79,6 +80,9 @@ internal sealed class PresentationItem(
         section = "artwork",
         visibleWhen = { it.layout == PresentationLayout.CINEMATIC }
     )
+
+    data class CocoonRow(val option: CocoonOption) : PresentationItem(option.key, "artwork")
+
     data class Stat(val stat: PresentationStat) : PresentationItem(
         key = "presentationStat_${stat.name}",
         section = "stats",
@@ -95,6 +99,9 @@ internal sealed class PresentationItem(
             BackgroundBlur,
             Header("artworkHeader", "artwork", R.string.settings_presentation_section_artwork),
             Art,
+            Header("cocoonHeader", "artwork", R.string.cocoon_personal_title),
+            CocoonRow(CocoonOption.HeroArt),
+            CocoonRow(CocoonOption.DetailsLayout),
             Header("statsHeader", "stats", R.string.settings_presentation_section_stats)
         ) + PRESENTATION_MENU_STATS.map { Stat(it) }
     }
@@ -139,7 +146,8 @@ internal fun adjustPresentationItem(
     )
     PresentationItem.Art -> style.copy(art = stepEnum(style.art, direction))
     is PresentationItem.Stat -> style.withStat(item.stat, shown = direction > 0)
-    PresentationItem.BackgroundBlur, is PresentationItem.Header -> null
+    PresentationItem.BackgroundBlur,
+    is PresentationItem.CocoonRow, is PresentationItem.Header -> null
 }
 
 private inline fun <reified T : Enum<T>> stepEnum(current: T, direction: Int): T {
@@ -190,11 +198,12 @@ fun PresentationSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
     var sample by remember { mutableStateOf<CompanionDetail?>(null) }
     LaunchedEffect(Unit) { sample = viewModel.presentationSample() }
     val shown = sample
-    if (companionActive && shown != null) {
-        PresentOnCompanion(
-            owner = SlotOwner("settings.presentation"),
-            slot = PresentationSlot.Detail(shown)
-        )
+    if (companionActive) {
+        // A Cocoon row with a demo outranks the sample game: its highlight is the active choice.
+        val slot = cocoonDemoKindAtFocus(uiState)
+            ?.let { PresentationSlot.CocoonDemo(it) }
+            ?: shown?.let { PresentationSlot.Detail(it) }
+        if (slot != null) PresentOnCompanion(owner = SlotOwner("settings.presentation"), slot = slot)
     }
 
     val visibleItems = remember(style) { presentationVisibleItems(style) }
@@ -284,6 +293,13 @@ fun PresentationSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
                     focus(item)
                     viewModel.setPresentationStyle(style.copy(art = PresentationArt.entries[index]))
                 }
+            )
+
+            is PresentationItem.CocoonRow -> CocoonOptionRow(
+                option = item.option,
+                isFocused = isFocused(item),
+                uiState = uiState,
+                viewModel = viewModel
             )
 
             is PresentationItem.Stat -> SwitchPreference(

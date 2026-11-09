@@ -379,13 +379,7 @@ object CocoonOptimizer {
                 CocoonThumbs.model(app, path)?.let { data ->
                     runCatching {
                         // the same request a folder tile makes (size and trim), so the folder reuses it
-                        loader.execute(
-                            coil.request.ImageRequest.Builder(app)
-                                .data(data)
-                                .size(COCOON_COVER_DECODE_PX)
-                                .transformations(CocoonCoverTrim)
-                                .build()
-                        )
+                        loader.execute(CocoonThumbs.coverRequest(app, data, COCOON_COVER_DECODE_PX))
                     }
                 }
                 report(CocoonOptimizeStep.LIBRARY, i + 1, recent.size)

@@ -214,6 +214,10 @@ private fun PresentationSlotScene(
             ) {
                 HomeLayoutPreview(settings = slot.settings, modifier = Modifier.fillMaxWidth())
             }
+            is PresentationSlot.CocoonDemo -> com.nendo.argosy.ui.cocoon.theme.CocoonDemoScreen(
+                kind = slot.kind,
+                modifier = Modifier.fillMaxSize()
+            )
             is PresentationSlot.PlayTime -> PlayTimeSlot(slot)
             is PresentationSlot.PlayTimeline -> PlayTimelineSlot(slot)
             is PresentationSlot.PlayShare -> PlayShareSlot(slot)

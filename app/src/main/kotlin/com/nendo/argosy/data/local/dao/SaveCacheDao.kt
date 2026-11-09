@@ -541,4 +541,15 @@ interface SaveCacheDao {
         """
     )
     suspend fun moveToGame(id: Long, gameId: Long, channelName: String?): Int
+
+    /**
+     * Games with any save here that went to or came from RomM (uploaded, downloaded or marked
+     * synced by either sync strategy): their saves already belong to the cloud history.
+     */
+    @Query("""
+        SELECT DISTINCT gameId FROM save_cache
+        WHERE (rommSaveId IS NOT NULL OR lastSyncedAt IS NOT NULL)
+          AND (ownerUserId IS NULL OR ownerUserId = :ownerUserId)
+    """)
+    suspend fun gameIdsWithAppliedCloudSave(ownerUserId: Long?): List<Long>
 }

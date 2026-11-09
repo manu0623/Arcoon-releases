@@ -76,7 +76,9 @@ sealed class PreLaunchSyncResult {
         val channelName: String?,
         val serverSaveId: Long? = null,
         val restoreFailed: Boolean = false,
-        val snapshotConflict: Boolean = false
+        val snapshotConflict: Boolean = false,
+        /** This device's save never came from the cloud: asked once, the cloud save first. */
+        val firstSync: Boolean = false
     ) : PreLaunchSyncResult()
 }
 
@@ -125,7 +127,10 @@ class SaveSyncRepository @Inject constructor(
     private val strategySelector: SaveSyncStrategySelector,
     private val negotiateInventory: NegotiateInventory,
     private val saveRecoveryGate: com.nendo.argosy.data.sync.SaveRecoveryGate,
-    private val snapshotRouter: dagger.Lazy<com.nendo.argosy.data.sync.snapshot.SnapshotSyncRouter>
+    private val snapshotRouter: dagger.Lazy<com.nendo.argosy.data.sync.snapshot.SnapshotSyncRouter>,
+    // Always supplied by the app; left out (null) only by tests written before first sync existed.
+    private val lineage: com.nendo.argosy.data.sync.CloudSaveLineage? = null,
+    private val gameDao: com.nendo.argosy.data.local.dao.GameDao? = null
 ) {
     private val PRE_LAUNCH_TAG = "SaveSyncRepository"
     val syncQueueState: StateFlow<SyncQueueState> = entityManager.syncQueueState
@@ -409,6 +414,11 @@ class SaveSyncRepository @Inject constructor(
             return@withContext PreLaunchSyncResult.LocalIsNewer
         }
 
+        firstSyncDecision(gameId, emulatorId, syncChannel, effectiveChannel)?.let { decision ->
+            Logger.info(PRE_LAUNCH_TAG, "[SaveSync] PRE_LAUNCH gameId=$gameId channel=$effectiveChannel | first sync on this device | decision=${decision::class.simpleName}")
+            return@withContext decision
+        }
+
         snapshotRouter.get().preLaunch(gameId, emulatorId, syncChannel)?.let { decision ->
             Logger.debug(PRE_LAUNCH_TAG, "[SaveSync] PRE_LAUNCH gameId=$gameId | snapshot sync | decision=${decision::class.simpleName}")
             return@withContext decision
@@ -465,6 +475,47 @@ class SaveSyncRepository @Inject constructor(
 
         Logger.debug(PRE_LAUNCH_TAG, "[SaveSync] PRE_LAUNCH gameId=$gameId channel=$effectiveChannel | serverIsCurrent=${ourSync?.isCurrent == true} contentMatchesLastSync=$contentMatchesLastSync serverHasNewer=$serverHasNewer localDirty=$localDirty | decision=${decision::class.simpleName} serverSaveId=${active.id}")
         decision
+    }
+
+    /**
+     * A game this device has never synced (see [com.nendo.argosy.data.sync.CloudSaveLineage]):
+     * RomM's save is placed before the game starts, so a fresh install continues where the other
+     * device left off instead of starting a new game. If the device has a save of its own as well,
+     * the player is asked once, the cloud save offered first. Null when the game is already linked
+     * (the usual sync decides) or RomM has no save for it (the device's save becomes the first).
+     */
+    private suspend fun firstSyncDecision(
+        gameId: Long,
+        emulatorId: String,
+        syncChannel: String?,
+        effectiveChannel: String
+    ): PreLaunchSyncResult? {
+        val lineage = lineage ?: return null
+        val gameDao = gameDao ?: return null
+        if (lineage.isLinked(gameId)) return null
+        val cloud = try {
+            apiClient.cloudSaveToProtect(gameId, syncChannel)
+        } catch (e: SaveInventoryUnavailableException) {
+            Logger.warn(PRE_LAUNCH_TAG, "[SaveSync] PRE_LAUNCH gameId=$gameId | never synced here and RomM's saves can't be read | decision=NoConnection")
+            return PreLaunchSyncResult.NoConnection
+        }
+        if (cloud == null) {
+            lineage.markLinked(gameId, "RomM has no save for it yet")
+            return null
+        }
+        val game = gameDao.getById(gameId) ?: return null
+        val serverTime = SaveSyncApiClient.parseTimestamp(cloud.updatedAt)
+        return when (val local = orchestrator.lookupSystemSave(game, emulatorId)) {
+            is com.nendo.argosy.data.sync.SaveLookup.Found -> PreLaunchSyncResult.LocalModified(
+                localSavePath = local.path,
+                serverTimestamp = serverTime,
+                channelName = effectiveChannel,
+                serverSaveId = cloud.id,
+                firstSync = true
+            )
+            // Nothing of its own here (or a folder that can't be read): the cloud save goes on disk.
+            else -> PreLaunchSyncResult.ServerIsNewer(serverTime, effectiveChannel, cloud.id)
+        }
     }
 
     private suspend fun negotiatePreLaunch(
@@ -540,10 +591,42 @@ class SaveSyncRepository @Inject constructor(
             SyncAnalysis.NoLocalSave,
             SyncAnalysis.NoServerSave -> ForceSyncResult.Error("Nothing to sync")
             SyncAnalysis.InSync -> ForceSyncResult.AlreadyInSync
-            is SyncAnalysis.LocalNewer -> uploadAndMap(gameId, emulatorId, channelName, forceOverwrite = true)
+            is SyncAnalysis.LocalNewer -> if (lineage != null && !lineage.isLinked(gameId)) {
+                // "Newer" here is only a date: on a device that never synced the game, a new game
+                // started here is always newer than real progress in RomM. Asked, never forced.
+                firstSyncForceConflict(gameId, emulatorId, channelName)
+            } else {
+                uploadAndMap(gameId, emulatorId, channelName, forceOverwrite = true)
+            }
             is SyncAnalysis.ServerNewer -> downloadAndMap(gameId, emulatorId, analysis.channelName, analysis.serverSaveId)
             is SyncAnalysis.Conflict -> resolveConflictAndApply(analysis.info, emulatorId)
         }
+    }
+
+    /** Sync pressed on a game this device never synced: RomM's save, if any, is not overwritten unasked. */
+    private suspend fun firstSyncForceConflict(
+        gameId: Long,
+        emulatorId: String,
+        channelName: String?
+    ): ForceSyncResult {
+        val cloud = try {
+            apiClient.cloudSaveToProtect(gameId, channelName)
+        } catch (e: SaveInventoryUnavailableException) {
+            return ForceSyncResult.Error("Couldn't check the save in RomM")
+        } ?: return uploadAndMap(gameId, emulatorId, channelName, forceOverwrite = true)
+        Logger.info(PRE_LAUNCH_TAG, "[SaveSync] FORCE_SYNC gameId=$gameId | never synced here and RomM has save ${cloud.id}; asking instead of uploading")
+        return resolveConflictAndApply(
+            ConflictInfo(
+                gameId = gameId,
+                gameName = gameDao?.getById(gameId)?.title.orEmpty(),
+                channelName = channelName,
+                localTimestamp = Instant.now(),
+                serverTimestamp = SaveSyncApiClient.parseTimestamp(cloud.updatedAt),
+                isHashConflict = false,
+                serverSaveId = cloud.id
+            ),
+            emulatorId
+        )
     }
 
     private suspend fun uploadAndMap(
@@ -593,6 +676,16 @@ class SaveSyncRepository @Inject constructor(
 
     suspend fun syncSavesForNewDownload(gameId: Long, rommId: Long, emulatorId: String) =
         orchestrator.syncSavesForNewDownload(gameId, rommId, emulatorId)
+
+    /** RomM's save a first sync would place (see [SaveSyncApiClient.cloudSaveToProtect]). */
+    suspend fun cloudSaveToProtect(gameId: Long, channelName: String?): RomMSave? =
+        apiClient.cloudSaveToProtect(gameId, channelName)
+
+    /** Whether this device has a save of its own for [game] with [emulatorId]. */
+    suspend fun lookupSystemSave(
+        game: com.nendo.argosy.data.local.entity.GameEntity,
+        emulatorId: String
+    ): com.nendo.argosy.data.sync.SaveLookup = orchestrator.lookupSystemSave(game, emulatorId)
 
     suspend fun clearSaveAtPath(targetPath: String): Boolean =
         apiClient.clearSaveAtPath(targetPath)

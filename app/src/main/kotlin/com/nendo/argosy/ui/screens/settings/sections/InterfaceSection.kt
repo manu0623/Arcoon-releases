@@ -60,13 +60,6 @@ internal sealed class InterfaceItem(
     /** Which launcher home runs, and therefore which options below apply. */
     data object UiMode : InterfaceItem("uiMode", SECTION_LAUNCHER)
 
-    /** Cocoon's own options; there is nothing to personalise on the classic home. */
-    data object Personalization : InterfaceItem(
-        key = "personalization",
-        section = SECTION_LAUNCHER,
-        visibleWhen = { it.display.launcherUiMode == LauncherUiMode.COCOON }
-    )
-
     data object Language : InterfaceItem("language", SECTION_GENERAL)
     data object UiScale : InterfaceItem("uiScale", SECTION_GENERAL)
     data object CompactFooter : InterfaceItem("compactFooter", SECTION_GENERAL)
@@ -74,12 +67,7 @@ internal sealed class InterfaceItem(
     data object HideSystemStatusBar : InterfaceItem("hideSystemStatusBar", SECTION_GENERAL)
     data object QuickPanelInEmulators : InterfaceItem("quickPanelInEmulators", SECTION_GENERAL)
     data object ControllerGrip : InterfaceItem("controllerGrip", SECTION_GENERAL)
-    /** The original home owns these; Cocoon has its own Personalization page instead. */
-    data object HomeScreen : InterfaceItem(
-        key = "homeScreen",
-        section = SECTION_SCREENS,
-        visibleWhen = { it.display.launcherUiMode == LauncherUiMode.CLASSIC }
-    )
+    data object HomeScreen : InterfaceItem("homeScreen", SECTION_SCREENS)
     data object LibraryView : InterfaceItem("libraryView", SECTION_SCREENS)
     data object BoxArt : InterfaceItem("boxArt", SECTION_SCREENS)
     data object Presentation : InterfaceItem(
@@ -117,7 +105,7 @@ internal sealed class InterfaceItem(
         val ALL: List<InterfaceItem>
             get() = listOf(
                 Header("launcherHeader", SECTION_LAUNCHER, R.string.settings_interface_section_launcher),
-                UiMode, Personalization,
+                UiMode,
                 Header("generalHeader", SECTION_GENERAL, R.string.settings_interface_section_general),
                 Language, UiScale, CompactFooter, HideSystemNavigationBar, HideSystemStatusBar,
                 QuickPanelInEmulators, ControllerGrip,
@@ -243,18 +231,6 @@ fun InterfaceSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
                     options = LauncherUiMode.entries.map { stringResource(uiModeLabelRes(it)) },
                     onSelect = { index -> viewModel.setLauncherUiMode(LauncherUiMode.entries[index]) },
                     pickerRequestToken = pickerToken(item)
-                )
-
-                InterfaceItem.Personalization -> NavigationPreference(
-                    icon = Icons.Outlined.Tune,
-                    title = stringResource(R.string.cocoon_personal_title),
-                    subtitle = stringResource(R.string.cocoon_personal_subtitle),
-                    isFocused = isFocused(item),
-                    onClick = {
-                        openFrom(item) {
-                            com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
-                        }
-                    }
                 )
 
                 InterfaceItem.Language -> CyclePreference(

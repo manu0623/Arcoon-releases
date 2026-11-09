@@ -1500,6 +1500,10 @@ interface GameDao {
     @Query("SELECT * FROM games WHERE source = 'STEAM' AND localPath IS NOT NULL")
     suspend fun getInstalledSteamGames(): List<GameEntity>
 
+
+    /** RomM games present on this device, for noticing when one becomes installed. */
+    @Query("SELECT id FROM games WHERE localPath IS NOT NULL AND rommId IS NOT NULL")
+    fun observeInstalledRommGameIds(): Flow<List<Long>>
 }
 
 data class SearchCandidate(

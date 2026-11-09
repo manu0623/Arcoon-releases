@@ -496,9 +496,10 @@
     <!-- Readout in the status bar while the game starts and the emulator rebuilds the shaders it
          saved last time. %1$s is how many so far, already formatted (e.g. 1,234). -->
     <string name="ingame_hud_loading_shaders">Loading shaders %1$s</string>
-    <!-- Readout in the status bar during play: how many shaders the emulator has had to compile
-         for the first time since the game started. %1$s is the count, already formatted. -->
-    <string name="ingame_hud_new_shaders">New shaders %1$s</string>
+    <!-- Brief notice in the status bar during play: how many new shaders the emulator just
+         compiled in this burst; it disappears 2 seconds after the last one. %1$s is the count,
+         already formatted. -->
+    <string name="ingame_hud_new_shaders">Shaders compiled: %1$s</string>
 
     <!-- Row at the top of the core options tab. Adjective phrase: whether the options below
          belong to this one game. -->

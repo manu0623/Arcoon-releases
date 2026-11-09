@@ -129,6 +129,7 @@ class GameLaunchDelegate @Inject constructor(
 ) {
     companion object {
         private const val EMULATOR_KILL_DELAY_MS = 500L
+        private const val SYNC_CANCEL_DRAIN_MS = 300L
         private val HARDCORE_CONFLICT_OPTIONS = listOf(
             LaunchPromptOption.KEEP_HARDCORE,
             LaunchPromptOption.DOWNGRADE_TO_CASUAL,
@@ -137,6 +138,14 @@ class GameLaunchDelegate @Inject constructor(
         private val LOCAL_MODIFIED_OPTIONS = listOf(
             LaunchPromptOption.APPLY_LOCAL,
             LaunchPromptOption.RESTORE_SERVER
+        )
+        /** First sync on this device: the cloud save first, so it is the one already highlighted. */
+        private val FIRST_SYNC_OPTIONS = listOf(
+            LaunchPromptOption.RESTORE_SERVER,
+            LaunchPromptOption.APPLY_LOCAL
+        )
+        private val CLOUD_UNCHECKED_OPTIONS = listOf(
+            LaunchPromptOption.LAUNCH_WITHOUT_SYNC
         )
         private val RESTORE_FAILED_OPTIONS = listOf(
             LaunchPromptOption.RESTORE_SERVER,
@@ -361,43 +370,59 @@ class GameLaunchDelegate @Inject constructor(
                 var localModifiedChoice: LocalModifiedChoice? = null
                 var snapshotConflictChoice: SnapshotConflictChoice? = null
 
-                launchWithSyncUseCase.invokeWithProgress(gameId, channelName, skipPreLaunchSync || resolvedVariantId != null).collect { progress ->
-                    if (canSync && progress != SyncProgress.Skipped && progress != SyncProgress.Idle) {
-                        when (progress) {
-                            is SyncProgress.HardcoreConflict -> {
-                                hardcoreConflictInfo = progress
-                                hardcoreConflictChoice = when (ticket.ask(progress, HARDCORE_CONFLICT_OPTIONS)) {
-                                    LaunchPromptOption.KEEP_HARDCORE -> HardcoreConflictChoice.KEEP_HARDCORE
-                                    LaunchPromptOption.DOWNGRADE_TO_CASUAL -> HardcoreConflictChoice.DOWNGRADE_TO_CASUAL
-                                    LaunchPromptOption.SKIP_HARDCORE_SAVE -> HardcoreConflictChoice.KEEP_LOCAL
-                                    else -> null
+                val syncJob = launch {
+                    launchWithSyncUseCase.invokeWithProgress(gameId, channelName, skipPreLaunchSync || resolvedVariantId != null).collect { progress ->
+                        if (canSync && progress != SyncProgress.Skipped && progress != SyncProgress.Idle) {
+                            when (progress) {
+                                is SyncProgress.HardcoreConflict -> {
+                                    hardcoreConflictInfo = progress
+                                    hardcoreConflictChoice = when (ticket.ask(progress, HARDCORE_CONFLICT_OPTIONS)) {
+                                        LaunchPromptOption.KEEP_HARDCORE -> HardcoreConflictChoice.KEEP_HARDCORE
+                                        LaunchPromptOption.DOWNGRADE_TO_CASUAL -> HardcoreConflictChoice.DOWNGRADE_TO_CASUAL
+                                        LaunchPromptOption.SKIP_HARDCORE_SAVE -> HardcoreConflictChoice.KEEP_LOCAL
+                                        else -> null
+                                    }
+                                    android.util.Log.d("GameLaunchDelegate", "Hardcore conflict resolved: $hardcoreConflictChoice")
                                 }
-                                android.util.Log.d("GameLaunchDelegate", "Hardcore conflict resolved: $hardcoreConflictChoice")
+                                is SyncProgress.LocalModified -> if (progress.snapshotConflict) {
+                                    localModifiedInfo = progress
+                                    snapshotConflictChoice = when (ticket.ask(progress, SNAPSHOT_CONFLICT_OPTIONS)) {
+                                        LaunchPromptOption.KEEP_MINE -> SnapshotConflictChoice.MINE
+                                        LaunchPromptOption.TAKE_THEIRS -> SnapshotConflictChoice.THEIRS
+                                        LaunchPromptOption.BRANCH_LOCAL -> SnapshotConflictChoice.BRANCH
+                                        LaunchPromptOption.REVERT_LOCAL -> SnapshotConflictChoice.REVERT
+                                        else -> null
+                                    }
+                                } else {
+                                    localModifiedInfo = progress
+                                    val options = when {
+                                        progress.restoreFailed -> RESTORE_FAILED_OPTIONS
+                                        progress.firstSync -> FIRST_SYNC_OPTIONS
+                                        else -> LOCAL_MODIFIED_OPTIONS
+                                    }
+                                    localModifiedChoice = when (ticket.ask(progress, options)) {
+                                        LaunchPromptOption.APPLY_LOCAL -> LocalModifiedChoice.KEEP_LOCAL
+                                        LaunchPromptOption.RESTORE_SERVER -> LocalModifiedChoice.RESTORE_SELECTED
+                                        LaunchPromptOption.LAUNCH_WITHOUT_SYNC -> LocalModifiedChoice.LAUNCH_WITHOUT_SYNC
+                                        else -> null
+                                    }
+                                    android.util.Log.d("GameLaunchDelegate", "LocalModified resolved: $localModifiedChoice")
+                                }
+                                is SyncProgress.CloudUnchecked -> {
+                                    // Play anyway, or Back to cancel and try again once RomM is reachable.
+                                    ticket.ask(progress, CLOUD_UNCHECKED_OPTIONS)
+                                    android.util.Log.d("GameLaunchDelegate", "Cloud save not checked; playing anyway")
+                                }
+                                else -> ticket.step(LaunchStep.Save(progress))
                             }
-                            is SyncProgress.LocalModified -> if (progress.snapshotConflict) {
-                                localModifiedInfo = progress
-                                snapshotConflictChoice = when (ticket.ask(progress, SNAPSHOT_CONFLICT_OPTIONS)) {
-                                    LaunchPromptOption.KEEP_MINE -> SnapshotConflictChoice.MINE
-                                    LaunchPromptOption.TAKE_THEIRS -> SnapshotConflictChoice.THEIRS
-                                    LaunchPromptOption.BRANCH_LOCAL -> SnapshotConflictChoice.BRANCH
-                                    LaunchPromptOption.REVERT_LOCAL -> SnapshotConflictChoice.REVERT
-                                    else -> null
-                                }
-                            } else {
-                                localModifiedInfo = progress
-                                val options = if (progress.restoreFailed) RESTORE_FAILED_OPTIONS else LOCAL_MODIFIED_OPTIONS
-                                localModifiedChoice = when (ticket.ask(progress, options)) {
-                                    LaunchPromptOption.APPLY_LOCAL -> LocalModifiedChoice.KEEP_LOCAL
-                                    LaunchPromptOption.RESTORE_SERVER -> LocalModifiedChoice.RESTORE_SELECTED
-                                    LaunchPromptOption.LAUNCH_WITHOUT_SYNC -> LocalModifiedChoice.LAUNCH_WITHOUT_SYNC
-                                    else -> null
-                                }
-                                android.util.Log.d("GameLaunchDelegate", "LocalModified resolved: $localModifiedChoice")
-                            }
-                            else -> ticket.step(LaunchStep.Save(progress))
                         }
                     }
                 }
+                kotlinx.coroutines.selects.select<Unit> {
+                    syncJob.onJoin { }
+                    ticket.cancelledSignal.onAwait { syncJob.cancel() }
+                }
+                kotlinx.coroutines.withTimeoutOrNull(SYNC_CANCEL_DRAIN_MS) { syncJob.join() }
                 if (ticket.isCancelled) {
                     onLaunchFailed()
                     return@launch
@@ -444,6 +469,16 @@ class GameLaunchDelegate @Inject constructor(
                                     activeSaveRepository.activateCache(gameId, cacheResult.cacheId)
                                 }
                                 activeSaveRepository.setActiveSaveApplied(gameId, true)
+                                // First sync, keeping this device's save: RomM's save is kept on
+                                // the device as history first, so the progress not continued can
+                                // always be restored, even if RomM later cleans up old saves.
+                                val cloudSaveId = info.serverSaveId
+                                if (info.firstSync && cloudSaveId != null) {
+                                    val kept = runCatching {
+                                        saveSyncRepository.downloadToCache(cloudSaveId, gameId, info.channelName)
+                                    }.getOrNull()
+                                    android.util.Log.i("GameLaunchDelegate", "First sync keep-local: cloud save $cloudSaveId kept on device as cache $kept")
+                                }
                                 val uploadResult = saveSyncRepository.uploadSave(
                                     gameId = gameId,
                                     emulatorId = emulatorId,

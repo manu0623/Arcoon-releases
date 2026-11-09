@@ -203,6 +203,7 @@ fun CocoonHeroCard(
 }
 
 private const val HERO_OUT_MS = 110
-private const val HERO_IN_DELAY_MS = 40
+/** No gap: the new folder starts appearing as the old one dims, so the screen never blinks empty. */
+private const val HERO_IN_DELAY_MS = 0
 private const val HERO_IN_MS = 190
 private const val HERO_IN_SCALE = 1.06f

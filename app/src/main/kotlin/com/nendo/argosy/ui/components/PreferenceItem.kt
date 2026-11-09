@@ -121,7 +121,10 @@ internal fun preferenceModifier(
             isFocused -> Color.White.copy(alpha = 0.08f).compositeOver(card)
             else -> card
         },
-        animationSpec = Motion.focusColorSpec,
+        animationSpec = androidx.compose.animation.core.tween(
+            com.nendo.argosy.ui.primitives.CocoonBracketSpec.glideMs,
+            easing = com.nendo.argosy.ui.primitives.CocoonBracketSpec.glideEasing
+        ),
         label = "pref-bg"
     )
 

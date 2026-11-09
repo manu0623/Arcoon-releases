@@ -7,16 +7,18 @@ import android.view.FrameMetrics
 import android.view.Window
 
 /**
- * Debug builds only: logs every frame that takes clearly longer than one refresh (a visible
- * hitch), with where the time went, so short stutters show up in the live log. Tag ArcoonTrace,
- * lines start with "jank".
+ * Logs every frame that takes clearly longer than one refresh (a visible hitch), with where the
+ * time went, so short stutters show up in the live log. Tag ArcoonTrace, lines start with "jank".
+ * Runs in release builds too (it only listens, on its own thread, and writes nothing for smooth
+ * frames); turn it off with ENABLED once the app is tuned.
  */
 object FrameWatch {
+    private const val ENABLED = true
     private const val SLOW_MS = 25.0 // at least one 60 Hz refresh missed
     private val thread by lazy { HandlerThread("ArcoonFrameWatch").apply { start() } }
 
     fun attach(activity: Activity) {
-        if (!com.nendo.argosy.BuildConfig.DEBUG) return
+        if (!ENABLED) return
         val display = runCatching { activity.display?.displayId }.getOrNull() ?: -1
         runCatching {
             activity.window.addOnFrameMetricsAvailableListener(
