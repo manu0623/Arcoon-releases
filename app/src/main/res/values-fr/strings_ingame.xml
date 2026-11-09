@@ -576,4 +576,11 @@
 
     <string name="ingame_touch_generic_sys_select">Select</string>
     <string name="ingame_touch_generic_sys_start">Start</string>
+
+    <string name="ingame_settings_hud_shaders_title">Shaders</string>
+    <string name="ingame_settings_hud_shaders_subtitle">Shaders chargés au démarrage, les nouveaux compilés pendant la partie</string>
+    <string name="ingame_hud_loading_shaders">Chargement des shaders %1$s</string>
+    <string name="ingame_hud_new_shaders">Shaders compilés : %1$s</string>
+    <string name="ingame_home_handle">Ouvrir le menu en jeu</string>
+    <string name="ingame_suspend_handle">Suspendre le jeu</string>
 </resources>

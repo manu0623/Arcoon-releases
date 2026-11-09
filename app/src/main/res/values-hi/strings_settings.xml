@@ -2702,4 +2702,15 @@
     <string name="settings_builtin_gpu_driver_reason_core_system_only">%1$s सिस्टम ड्राइवर इस्तेमाल करता है</string>
     <string name="settings_builtin_gpu_driver_reason_backend">बैकएंड Vulkan होने पर लागू होता है</string>
     <string name="settings_builtin_gpu_driver_reason_device">कस्टम ड्राइवर के लिए Adreno GPU चाहिए</string>
+
+    <string name="settings_storage_rom_media_section">ROM मीडिया</string>
+    <string name="settings_storage_rom_media_extract_title">ROM मीडिया निकालें</string>
+    <string name="settings_storage_rom_media_extract_subtitle">समर्थित स्थानीय NDS ROM से अंतर्निहित आइकन और समर्थित स्थानीय 3DS ROM से आइकन व बैनर पढ़ें</string>
+    <string name="settings_storage_rom_media_use_banner_title">हीरो आर्ट के लिए 3DS बैनर उपयोग करें</string>
+    <string name="settings_storage_rom_media_use_banner_subtitle">सर्वर हीरो आर्ट के बजाय समर्थित अंतर्निहित 3DS बैनर को प्राथमिकता दें; मैन्युअल आर्ट अभी भी प्राथमिक रहेगा</string>
+    <string name="settings_interface_section_launcher">लॉन्चर</string>
+    <string name="settings_interface_ui_mode_title">होम और नियंत्रण</string>
+    <string name="settings_interface_ui_mode_subtitle">लॉन्चर कौन सा होम खोलता है और पैड कौन सा मेन्यू चलाता है</string>
+    <string name="settings_interface_ui_mode_cocoon">Cocoon</string>
+    <string name="settings_interface_ui_mode_classic">Argosy</string>
 </resources>

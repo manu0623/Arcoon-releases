@@ -567,4 +567,11 @@
 
     <string name="ingame_touch_generic_sys_select">सेलेक्ट</string>
     <string name="ingame_touch_generic_sys_start">स्टार्ट</string>
+
+    <string name="ingame_settings_hud_shaders_title">शेडर</string>
+    <string name="ingame_settings_hud_shaders_subtitle">शेडर शुरुआत में लोड होते हैं, खेलते समय नए संकलित होते हैं</string>
+    <string name="ingame_hud_loading_shaders">शेडर लोड हो रहे हैं %1$s</string>
+    <string name="ingame_hud_new_shaders">शेडर संकलित: %1$s</string>
+    <string name="ingame_home_handle">इन-गेम मेन्यू खोलें</string>
+    <string name="ingame_suspend_handle">गेम निलंबित करें</string>
 </resources>

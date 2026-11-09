@@ -576,4 +576,11 @@
 
     <string name="ingame_touch_generic_sys_select">Select</string>
     <string name="ingame_touch_generic_sys_start">Start</string>
+
+    <string name="ingame_settings_hud_shaders_title">Sombreadores</string>
+    <string name="ingame_settings_hud_shaders_subtitle">Sombreadores cargados al inicio y los nuevos compilados mientras juegas</string>
+    <string name="ingame_hud_loading_shaders">Cargando sombreadores %1$s</string>
+    <string name="ingame_hud_new_shaders">Sombreadores compilados: %1$s</string>
+    <string name="ingame_home_handle">Abrir el menú del juego</string>
+    <string name="ingame_suspend_handle">Suspender el juego</string>
 </resources>

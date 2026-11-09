@@ -2772,4 +2772,15 @@
     <string name="settings_builtin_gpu_driver_reason_core_system_only">%1$s utilise le pilote système</string>
     <string name="settings_builtin_gpu_driver_reason_backend">S\'applique quand le moteur de rendu est Vulkan</string>
     <string name="settings_builtin_gpu_driver_reason_device">Les pilotes personnalisés exigent un GPU Adreno</string>
+
+    <string name="settings_storage_rom_media_section">MÉDIAS ROM</string>
+    <string name="settings_storage_rom_media_extract_title">Extraire les médias de la ROM</string>
+    <string name="settings_storage_rom_media_extract_subtitle">Lire les icônes intégrées des ROM NDS locales prises en charge, ainsi que les icônes et bannières des ROM 3DS locales prises en charge</string>
+    <string name="settings_storage_rom_media_use_banner_title">Utiliser la bannière 3DS comme visuel principal</string>
+    <string name="settings_storage_rom_media_use_banner_subtitle">Préférer les bannières 3DS intégrées au visuel principal du serveur ; un visuel choisi manuellement reste prioritaire</string>
+    <string name="settings_interface_section_launcher">Lanceur</string>
+    <string name="settings_interface_ui_mode_title">Accueil et commandes</string>
+    <string name="settings_interface_ui_mode_subtitle">Quel accueil le lanceur ouvre et quel menu la manette pilote</string>
+    <string name="settings_interface_ui_mode_cocoon">Cocoon</string>
+    <string name="settings_interface_ui_mode_classic">Argosy</string>
 </resources>

@@ -2711,5 +2711,16 @@
     <string name="settings_builtin_gpu_driver_reason_core_system_only">%1$s nutzt den Systemtreiber</string>
     <string name="settings_builtin_gpu_driver_reason_backend">Gilt, wenn das Backend Vulkan ist</string>
     <string name="settings_builtin_gpu_driver_reason_device">Eigene Treiber benötigen eine Adreno-GPU</string>
+
+    <string name="settings_storage_rom_media_section">ROM-MEDIEN</string>
+    <string name="settings_storage_rom_media_extract_title">ROM-Medien extrahieren</string>
+    <string name="settings_storage_rom_media_extract_subtitle">Eingebettete Symbole aus unterstützten lokalen NDS-ROMs sowie Symbole und Banner aus unterstützten lokalen 3DS-ROMs lesen</string>
+    <string name="settings_storage_rom_media_use_banner_title">3DS-Banner als Hero-Art verwenden</string>
+    <string name="settings_storage_rom_media_use_banner_subtitle">Eingebettete 3DS-Banner gegenüber Server-Hero-Art bevorzugen; manuell gesetzte Bilder haben weiterhin Vorrang</string>
+    <string name="settings_interface_section_launcher">Launcher</string>
+    <string name="settings_interface_ui_mode_title">Startseite und Steuerung</string>
+    <string name="settings_interface_ui_mode_subtitle">Welche Startseite der Launcher öffnet und welches Menü das Pad steuert</string>
+    <string name="settings_interface_ui_mode_cocoon">Cocoon</string>
+    <string name="settings_interface_ui_mode_classic">Argosy</string>
 </resources>
 

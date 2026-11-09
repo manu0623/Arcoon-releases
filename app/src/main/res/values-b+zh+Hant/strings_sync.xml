@@ -146,4 +146,18 @@
     <string name="sync_steam_qr_disconnected">Steam尚未連線</string>
 
     <string name="sync_launch_core_fallback">無法載入%1$s，已改用%2$s</string>
+
+    <string name="sync_first_sync_title">找到兩個存檔</string>
+    <string name="sync_first_sync_message">RomM 上有來自另一台裝置的 \"%1$s\" 存檔，而本裝置也有一個存檔。</string>
+    <string name="sync_first_sync_question">要繼續哪一個？另一個會保留，之後可以還原。</string>
+    <string name="sync_first_sync_cloud">繼續雲端存檔</string>
+    <string name="sync_first_sync_cloud_subtitle">你在另一台裝置上的進度</string>
+    <string name="sync_first_sync_local">保留本裝置的存檔</string>
+    <string name="sync_first_sync_local_subtitle">它會成為 RomM 中的存檔</string>
+    <string name="sync_progress_first_sync">找到兩個存檔</string>
+    <string name="sync_cloud_unchecked_title">雲端存檔未檢查</string>
+    <string name="sync_cloud_unchecked_message">Arcoon 無法連線 RomM 取得你的 \"%1$s\" 存檔。如果現在開始遊玩，可能無法從你在另一台裝置上停下的位置繼續。</string>
+    <string name="sync_cloud_unchecked_play">仍然遊玩</string>
+    <string name="sync_cloud_unchecked_play_subtitle">在檢查 RomM 的存檔之前不會上傳任何內容</string>
+    <string name="sync_progress_cloud_unchecked">雲端存檔未檢查</string>
 </resources>

@@ -152,4 +152,18 @@
     <string name="sync_steam_qr_disconnected">Steam non connecté</string>
 
     <string name="sync_launch_core_fallback">Échec du chargement de %1$s, utilisation de %2$s à la place</string>
+
+    <string name="sync_first_sync_title">Deux sauvegardes trouvées</string>
+    <string name="sync_first_sync_message">RomM a une sauvegarde de \"%1$s\" provenant d\'un autre appareil, et cet appareil possède la sienne.</string>
+    <string name="sync_first_sync_question">Lequel veux-tu continuer ? L\'autre est conservée et pourra être restaurée plus tard.</string>
+    <string name="sync_first_sync_cloud">Continuer la sauvegarde cloud</string>
+    <string name="sync_first_sync_cloud_subtitle">Ta progression depuis l\'autre appareil</string>
+    <string name="sync_first_sync_local">Garder la sauvegarde de cet appareil</string>
+    <string name="sync_first_sync_local_subtitle">Elle devient la sauvegarde dans RomM</string>
+    <string name="sync_progress_first_sync">Deux sauvegardes trouvées</string>
+    <string name="sync_cloud_unchecked_title">Sauvegarde cloud non vérifiée</string>
+    <string name="sync_cloud_unchecked_message">Arcoon n\'a pas pu joindre RomM pour récupérer ta sauvegarde de \"%1$s\". Si tu joues maintenant, tu risques de ne pas reprendre là où tu t\'étais arrêté sur un autre appareil.</string>
+    <string name="sync_cloud_unchecked_play">Jouer quand même</string>
+    <string name="sync_cloud_unchecked_play_subtitle">Rien n\'est envoyé tant que la sauvegarde de RomM n\'a pas été vérifiée</string>
+    <string name="sync_progress_cloud_unchecked">Sauvegarde cloud non vérifiée</string>
 </resources>

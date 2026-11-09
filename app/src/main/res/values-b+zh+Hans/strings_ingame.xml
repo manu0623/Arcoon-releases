@@ -560,4 +560,11 @@
 
     <string name="ingame_touch_generic_sys_select">Select</string>
     <string name="ingame_touch_generic_sys_start">Start</string>
+
+    <string name="ingame_settings_hud_shaders_title">着色器</string>
+    <string name="ingame_settings_hud_shaders_subtitle">启动时加载着色器，游玩过程中编译新的着色器</string>
+    <string name="ingame_hud_loading_shaders">正在加载着色器 %1$s</string>
+    <string name="ingame_hud_new_shaders">着色器已编译：%1$s</string>
+    <string name="ingame_home_handle">打开游戏内菜单</string>
+    <string name="ingame_suspend_handle">暂停游戏</string>
 </resources>

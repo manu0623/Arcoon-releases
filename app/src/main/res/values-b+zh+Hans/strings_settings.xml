@@ -2632,4 +2632,15 @@
     <string name="settings_builtin_gpu_driver_reason_core_system_only">%1$s 使用系统驱动</string>
     <string name="settings_builtin_gpu_driver_reason_backend">渲染后端为 Vulkan 时生效</string>
     <string name="settings_builtin_gpu_driver_reason_device">自定义驱动需要 Adreno GPU</string>
+
+    <string name="settings_storage_rom_media_section">ROM 媒体</string>
+    <string name="settings_storage_rom_media_extract_title">提取 ROM 媒体</string>
+    <string name="settings_storage_rom_media_extract_subtitle">从支持的本地 NDS ROM 读取内嵌图标，并从支持的本地 3DS ROM 读取图标和横幅</string>
+    <string name="settings_storage_rom_media_use_banner_title">使用 3DS 横幅作为主视觉图</string>
+    <string name="settings_storage_rom_media_use_banner_subtitle">优先使用支持的内嵌 3DS 横幅而非服务器主视觉图；手动设置的图像仍然优先</string>
+    <string name="settings_interface_section_launcher">启动器</string>
+    <string name="settings_interface_ui_mode_title">主页和控制</string>
+    <string name="settings_interface_ui_mode_subtitle">启动器打开哪个主页，以及手柄操作哪个菜单</string>
+    <string name="settings_interface_ui_mode_cocoon">Cocoon</string>
+    <string name="settings_interface_ui_mode_classic">Argosy</string>
 </resources>

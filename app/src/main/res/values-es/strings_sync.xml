@@ -152,4 +152,18 @@
     <string name="sync_steam_qr_disconnected">Steam no conectado</string>
 
     <string name="sync_launch_core_fallback">Error al cargar %1$s; se usó %2$s en su lugar</string>
+
+    <string name="sync_first_sync_title">Dos partidas encontradas</string>
+    <string name="sync_first_sync_message">RomM tiene una partida de \"%1$s\" de otro dispositivo, y este dispositivo tiene la suya.</string>
+    <string name="sync_first_sync_question">¿Cuál quieres continuar? La otra se conserva y podrás recuperarla más tarde.</string>
+    <string name="sync_first_sync_cloud">Continuar la partida en la nube</string>
+    <string name="sync_first_sync_cloud_subtitle">Tu progreso del otro dispositivo</string>
+    <string name="sync_first_sync_local">Conservar la partida de este dispositivo</string>
+    <string name="sync_first_sync_local_subtitle">Se convierte en la partida de RomM</string>
+    <string name="sync_progress_first_sync">Dos partidas encontradas</string>
+    <string name="sync_cloud_unchecked_title">Partida en la nube sin comprobar</string>
+    <string name="sync_cloud_unchecked_message">Arcoon no pudo conectar con RomM para obtener tu partida de \"%1$s\". Si juegas ahora, puede que no continúes donde lo dejaste en otro dispositivo.</string>
+    <string name="sync_cloud_unchecked_play">Jugar igualmente</string>
+    <string name="sync_cloud_unchecked_play_subtitle">No se sube nada hasta que se compruebe la partida de RomM</string>
+    <string name="sync_progress_cloud_unchecked">Partida en la nube sin comprobar</string>
 </resources>
