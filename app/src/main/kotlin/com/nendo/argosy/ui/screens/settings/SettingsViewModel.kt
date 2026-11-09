@@ -2058,6 +2058,13 @@ class SettingsViewModel @Inject constructor(
     fun closeChangelog() = routeCloseChangelog(this)
     fun loadChangelogPage() = routeLoadChangelogPage(this)
 
+    fun cocoonOptionStep(key: String, direction: Int) =
+        com.nendo.argosy.ui.screens.settings.sections.routeCocoonOptionStep(this, key, direction)
+    fun cocoonOptionSwitch(key: String, on: Boolean) =
+        com.nendo.argosy.ui.screens.settings.sections.routeCocoonOptionSwitch(this, key, on)
+    fun cocoonOptionAction(key: String) =
+        com.nendo.argosy.ui.screens.settings.sections.routeCocoonOptionAction(this, key)
+
     fun exportSettings() = routeExportSettings(this)
     fun requestImportSettings() = routeRequestImportSettings(this)
     fun confirmImportSettings() = routeConfirmImportSettings(this)

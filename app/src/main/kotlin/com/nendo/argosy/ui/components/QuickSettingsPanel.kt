@@ -109,6 +109,15 @@ fun QuickSettingsPanel(
 
     CocoonQuickSystemBridge(controller = controller, active = isVisible)
     val phase = if (reduced) 0 else Motion.durationSlide
+    val panelSettled = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(isVisible, phase) {
+        if (!isVisible) {
+            panelSettled.value = false
+        } else {
+            kotlinx.coroutines.delay(phase.toLong())
+            panelSettled.value = true
+        }
+    }
     // Cocoon: friends slide in from the left, everything else from the right.
     // The side is fixed while the panel is open: changing page with L1/R1 swaps the content
     // instead of throwing the panel across to the other edge mid-slide.
@@ -173,6 +182,9 @@ fun QuickSettingsPanel(
              * the panel had been while the board drew its own.
              */
             com.nendo.argosy.ui.primitives.CocoonCursorHost(covers = true) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.nendo.argosy.ui.primitives.LocalCocoonCursorSuppressed provides !panelSettled.value
+            ) {
             Row(
                 modifier = Modifier
                     .fillMaxHeight()
@@ -221,6 +233,7 @@ fun QuickSettingsPanel(
                 }
                 // Cocoon has no side rail: the other pages are reached with L1/R1, shown as small
                 // icons in the header.
+            }
             }
             }
         }

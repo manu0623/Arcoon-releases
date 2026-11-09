@@ -50,7 +50,9 @@ fun NavGraph(
     /** Replaces leaving Settings for Home, for the upper screen's floating Settings panel. */
     onSettingsExit: (() -> Unit)? = null,
     /** True when Settings opened here is drawn on the other screen, so this one draws nothing. */
-    settingsShownElsewhere: Boolean = false
+    settingsShownElsewhere: Boolean = false,
+    /** True when the Cocoon board is kept alive outside the navigation ([CocoonHomeHost]). */
+    cocoonHomeOutside: Boolean = false,
 ) {
     val navigateToDefault = remember {
         {
@@ -87,27 +89,9 @@ fun NavGraph(
         ) {
             val useClassicHome by com.nendo.argosy.ui.cocoon.CocoonMode.useClassicHome.collectAsState()
             if (!useClassicHome) {
-                com.nendo.argosy.ui.cocoon.CocoonHomeScreen(
-                    onOpenPlatform = { platformId ->
-                        navController.navigate(Screen.Library.createRoute(platformId))
-                    },
-                    onOpenCollection = { collectionId ->
-                        navController.navigate(Screen.CollectionDetail.createRoute(collectionId))
-                    },
-                    onOpenAndroidGames = { navController.navigate(Screen.Apps.route) },
-                    onOpenEmulators = {
-                        navController.navigate(
-                            Screen.Settings.createRoute(com.nendo.argosy.ui.screens.settings.SettingsSection.PLATFORMS.name)
-                        )
-                    },
-                    onOpenSettings = { navController.navigate(Screen.Settings.createRoute()) },
-                    onNavigate = { route -> navController.navigate(route) },
-                    onEditPlatform = { platformId ->
-                        navController.navigate(
-                            Screen.Settings.createRoute(section = "platform_detail", platformId = platformId)
-                        )
-                    }
-                )
+                // Kept alive outside the navigation, the board is drawn underneath; this page is
+                // only the see-through slot it shows through.
+                if (!cocoonHomeOutside) CocoonHomeHost(navController, active = true)
             } else {
                 HomeScreen(
                     isDefaultView = true,
@@ -573,3 +557,42 @@ fun NavGraph(
         }
     }
 }
+
+/**
+ * The Cocoon board with its ways out. Normally a page of the navigation; with
+ * [KEEP_COCOON_HOME_ALIVE] it is kept alive underneath the other pages instead, so coming back from
+ * a folder or Settings shows it again at once instead of building the whole board from scratch.
+ */
+@Composable
+fun CocoonHomeHost(navController: NavHostController, active: Boolean) {
+    // Hidden underneath, its folder must not stay highlighted: the corners would be pulled back to it.
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.nendo.argosy.ui.primitives.LocalCocoonCursorSuppressed provides !active
+    ) {
+    com.nendo.argosy.ui.cocoon.CocoonHomeScreen(
+        onOpenPlatform = { platformId ->
+            navController.navigate(Screen.Library.createRoute(platformId))
+        },
+        onOpenCollection = { collectionId ->
+            navController.navigate(Screen.CollectionDetail.createRoute(collectionId))
+        },
+        onOpenAndroidGames = { navController.navigate(Screen.Apps.route) },
+        onOpenEmulators = {
+            navController.navigate(
+                Screen.Settings.createRoute(com.nendo.argosy.ui.screens.settings.SettingsSection.PLATFORMS.name)
+            )
+        },
+        onOpenSettings = { navController.navigate(Screen.Settings.createRoute()) },
+        onNavigate = { route -> navController.navigate(route) },
+        onEditPlatform = { platformId ->
+            navController.navigate(
+                Screen.Settings.createRoute(section = "platform_detail", platformId = platformId)
+            )
+        },
+        active = active,
+    )
+    }
+}
+
+/** Switch: false puts the board back to being an ordinary page, rebuilt on every return. */
+const val KEEP_COCOON_HOME_ALIVE = true

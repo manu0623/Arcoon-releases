@@ -944,12 +944,6 @@ fun SettingsScreen(
         )
     }
 
-    if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value) {
-        com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationScreen(
-            onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = false }
-        )
-    }
-
     if (com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value) {
         com.nendo.argosy.ui.cocoon.theme.CocoonThemePicker(
             onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value = false }

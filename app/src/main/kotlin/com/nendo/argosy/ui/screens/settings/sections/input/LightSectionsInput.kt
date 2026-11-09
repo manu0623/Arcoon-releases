@@ -125,6 +125,10 @@ internal class LightSectionsInput(
 
     private fun handleLeftRight(direction: Int): InputResult {
         val state = viewModel.uiState.value
+        com.nendo.argosy.ui.screens.settings.sections.cocoonOptionKeyAtFocus(state)?.let { key ->
+            viewModel.cocoonOptionStep(key, direction)
+            return InputResult.HANDLED
+        }
         return when (state.currentSection) {
             SettingsSection.ACCOUNTS -> handleAccountsLeftRight(direction)
             SettingsSection.BIOS -> handleBiosLeftRight(direction)

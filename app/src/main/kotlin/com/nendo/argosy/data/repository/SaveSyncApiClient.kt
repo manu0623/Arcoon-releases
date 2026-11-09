@@ -58,7 +58,8 @@ class SaveSyncApiClient @Inject constructor(
     private val saveUploader: dagger.Lazy<SaveUploader>,
     private val saveDownloader: dagger.Lazy<SaveDownloader>,
     private val syncPreferencesRepository: com.nendo.argosy.data.preferences.SyncPreferencesRepository,
-    private val snapshotRouter: dagger.Lazy<com.nendo.argosy.data.sync.snapshot.SnapshotSyncRouter>
+    private val snapshotRouter: dagger.Lazy<com.nendo.argosy.data.sync.snapshot.SnapshotSyncRouter>,
+    private val lineage: dagger.Lazy<com.nendo.argosy.data.sync.CloudSaveLineage>
 ) {
     private var api: RomMApi? = null
     private var deviceId: String? = null
@@ -332,8 +333,56 @@ class SaveSyncApiClient @Inject constructor(
         forceOverwrite: Boolean = false,
         isHardcore: Boolean = false,
         uploadedCacheId: Long? = null
-    ): SaveSyncResult = snapshotRouter.get().upload(gameId, emulatorId, channelName, forceOverwrite, isHardcore)
-        ?: saveUploader.get().uploadSave(gameId, emulatorId, channelName, forceOverwrite, isHardcore, uploadedCacheId)
+    ): SaveSyncResult {
+        holdUnlinkedUpload(gameId, channelName, forceOverwrite)?.let { return it }
+        val result = snapshotRouter.get().upload(gameId, emulatorId, channelName, forceOverwrite, isHardcore)
+            ?: saveUploader.get().uploadSave(gameId, emulatorId, channelName, forceOverwrite, isHardcore, uploadedCacheId)
+        if (result is SaveSyncResult.Success) lineage.get().markLinked(gameId, "save uploaded")
+        return result
+    }
+
+    /**
+     * A save that never came from the cloud (this device is not linked for the game) is not
+     * uploaded over a save RomM already has: it is answered as a conflict, so the player picks
+     * which one to keep (and the device's save stays on the device). [force] is that choice made.
+     */
+    private suspend fun holdUnlinkedUpload(gameId: Long, channelName: String?, force: Boolean): SaveSyncResult? {
+        if (force || lineage.get().isLinked(gameId)) return null
+        val protect = try {
+            cloudSaveToProtect(gameId, channelName)
+        } catch (e: SaveInventoryUnavailableException) {
+            Logger.warn(TAG, "[SaveSync] UPLOAD gameId=$gameId | not linked to the cloud and RomM's saves can't be read; holding the upload")
+            return SaveSyncResult.Error("Couldn't check the cloud save")
+        } ?: return null
+        Logger.info(
+            TAG,
+            "[SaveSync] UPLOAD gameId=$gameId channel=$channelName | this device's save never came from the cloud; " +
+                "not replacing server save ${protect.id} without asking"
+        )
+        return SaveSyncResult.Conflict(
+            gameId = gameId,
+            localTimestamp = Instant.now(),
+            serverTimestamp = parseTimestamp(protect.updatedAt),
+            serverSaveId = protect.id,
+            serverContentHash = protect.contentHash
+        )
+    }
+
+    /** Whether this device's save for [gameId] already belongs to the cloud history. */
+    suspend fun isLinkedToCloud(gameId: Long): Boolean = lineage.get().isLinked(gameId)
+
+    /**
+     * The server save in [channelName]'s slot that this device would replace, or null when RomM has
+     * none there. Throws [SaveInventoryUnavailableException] when RomM's saves can't be read.
+     */
+    suspend fun cloudSaveToProtect(gameId: Long, channelName: String?): RomMSave? {
+        val game = gameDao.getById(gameId) ?: return null
+        val rommId = game.rommId ?: return null
+        val saves = checkSavesForGame(gameId, rommId).filterNot { isStateShapedSave(it) }
+        if (saves.isEmpty()) return null
+        val romBaseName = game.localPath?.let { File(it).nameWithoutExtension }
+        return selectLatestServerSave(saves, namedChannelOrNull(channelName), romBaseName, preferGciZipBundle = false)
+    }
 
     suspend fun uploadCacheEntry(
         gameId: Long,
@@ -346,15 +395,21 @@ class SaveSyncApiClient @Inject constructor(
         uploadedCacheId: Long? = null,
         ownerApi: AccountApi? = null,
         approveHardcoreDowngrade: Boolean = false
-    ): SaveSyncResult = snapshotRouter.get().takeIf { ownerApi == null }
-        ?.uploadCached(
-            gameId, emulatorId, channelName, cacheFile,
-            onTopOfCurrent = overwrite,
-            cacheId = uploadedCacheId,
-            approveHardcoreDowngrade = approveHardcoreDowngrade
-        )
-        ?: saveUploader.get()
-            .uploadCacheEntry(gameId, rommId, emulatorId, channelName, cacheFile, contentHash, overwrite, uploadedCacheId, ownerApi)
+    ): SaveSyncResult {
+        // Another account's deferred upload is judged by that account, not this device's links.
+        if (ownerApi == null) holdUnlinkedUpload(gameId, channelName, overwrite)?.let { return it }
+        val result = snapshotRouter.get().takeIf { ownerApi == null }
+            ?.uploadCached(
+                gameId, emulatorId, channelName, cacheFile,
+                onTopOfCurrent = overwrite,
+                cacheId = uploadedCacheId,
+                approveHardcoreDowngrade = approveHardcoreDowngrade
+            )
+            ?: saveUploader.get()
+                .uploadCacheEntry(gameId, rommId, emulatorId, channelName, cacheFile, contentHash, overwrite, uploadedCacheId, ownerApi)
+        if (result is SaveSyncResult.Success && ownerApi == null) lineage.get().markLinked(gameId, "save uploaded")
+        return result
+    }
 
     suspend fun downloadSave(
         gameId: Long,
@@ -362,8 +417,13 @@ class SaveSyncApiClient @Inject constructor(
         channelName: String? = null,
         skipBackup: Boolean = false,
         knownServerSaveId: Long? = null
-    ): SaveSyncResult = snapshotRouter.get().download(gameId, emulatorId, channelName)
-        ?: saveDownloader.get().downloadSave(gameId, emulatorId, channelName, skipBackup, knownServerSaveId)
+    ): SaveSyncResult {
+        val result = snapshotRouter.get().download(gameId, emulatorId, channelName)
+            ?: saveDownloader.get().downloadSave(gameId, emulatorId, channelName, skipBackup, knownServerSaveId)
+        // The save on disk is now the cloud's (or already was): this device is part of its history.
+        if (result is SaveSyncResult.Success) lineage.get().markLinked(gameId, "cloud save placed")
+        return result
+    }
 
     suspend fun downloadToCache(
         serverSaveId: Long,
@@ -378,6 +438,7 @@ class SaveSyncApiClient @Inject constructor(
         emulatorId: String?,
         skipDeviceId: Boolean = false
     ): Boolean = saveDownloader.get().downloadSaveAsChannel(gameId, serverSaveId, channelName, emulatorId, skipDeviceId)
+        .also { placed -> if (placed) lineage.get().markLinked(gameId, "cloud save placed as a channel") }
 
     suspend fun downloadAndCacheSave(
         serverSaveId: Long,
@@ -385,6 +446,7 @@ class SaveSyncApiClient @Inject constructor(
         channelName: String?,
         activate: Boolean
     ): Boolean = saveDownloader.get().downloadAndCacheSave(serverSaveId, gameId, channelName, activate)
+        .also { done -> if (done && activate) lineage.get().markLinked(gameId, "cloud save restored") }
 
     suspend fun confirmOrQueueDeviceSync(gameId: Long, saveId: Long) =
         saveDownloader.get().confirmOrQueueDeviceSync(gameId, saveId)

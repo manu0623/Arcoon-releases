@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.material.icons.filled.Extension
@@ -123,6 +124,27 @@ object CocoonFolderPalette {
 /** Folder icon art decodes at this size whatever size the folder is drawn at. */
 private const val COCOON_FOLDER_ART_PX = 320
 
+/**
+ * Every folder icon picture, kept decoded for as long as Arcoon runs (about 400 KB each), so a
+ * folder on the board is drawn straight from here and never loads again. Before, the icons sat in
+ * the shared image cache with the covers and the top screen's large pictures; the burst of
+ * pictures prepared on the first highlights after a fresh start could push an icon out, and the
+ * folder then went blank for a moment while it loaded again: the flick.
+ */
+object CocoonFolderIconCache {
+    private val icons = java.util.concurrent.ConcurrentHashMap<String, androidx.compose.ui.graphics.ImageBitmap>()
+
+    fun get(file: Any): androidx.compose.ui.graphics.ImageBitmap? = icons[file.toString()]
+
+    fun keep(file: Any, drawable: android.graphics.drawable.Drawable?) {
+        val bitmap = (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap ?: return
+        icons[file.toString()] = bitmap.asImageBitmap()
+    }
+
+    /** When the theme or packs change, so new art is picked up. */
+    fun clear() = icons.clear()
+}
+
 @Composable
 fun CocoonFolderIcon(
     colorIndex: Int,
@@ -166,7 +188,16 @@ fun CocoonFolderIcon(
         else -> Unit
     }
     Box(modifier = modifier.size(size)) {
-        if (art != null) {
+        val pinned = art?.let { CocoonFolderIconCache.get(it) }
+        if (pinned != null) {
+            // already decoded: drawn on the spot, nothing to load
+            androidx.compose.foundation.Image(
+                bitmap = pinned,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (art != null) {
             val context = androidx.compose.ui.platform.LocalContext.current
             val request = remember(art) {
                 coil.request.ImageRequest.Builder(context).data(art).size(COCOON_FOLDER_ART_PX).build()
@@ -175,7 +206,8 @@ fun CocoonFolderIcon(
                 model = request,
                 contentDescription = null,
                 contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                onSuccess = { CocoonFolderIconCache.keep(art, it.result.drawable) }
             )
         } else {
             val drawableRes = CocoonFolderPalette.drawableFor(colorIndex)

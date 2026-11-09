@@ -32,6 +32,10 @@ import javax.inject.Inject
 
 private const val TAG = "LaunchWithSync"
 private const val PRE_LAUNCH_SYNC_BUDGET_MS = 5_000L
+private const val PRE_LAUNCH_SYNC_HARD_CEILING_MS = 20_000L
+/** A first sync waits up to about 4 s for RomM to come up before saying it couldn't be checked. */
+private const val FIRST_SYNC_CONNECT_TRIES = 8
+private const val FIRST_SYNC_CONNECT_STEP_MS = 500L
 
 class LaunchWithSyncUseCase @Inject constructor(
     private val gameDao: GameDao,
@@ -50,7 +54,9 @@ class LaunchWithSyncUseCase @Inject constructor(
     private val siblingGroupRepository: SiblingGroupRepository,
     private val stateCacheManager: StateCacheManager,
     private val effectiveLibretroSettingsResolver: EffectiveLibretroSettingsResolver,
-    private val crossEmulatorSaveMigrator: CrossEmulatorSaveMigrator
+    private val crossEmulatorSaveMigrator: CrossEmulatorSaveMigrator,
+    // Always supplied by the app; null (every game counts as synced before) only in older tests.
+    private val cloudSaveLineage: com.nendo.argosy.data.sync.CloudSaveLineage? = null
 ) {
     private val backgroundScope = SafeCoroutineScope(Dispatchers.IO, TAG)
 
@@ -131,13 +137,30 @@ class LaunchWithSyncUseCase @Inject constructor(
         }
     }
 
+    private suspend fun isLinked(gameId: Long): Boolean = cloudSaveLineage?.isLinked(gameId) ?: true
+
+    /** Whether RomM answers; with [waitForIt], gives a connection still starting a few seconds. */
+    private suspend fun awaitReachable(waitForIt: Boolean): Boolean {
+        if (romMRepository.isReachable()) return true
+        if (!waitForIt) return false
+        repeat(FIRST_SYNC_CONNECT_TRIES) {
+            kotlinx.coroutines.delay(FIRST_SYNC_CONNECT_STEP_MS)
+            if (romMRepository.isReachable()) return true
+        }
+        return false
+    }
+
     private suspend fun <T> withinConnectionBudget(gameId: Long, block: suspend () -> T): T? = coroutineScope {
         val mark = romMRepository.responseMark()
         val work = async { block() }
         withTimeoutOrNull(PRE_LAUNCH_SYNC_BUDGET_MS) { work.await() } ?: run {
             if (romMRepository.answeredSince(mark)) {
                 Logger.info(TAG, "Pre-launch sync for gameId=$gameId passed ${PRE_LAUNCH_SYNC_BUDGET_MS}ms with the server answering; waiting for it to finish")
-                work.await()
+                withTimeoutOrNull(PRE_LAUNCH_SYNC_HARD_CEILING_MS - PRE_LAUNCH_SYNC_BUDGET_MS) { work.await() } ?: run {
+                    Logger.warn(TAG, "Pre-launch sync for gameId=$gameId still running at the ${PRE_LAUNCH_SYNC_HARD_CEILING_MS}ms ceiling, launching with what is on disk")
+                    work.cancel()
+                    null
+                }
             } else {
                 Logger.warn(TAG, "Pre-launch sync for gameId=$gameId got no server answer in ${PRE_LAUNCH_SYNC_BUDGET_MS}ms, launching with local data")
                 work.cancel()
@@ -248,9 +271,13 @@ class LaunchWithSyncUseCase @Inject constructor(
         emit(SyncProgress.PreLaunch.CheckingSave(channelName, found = true))
         emit(SyncProgress.PreLaunch.Connecting(channelName))
 
-        if (!romMRepository.isReachable()) {
+        // Never synced on this device: its save in RomM must be checked before the game starts, so
+        // a connection still coming up (right after a fresh install) is waited for a moment, and a
+        // RomM that can't be reached is said out loud instead of quietly starting a new game.
+        val neverSynced = !isLinked(gameId)
+        if (!awaitReachable(waitForIt = neverSynced)) {
             emit(SyncProgress.PreLaunch.Connecting(channelName, success = false))
-            emit(SyncProgress.Skipped)
+            emit(if (neverSynced) SyncProgress.CloudUnchecked(gameId, channelName) else SyncProgress.Skipped)
             return@flow
         }
 
@@ -274,11 +301,11 @@ class LaunchWithSyncUseCase @Inject constructor(
         when (syncResult) {
             is PreLaunchSyncResult.NoConnection -> {
                 emit(SyncProgress.PreLaunch.Connecting(channelName, success = false))
-                emit(SyncProgress.Skipped)
+                emit(if (!isLinked(gameId)) SyncProgress.CloudUnchecked(gameId, channelName) else SyncProgress.Skipped)
             }
             is PreLaunchSyncResult.TimedOut -> {
                 emit(SyncProgress.PreLaunch.TimedOut(channelName))
-                emit(SyncProgress.Skipped)
+                emit(if (!isLinked(gameId)) SyncProgress.CloudUnchecked(gameId, channelName) else SyncProgress.Skipped)
             }
             is PreLaunchSyncResult.NoServerSave -> {
                 emit(SyncProgress.PreLaunch.Downloading(channelName, success = true))
@@ -293,7 +320,8 @@ class LaunchWithSyncUseCase @Inject constructor(
                     SyncProgress.LocalModified(
                         gameId, syncResult.localSavePath, syncResult.channelName, syncResult.serverSaveId,
                         restoreFailed = syncResult.restoreFailed,
-                        snapshotConflict = syncResult.snapshotConflict
+                        snapshotConflict = syncResult.snapshotConflict,
+                        firstSync = syncResult.firstSync
                     )
                 )
             }

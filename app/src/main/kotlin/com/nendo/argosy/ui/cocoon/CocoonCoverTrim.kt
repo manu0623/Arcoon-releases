@@ -31,7 +31,10 @@ object CocoonCoverTrim : Transformation {
     private const val EDGE_STEP = 28
     private const val EDGE_SHARE = 0.45f
 
-    override suspend fun transform(input: Bitmap, size: Size): Bitmap {
+    override suspend fun transform(input: Bitmap, size: Size): Bitmap = trim(input)
+
+    /** The trim itself, for a software bitmap; the optimizer bakes it into its saved covers. */
+    fun trim(input: Bitmap): Bitmap {
         val w = input.width
         val h = input.height
         if (w < 48 || h < 48) return input

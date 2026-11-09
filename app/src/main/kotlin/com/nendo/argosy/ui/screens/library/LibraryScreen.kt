@@ -222,6 +222,8 @@ fun LibraryScreen(
     val downloadIndicators = viewModel.downloadIndicators.collectAsState()
     val initialGridIndex = remember { viewModel.gameIndexToGridIndex(uiState.focusedIndex) }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = initialGridIndex)
+    // For loading the covers just past the folder's edge with the art each tile will show.
+    val imageCacheManagerForPrefetch = com.nendo.argosy.ui.common.LocalImageCacheManager.current
     val platformGridState = rememberLazyGridState()
     var isProgrammaticScroll by remember { mutableStateOf(false) }
 
@@ -696,7 +698,15 @@ fun LibraryScreen(
                                     focusedTitle = uiState.focusedGame?.title,
                                     focusedSubtitle = uiState.focusedGame?.platformDisplayName,
                                     modifier = Modifier.fillMaxSize(),
-                                    wave = coverWave
+                                    wave = coverWave,
+                                    // the same cover each tile shows (see GameCard)
+                                    coverPathFor = { i ->
+                                        uiState.games.getOrNull(i)?.let { g ->
+                                            uiState.repairedCoverPaths[g.id]
+                                                ?: imageCacheManagerForPrefetch?.artFor(g.id)?.coverPath
+                                                ?: g.coverPath
+                                        }
+                                    }
                                 ) { index, cellSize ->
                                     val game = uiState.games.getOrNull(index) ?: return@CocoonFolderCovers
                                     val isFocused = index == uiState.focusedIndex && dockFocus == null

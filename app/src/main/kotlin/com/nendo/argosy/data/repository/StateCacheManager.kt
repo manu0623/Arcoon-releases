@@ -1101,7 +1101,7 @@ class StateCacheManager @Inject constructor(
                     id = state.id,
                     rommSaveId = serverState.id,
                     syncStatus = StateCacheEntity.STATUS_SYNCED,
-                    serverUpdatedAt = serverTimestamp?.toEpochMilli(),
+                    serverUpdatedAt = (serverTimestamp ?: Instant.now()).toEpochMilli(),
                     lastUploadedHash = contentHash
                 )
 
@@ -1468,7 +1468,7 @@ class StateCacheManager @Inject constructor(
         return try {
             java.time.LocalDateTime.parse("${date}_$time", UPLOAD_TIMESTAMP_FORMAT)
                 .plusNanos((millis.toLongOrNull() ?: 0L) * 1_000_000L)
-                .atZone(java.time.ZoneId.systemDefault()).toInstant()
+                .atZone(java.time.ZoneOffset.UTC).toInstant()
         } catch (e: Exception) {
             null
         }

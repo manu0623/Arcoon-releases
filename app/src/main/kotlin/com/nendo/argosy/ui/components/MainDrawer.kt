@@ -68,6 +68,7 @@ fun MainDrawer(
     currentRoute: String?,
     drawerState: DrawerState,
     isOpen: Boolean,
+    isSettled: Boolean,
     onNavigate: (String) -> Unit,
     onResumeGame: () -> Unit,
     modifier: Modifier = Modifier
@@ -100,7 +101,7 @@ fun MainDrawer(
                 localAvatarDoodle = drawerState.localAvatarDoodle,
                 rommUsername = drawerState.rommUsername,
                 rommAvatarUrl = drawerState.rommAvatarUrl,
-                isFocused = isOpen && drawerState.navFocusIndex == DRAWER_ACCOUNT_ROW_INDEX,
+                isFocused = isSettled && drawerState.navFocusIndex == DRAWER_ACCOUNT_ROW_INDEX,
                 onOpenAccounts = {
                     onNavigate(Screen.Settings.createRoute(section = ACCOUNTS_SECTION_NAME))
                 }
@@ -122,7 +123,7 @@ fun MainDrawer(
                 currentRoute = currentRoute,
                 // A closed drawer has no highlighted row: its rows sit off screen, and one that
                 // still counted as focused took the cursor away from the screen in front.
-                focusedIndex = if (isOpen) drawerState.navFocusIndex - DRAWER_NAV_ITEM_OFFSET else -1,
+                focusedIndex = if (isSettled) drawerState.navFocusIndex - DRAWER_NAV_ITEM_OFFSET else -1,
                 badgeFor = drawerState::badgeCountFor,
                 isRommConnected = drawerState.rommConnected,
                 onNavigate = onNavigate,

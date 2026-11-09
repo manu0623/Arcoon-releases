@@ -266,6 +266,14 @@ interface SaveSyncDao {
         ownerUserId: Long?,
         conflictOwners: List<Long>
     ): Flow<List<GameSyncStatusRow>>
+
+    /** Games this device has uploaded a save for: its saves already belong to the cloud history. */
+    @Query("""
+        SELECT DISTINCT gameId FROM save_sync
+        WHERE lastUploadedHash IS NOT NULL
+          AND (ownerUserId IS NULL OR ownerUserId IS :ownerUserId)
+    """)
+    suspend fun gameIdsWithUploadHistory(ownerUserId: Long?): List<Long>
 }
 
 data class GameSyncStatusRow(

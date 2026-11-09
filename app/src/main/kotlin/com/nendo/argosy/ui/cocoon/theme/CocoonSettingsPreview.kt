@@ -88,19 +88,49 @@ fun CocoonSettingsPreview(kind: CocoonPreviewKind, modifier: Modifier = Modifier
     }
 }
 
+/**
+ * The same demo drawn on the presentation screen, where it has the whole panel instead of a
+ * thumbnail slot in the settings list.
+ */
 @Composable
-private fun PreviewFrame(ratio: Float, modifier: Modifier, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+fun CocoonDemoScreen(kind: CocoonPreviewKind, modifier: Modifier = Modifier) {
+    CompositionLocalProvider(
+        LocalCocoonCursor provides null,
+        com.nendo.argosy.ui.theme.LocalMotionTier provides com.nendo.argosy.ui.cocoon.cocoonMotionTier()
+    ) {
+        when (kind) {
+            CocoonPreviewKind.TOP -> TopScreenPreview(modifier.fillMaxSize(), framed = false)
+            CocoonPreviewKind.HANDLE -> HandlePreview(modifier.fillMaxSize(), framed = false)
+            else -> HomePreview(
+                modifier.fillMaxSize(),
+                showPanel = kind == CocoonPreviewKind.SURFACE,
+                framed = false
+            )
+        }
+    }
+}
+
+@Composable
+private fun PreviewFrame(
+    ratio: Float,
+    modifier: Modifier,
+    framed: Boolean = true,
+    content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit
+) {
+    val shape = RoundedCornerShape(if (framed) 16.dp else 0.dp)
     Box(
         modifier = modifier
-            .aspectRatio(ratio)
-            .clip(RoundedCornerShape(16.dp))
+            .then(if (framed) Modifier.aspectRatio(ratio) else Modifier.fillMaxSize())
+            .clip(shape)
             .background(CocoonSurface.Background)
-            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
+            .then(
+                if (framed) Modifier.border(1.dp, Color.White.copy(alpha = 0.14f), shape) else Modifier
+            )
     ) { content() }
 }
 
 @Composable
-private fun HomePreview(modifier: Modifier, showPanel: Boolean) {
+private fun HomePreview(modifier: Modifier, showPanel: Boolean, framed: Boolean = true) {
     val rows = CocoonHomeStore.rows
     val columns = 4
     val count = rows * columns
@@ -118,7 +148,7 @@ private fun HomePreview(modifier: Modifier, showPanel: Boolean) {
             cursor = (cursor + rows).let { if (it >= count) (it % rows + 1) % rows else it }
         }
     }
-    PreviewFrame(1240f / 1080f, modifier) {
+    PreviewFrame(1240f / 1080f, modifier, framed) {
         CocoonThemeEngine.active.value?.wallpaperMain?.let { CocoonThemeWallpaper(it) }
         BoxWithConstraints(Modifier.fillMaxSize().padding(10.dp)) {
             val dockIcon = (maxWidth / 9f).coerceAtMost(28.dp)
@@ -207,13 +237,13 @@ private fun HomePreview(modifier: Modifier, showPanel: Boolean) {
  * the setting picks. It reads the same store as the real handle, so every press redraws it.
  */
 @Composable
-private fun HandlePreview(modifier: Modifier) {
+private fun HandlePreview(modifier: Modifier, framed: Boolean = true) {
     val x = CocoonHomeStore.handleX
     val y = CocoonHomeStore.handleY
     val clarity = CocoonHomeStore.handleClarity
     val box = com.nendo.argosy.ui.cocoon.cocoonHandleTargetDp().dp
     val glyph = com.nendo.argosy.ui.cocoon.cocoonHandleIconDp().dp
-    PreviewFrame(16f / 9f, modifier) {
+    PreviewFrame(16f / 9f, modifier, framed) {
         Box(
             Modifier.fillMaxSize().background(
                 Brush.linearGradient(listOf(Color(0xFF1B2A4A), Color(0xFF35607A), Color(0xFF7FA98C)))
@@ -238,11 +268,11 @@ private fun HandlePreview(modifier: Modifier) {
 }
 
 @Composable
-private fun TopScreenPreview(modifier: Modifier) {
+private fun TopScreenPreview(modifier: Modifier, framed: Boolean = true) {
     val heroStyle = CocoonHomeStore.heroStyle
     val share = CocoonHomeStore.heroShare
     val nowPlaying = CocoonHomeStore.nowPlaying
-    PreviewFrame(16f / 9f, modifier) {
+    PreviewFrame(16f / 9f, modifier, framed) {
         // stand-in game art: a sunset gradient
         if (heroStyle != "NONE") {
             Box(

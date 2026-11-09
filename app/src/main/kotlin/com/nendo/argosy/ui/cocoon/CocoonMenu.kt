@@ -54,6 +54,14 @@ fun CocoonMenuRow(
         bottomStart = if (isLast) r else 0.dp,
         bottomEnd = if (isLast) r else 0.dp
     )
+    val lift = androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(
+            com.nendo.argosy.ui.primitives.CocoonBracketSpec.glideMs,
+            easing = com.nendo.argosy.ui.primitives.CocoonBracketSpec.glideEasing
+        ),
+        label = "cocoon-menu-lift"
+    ).value
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -66,7 +74,7 @@ fun CocoonMenuRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(CocoonMenuPanel, shape)
-                .then(if (focused) Modifier.background(Color.White.copy(alpha = 0.08f), shape) else Modifier)
+                .background(Color.White.copy(alpha = 0.08f * lift), shape)
                 // Drop-down entrance: the row's card is there at once, its content populates.
                 .cocoonPopulate()
                 .clickableNoFocus(onClick = onClick)

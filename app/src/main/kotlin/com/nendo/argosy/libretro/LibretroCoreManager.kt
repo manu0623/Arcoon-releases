@@ -140,6 +140,13 @@ class LibretroCoreManager @Inject constructor(
     }
 
     private fun getCorePath(fileName: String): String? {
+        if (LibretroCoreRegistry.getCoreByFileName(fileName)?.prefersBundledBuild == true) {
+            val bundled = File(nativeLibDir, "lib$fileName")
+            if (bundled.exists()) {
+                Log.d(TAG, "Using Arcoon's bundled build: ${bundled.absolutePath}")
+                return bundled.absolutePath
+            }
+        }
         val downloadedCore = File(downloadedCoresDir, fileName)
         if (downloadedCore.exists()) {
             val coreInfo = LibretroCoreRegistry.getCoreByFileName(fileName)
@@ -439,7 +446,12 @@ class LibretroCoreManager @Inject constructor(
     suspend fun getPendingCoreUpdates(): List<PendingCoreUpdate> =
         withContext(Dispatchers.IO) {
             coreVersionDao.getWithUpdatesAvailable().mapNotNull(::pendingUpdateOf)
+                .filterNot { usesBundledBuild(it.coreInfo) }
         }
+
+    /** True when the app's own build of this core is in use, so a buildbot update would do nothing. */
+    private fun usesBundledBuild(core: LibretroCoreRegistry.CoreInfo): Boolean =
+        core.prefersBundledBuild && File(nativeLibDir, "lib${core.fileName}").exists()
 
     /**
      * Downloads the latest build of every core [getPendingCoreUpdates] reports, one at a time.

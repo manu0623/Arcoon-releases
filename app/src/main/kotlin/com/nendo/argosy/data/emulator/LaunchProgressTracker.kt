@@ -74,6 +74,9 @@ class LaunchProgressTracker internal constructor(
         internal var awaitsWindow = false
 
         private val finished = CompletableDeferred<Unit>()
+
+        internal val cancelledSignal = CompletableDeferred<Unit>()
+
         private var pendingAnswer: CompletableDeferred<LaunchPromptOption?>? = null
 
         val isFinished: Boolean get() = finished.isCompleted
@@ -117,6 +120,7 @@ class LaunchProgressTracker internal constructor(
 
         internal fun cancel() {
             isCancelled = true
+            cancelledSignal.complete(Unit)
             pendingAnswer?.complete(null)
         }
 

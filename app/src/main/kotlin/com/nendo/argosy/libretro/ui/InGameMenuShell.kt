@@ -129,7 +129,7 @@ internal fun InGameMenuPanel(
                 LaunchedEffect(openSection) {
                     contentAlpha.animateTo(1f, tween(Motion.durationContent))
                 }
-                Box(
+                com.nendo.argosy.ui.primitives.CocoonCursorHost(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()

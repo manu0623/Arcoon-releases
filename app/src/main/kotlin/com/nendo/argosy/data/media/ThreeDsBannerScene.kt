@@ -36,6 +36,8 @@ internal object ThreeDsBannerScene {
     private const val MIN_COVERAGE_FRACTION = 0.002
 
     private const val MAX_THREADS = 4
+    /** Share of the progress bar for finding the banner's area, before its frames are drawn. */
+    private const val BOUNDS_SHARE = 0.05f
 
     /** Encodes one ARGB frame as a still WebP. */
     fun interface FrameEncoder {
@@ -146,6 +148,7 @@ internal object ThreeDsBannerScene {
         trace("animation: loop is $length banner frames")
         if (length < 2f) return null
         val area = bounds(first, shouldStop) ?: return null.also { trace("animation: frames empty or stopped") }
+        ThreeDsBannerWork.report(BOUNDS_SHARE)
 
         val seconds = length / BANNER_FRAMES_PER_SECOND
         val count = min(MAX_ANIMATION_FRAMES, max(2, ceil(seconds * OUTPUT_FRAMES_PER_SECOND - 1e-6).toInt()))
@@ -158,6 +161,7 @@ internal object ThreeDsBannerScene {
 
         val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, MAX_THREADS)
         val encoded = arrayOfNulls<ByteArray>(count)
+        val framesDone = java.util.concurrent.atomic.AtomicInteger(0)
         // Lowest priority: the screens keep the processor whenever they need it, so drawing banners
         // in the background never makes scrolling or animations stutter.
         val pool = Executors.newFixedThreadPool(threads) { task ->
@@ -175,6 +179,7 @@ internal object ThreeDsBannerScene {
                     while (i < count && !shouldStop()) {
                         val full = renderer.render(i * step, CANVAS_WIDTH, CANVAS_HEIGHT, SUPERSAMPLE)
                         encoded[i] = encoder.encode(crop(full, area), area.width, area.height)
+                        ThreeDsBannerWork.report(BOUNDS_SHARE + (1f - BOUNDS_SHARE) * framesDone.incrementAndGet() / count)
                         i += threads
                     }
                 })
@@ -182,6 +187,7 @@ internal object ThreeDsBannerScene {
             jobs.forEach { it.get() }
         } finally {
             pool.shutdown()
+            ThreeDsBannerWork.sceneDone()
         }
 
         if (shouldStop()) return null.also { trace("animation: stopped") }

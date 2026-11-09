@@ -539,6 +539,13 @@ class SaveDownloader @Inject constructor(
                             serverTimestamp = serverFingerprint,
                             error = result.error ?: "corrupt zip"
                         )
+                        if (!client.isLinkedToCloud(gameId)) {
+                            // Never synced here: this device's save may be a new game, and a
+                            // download that only looks corrupt (cut short) would have cost the
+                            // real progress in RomM. Nothing is uploaded; the player decides.
+                            Logger.warn(TAG, "[SaveSync] DOWNLOAD gameId=$gameId | Server zip unreadable, but this device never synced the game: not replacing RomM's save with the local one | timestamp=$serverFingerprint")
+                            return@withContext SaveSyncResult.Error(result.error ?: "Server save could not be read")
+                        }
                         Logger.warn(TAG, "[SaveSync] DOWNLOAD gameId=$gameId | Server zip corrupt - auto-recovering by uploading local save | timestamp=$serverFingerprint")
                         val recoveryResult = try {
                             saveUploader.get().uploadSave(

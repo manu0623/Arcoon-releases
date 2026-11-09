@@ -102,6 +102,7 @@ class LaunchGameUseCase @Inject constructor(
     private fun extractCoreName(intent: Intent): String? {
         val libretroPath = intent.getStringExtra("LIBRETRO") ?: return null
         val coreFile = libretroPath.substringAfterLast("/")
+        com.nendo.argosy.libretro.LibretroCoreRegistry.getCoreByFileName(coreFile)?.let { return it.coreId }
         return coreFile
             .removeSuffix("_libretro_android.so")
             .removeSuffix("_libretro.so")

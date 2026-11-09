@@ -59,7 +59,9 @@ class SaveSyncOrchestrator @Inject constructor(
     private val accountSwitchMarkerStore: com.nendo.argosy.data.preferences.AccountSwitchMarkerStore,
     private val fileAccessLayer: com.nendo.argosy.data.storage.FileAccessLayer,
     private val gameArtDao: com.nendo.argosy.data.local.dao.GameArtDao,
-    private val diskJudge: ActiveSaveDiskJudge
+    private val diskJudge: ActiveSaveDiskJudge,
+    // Always supplied by the app; null (every game counts as linked) only in older tests.
+    private val lineage: com.nendo.argosy.data.sync.CloudSaveLineage? = null
 ) {
     sealed interface RefreshOutcome {
         data object Dirtied : RefreshOutcome
@@ -504,7 +506,20 @@ class SaveSyncOrchestrator @Inject constructor(
                 Logger.debug(TAG, "downloadPendingServerSaves: skipping non-installed gameId=${entity.gameId} silently")
                 return@mapNotNull null
             }
-            serverSaveGate.holdFor(entity.gameId, game.localPath, entity.channelName, entity.serverUpdatedAt)?.let { hold ->
+            // Never synced on this device: its own save (if it has one) is not compared by time,
+            // which let a new game started here count as newer than real progress in RomM. With a
+            // save of its own, the player is asked at launch; with none, the cloud save goes on disk.
+            val linked = lineage?.isLinked(entity.gameId) ?: true
+            if (!linked && lookupSystemSave(game, entity.emulatorId) is SaveLookup.Found) {
+                if (entity.syncStatus != SaveSyncEntity.STATUS_CONFLICT) {
+                    saveSyncDao.upsert(entity.copy(syncStatus = SaveSyncEntity.STATUS_CONFLICT))
+                }
+                Logger.info(TAG, "[SaveSync] DOWNLOAD gameId=${entity.gameId} channel=${entity.channelName} | first sync here and the device has its own save; asking at launch")
+                return@mapNotNull null
+            }
+            serverSaveGate.holdFor(entity.gameId, game.localPath, entity.channelName, entity.serverUpdatedAt)
+                ?.takeUnless { !linked && it is ServerSaveHold.Superseded }
+                ?.let { hold ->
                 Logger.info(TAG, "[SaveSync] DOWNLOAD gameId=${entity.gameId} channel=${entity.channelName} | Not placed on disk: ${hold.reason}")
                 if (hold is ServerSaveHold.Superseded && entity.syncStatus == SaveSyncEntity.STATUS_SERVER_NEWER) {
                     saveSyncDao.upsert(entity.copy(syncStatus = SaveSyncEntity.STATUS_SYNCED))

@@ -1371,6 +1371,11 @@ class LibretroActivity : ComponentActivity() {
                 if (modules > 0) modules else com.swordfish.libretrodroid.LibretroDroid.pipelineCount()
             }.getOrDefault(0L)
             val start = shaderCountAtLaunch ?: built()
+            // The current burst of new shaders: where it started, the last count seen, and when
+            // its notice goes away.
+            var shaderSeen = 0L
+            var shaderBurstStart: Long? = null
+            var shaderHideAt = 0L
             // Switched on long after the game started: nothing left to load, count new ones only.
             var loadedBaseline: Long? = if (
                 android.os.SystemClock.elapsedRealtime() - launchRealtimeMs > SHADER_LOAD_WINDOW_MS
@@ -1390,16 +1395,34 @@ class LibretroActivity : ComponentActivity() {
                     )
                 }
                 val baseline = loadedBaseline
+                val now = android.os.SystemClock.elapsedRealtime()
                 shaderReadout = when {
                     baseline == null && total > 0 -> getString(
                         com.nendo.argosy.R.string.ingame_hud_loading_shaders,
                         java.text.NumberFormat.getIntegerInstance().format(total)
                     )
                     baseline == null -> null
-                    else -> getString(
-                        com.nendo.argosy.R.string.ingame_hud_new_shaders,
-                        java.text.NumberFormat.getIntegerInstance().format(total - baseline)
-                    )
+                    else -> {
+                        // New shaders show briefly: "Shaders compiled: N" for the current burst,
+                        // gone 2 s after the last one. The next burst counts from zero again.
+                        if (total > shaderSeen) {
+                            if (shaderBurstStart == null) shaderBurstStart = shaderSeen.coerceAtLeast(baseline)
+                            shaderSeen = total
+                            shaderHideAt = now + SHADER_SHOW_MS
+                        } else if (shaderSeen < baseline) {
+                            shaderSeen = baseline
+                        }
+                        val burstStart = shaderBurstStart
+                        if (burstStart != null && now < shaderHideAt) {
+                            getString(
+                                com.nendo.argosy.R.string.ingame_hud_new_shaders,
+                                java.text.NumberFormat.getIntegerInstance().format(total - burstStart)
+                            )
+                        } else {
+                            shaderBurstStart = null
+                            null
+                        }
+                    }
                 }
                 kotlinx.coroutines.delay(SHADER_POLL_MS)
             }
@@ -2914,7 +2937,9 @@ class LibretroActivity : ComponentActivity() {
 
     private fun resolveCoreIdFromPath(path: String): String? {
         val fileName = File(path).name
-        val known = LibretroCoreRegistry.getAllCores().firstOrNull { it.fileName == fileName }
+        // the copy built into the app is named "lib" + the file name
+        val known = LibretroCoreRegistry.getAllCores()
+            .firstOrNull { it.fileName == fileName || "lib${it.fileName}" == fileName }
         if (known != null) return known.coreId
         return fileName.removeSuffix("_libretro_android.so")
             .removeSuffix("_libretro.so")
@@ -4534,6 +4559,8 @@ class LibretroActivity : ComponentActivity() {
         private const val SHADER_POLL_MS = 250L
         /** The boot burst counts as loading until it has been quiet this long. */
         private const val SHADER_QUIET_MS = 1_500L
+        /** How long "Shaders compiled" stays up after the last new shader. */
+        private const val SHADER_SHOW_MS = 2_000L
         /** After this long from launch nothing more counts as loading. */
         private const val SHADER_LOAD_WINDOW_MS = 30_000L
 

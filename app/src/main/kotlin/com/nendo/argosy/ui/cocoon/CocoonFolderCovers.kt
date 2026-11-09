@@ -38,6 +38,7 @@ import com.nendo.argosy.ui.theme.CocoonSurface
 import com.nendo.argosy.ui.theme.LocalBoxArtStyle
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
@@ -55,10 +56,40 @@ fun CocoonFolderCovers(
     focusedSubtitle: String?,
     modifier: Modifier = Modifier,
     wave: CocoonCoverWave? = null,
+    /** The cover a tile will show, so covers just past the edge load before they scroll in. */
+    coverPathFor: ((index: Int) -> String?)? = null,
     cell: @Composable (index: Int, size: Dp) -> Unit,
 ) {
     val state = rememberLazyGridState()
     val count = keys.size
+    // The grid only draws the tiles on screen, so a column scrolling in used to start loading
+    // its covers only then and they popped in. The next columns (and the one behind) are loaded
+    // in the background ahead of time, with exactly the request their tiles make.
+    val prefetchContext = androidx.compose.ui.platform.LocalContext.current
+    val currentCoverPathFor = androidx.compose.runtime.rememberUpdatedState(coverPathFor)
+    LaunchedEffect(state, rows, keys) {
+        val requested = HashSet<Int>()
+        androidx.compose.runtime.snapshotFlow {
+            val visible = state.layoutInfo.visibleItemsInfo
+            (visible.firstOrNull()?.index ?: 0) to (visible.lastOrNull()?.index ?: -1)
+        }
+            .distinctUntilChanged()
+            .collect { (first, last) ->
+                val pathFor = currentCoverPathFor.value ?: return@collect
+                if (last < 0) return@collect
+                val ahead = (last + 1) until minOf(keys.size, last + 1 + rows * COVER_PREFETCH_COLUMNS)
+                val behind = maxOf(0, first - rows) until first
+                val loader = coil.Coil.imageLoader(prefetchContext)
+                for (index in ahead + behind) {
+                    if (!requested.add(index)) continue
+                    val path = pathFor(index)?.takeIf { it.isNotEmpty() } ?: continue
+                    val data = CocoonThumbs.model(prefetchContext, path) ?: continue
+                    loader.enqueue(
+                        CocoonThumbs.coverRequest(prefetchContext, data, COCOON_COVER_DECODE_PX, CocoonPrefetch.dispatcher)
+                    )
+                }
+            }
+    }
     // R3 changes the row count: for that one change, every cover slides to its new place (as in
     // Cocoon). Ordinary browsing runs with no placement animation, so it stays at full speed.
     val reflow = androidx.compose.runtime.remember { ReflowWindow(rows) }
@@ -273,6 +304,9 @@ class CocoonCoverWave {
 
 /** Folder covers and the Home prefetch decode at this size, so they share one cached picture. */
 const val COCOON_COVER_DECODE_PX = 512
+
+/** Columns of covers past the right edge loaded ahead of time (plus one column behind). */
+private const val COVER_PREFETCH_COLUMNS = 2
 
 /** Remembers the last row count and until when a change of it should animate. */
 private class ReflowWindow(var rows: Int) {

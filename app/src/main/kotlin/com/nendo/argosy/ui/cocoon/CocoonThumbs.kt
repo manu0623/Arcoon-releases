@@ -11,6 +11,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Small, ready-to-draw copies of game covers (512 px on the short side), made once by the
  * optimizer and kept on the device. A folder decodes these instead of the full-size covers, so
  * covers appear at once and changing the row count never reloads them.
+ *
+ * They are saved already trimmed ([CocoonCoverTrim]), so showing one is only reading a small
+ * finished file: no trimming each time, and the picture can go straight to the graphics chip.
  */
 object CocoonThumbs {
     const val SIZE = 512
@@ -25,7 +28,29 @@ object CocoonThumbs {
         return md5(path + "|" + f.length() + "|" + f.lastModified())
     }
 
-    fun fileFor(context: Context, path: String): File = File(dir(context), keyFor(path) + ".webp")
+    /** Names carry the trim's version: thumbnails made before the trim was baked in are remade. */
+    private const val BAKED_SUFFIX = "-t3.webp"
+
+    fun fileFor(context: Context, path: String): File = File(dir(context), keyFor(path) + BAKED_SUFFIX)
+
+    /** Whether [data] is one of these finished thumbnails (already trimmed). */
+    fun isBaked(data: Any?): Boolean = data is File && data.name.endsWith(BAKED_SUFFIX)
+
+    /**
+     * The one request every cover tile, prefetch and warm-up makes, so they all share the same
+     * picture in memory: a finished thumbnail as it is, anything else trimmed as it is decoded.
+     */
+    fun coverRequest(
+        context: Context,
+        data: Any,
+        sizePx: Int,
+        dispatcher: kotlinx.coroutines.CoroutineDispatcher? = null,
+    ): coil.request.ImageRequest = coil.request.ImageRequest.Builder(context)
+        .data(data)
+        .size(sizePx)
+        .apply { if (!isBaked(data)) transformations(CocoonCoverTrim) }
+        .apply { if (dispatcher != null) dispatcher(dispatcher) }
+        .build()
 
     /** The ready thumbnail for a cover path, or null when it hasn't been made (or the cover changed). */
     fun ready(context: Context, path: String): File? {
@@ -63,11 +88,13 @@ object CocoonThumbs {
             val bitmap = BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
                 ?: return false
             val decodedShort = minOf(bitmap.width, bitmap.height)
-            val scaled = if (decodedShort > SIZE * 1.2f) {
+            val resized = if (decodedShort > SIZE * 1.2f) {
                 val f = SIZE.toFloat() / decodedShort
                 Bitmap.createScaledBitmap(bitmap, (bitmap.width * f).toInt(), (bitmap.height * f).toInt(), true)
                     .also { if (it !== bitmap) bitmap.recycle() }
             } else bitmap
+            // the side-band trim, done once here instead of every time the cover is shown
+            val scaled = CocoonCoverTrim.trim(resized).also { if (it !== resized) resized.recycle() }
             val tmp = File(out.parentFile, out.name + ".tmp")
             tmp.outputStream().use { stream ->
                 @Suppress("DEPRECATION")
@@ -84,7 +111,7 @@ object CocoonThumbs {
 
     /** Removes thumbnails whose covers are gone. */
     fun tidy(context: Context, keepPaths: Collection<String>) {
-        val keep = keepPaths.mapTo(HashSet()) { keyFor(it) + ".webp" }
+        val keep = keepPaths.mapTo(HashSet()) { keyFor(it) + BAKED_SUFFIX }
         dir(context).listFiles()?.forEach { file ->
             if (file.name !in keep) file.delete()
         }

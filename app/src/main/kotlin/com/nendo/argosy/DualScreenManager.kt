@@ -2691,8 +2691,12 @@ class DualScreenManager(
         }
     }
 
+    /** Relaunching the lower-screen window must not turn into a fight with another copy of Arcoon. */
+    private val companionLaunchGuard = com.nendo.argosy.util.TugOfWarGuard("launching the lower screen")
+
     private fun launchCompanionOnSecondaryDisplay() {
         if (isKeyguardShowing) return
+        if (!companionLaunchGuard.allow()) return
         val options = displayAffinityHelper.getCompanionLaunchOptions() ?: return
         val intent = Intent(activityContext, SecondaryHomeActivity::class.java).apply {
             addFlags(

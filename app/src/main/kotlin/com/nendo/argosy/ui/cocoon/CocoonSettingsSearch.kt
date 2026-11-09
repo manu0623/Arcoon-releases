@@ -99,16 +99,20 @@ private val HIDDEN = setOf(SettingsSection.MAIN, SettingsSection.PLATFORM_DETAIL
 fun CocoonSettingsSearch(onOpenSection: (SettingsSection) -> Unit, onDismiss: () -> Unit) {
     val themesLabel = stringResource(R.string.cocoon_themes_title)
     val personalLabel = stringResource(R.string.cocoon_personal_title)
+    val jinglesLabel = stringResource(R.string.cocoon_jingles)
     val open by rememberUpdatedState(onOpenSection)
     val dismiss by rememberUpdatedState(onDismiss)
-    val entries = remember(themesLabel, personalLabel) {
+    val entries = remember(themesLabel, personalLabel, jinglesLabel) {
         listOf(
             SearchEntry(themesLabel, "theme cocoon silk import zip wallpaper icons pack") {
                 com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.pickerOpen.value = true
                 open(SettingsSection.THEME)
             },
-            SearchEntry(personalLabel, "cursor highlight dock grid rows jingles glass now playing") {
-                com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.personalOpen.value = true
+            SearchEntry(personalLabel, "cursor highlight dock now playing single screen restore") {
+                open(SettingsSection.HOME_SCREEN)
+            },
+            SearchEntry(jinglesLabel, "jingle sound music") {
+                com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
                 open(SettingsSection.THEME)
             },
         ) + SettingsSection.entries.filter { it !in HIDDEN }.map { section ->

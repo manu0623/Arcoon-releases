@@ -466,6 +466,59 @@ internal fun LocalModifiedContent(
     )
 }
 
+/** First sync on this device: the cloud save (first, highlighted) or the device's own save. */
+@Composable
+internal fun FirstSyncContent(
+    gameTitle: String,
+    focusIndex: Int,
+    onContinueCloud: () -> Unit,
+    onKeepDevice: () -> Unit,
+    onCancelLaunch: () -> Unit
+) {
+    LaunchQuestionCard(
+        title = stringResource(R.string.sync_first_sync_title),
+        message = stringResource(R.string.sync_first_sync_message, gameTitle),
+        note = stringResource(R.string.sync_first_sync_question),
+        choices = listOf(
+            LaunchQuestionChoice(
+                label = stringResource(R.string.sync_first_sync_cloud),
+                description = stringResource(R.string.sync_first_sync_cloud_subtitle),
+                onClick = onContinueCloud
+            ),
+            LaunchQuestionChoice(
+                label = stringResource(R.string.sync_first_sync_local),
+                description = stringResource(R.string.sync_first_sync_local_subtitle),
+                onClick = onKeepDevice
+            )
+        ),
+        focusIndex = focusIndex,
+        onCancel = onCancelLaunch
+    )
+}
+
+/** A first launch here with RomM out of reach: play anyway, or Back to try again later. */
+@Composable
+internal fun CloudUncheckedContent(
+    gameTitle: String,
+    focusIndex: Int,
+    onPlayAnyway: () -> Unit,
+    onCancelLaunch: () -> Unit
+) {
+    LaunchQuestionCard(
+        title = stringResource(R.string.sync_cloud_unchecked_title),
+        message = stringResource(R.string.sync_cloud_unchecked_message, gameTitle),
+        choices = listOf(
+            LaunchQuestionChoice(
+                label = stringResource(R.string.sync_cloud_unchecked_play),
+                description = stringResource(R.string.sync_cloud_unchecked_play_subtitle),
+                onClick = onPlayAnyway
+            )
+        ),
+        focusIndex = focusIndex,
+        onCancel = onCancelLaunch
+    )
+}
+
 @Composable
 internal fun SnapshotConflictContent(
     gameTitle: String,

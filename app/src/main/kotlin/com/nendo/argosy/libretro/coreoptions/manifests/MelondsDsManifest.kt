@@ -63,6 +63,36 @@ object MelondsDsManifest : CoreOptionManifest {
             valueLabels = mapOf("native" to "Native", "builtin" to "Built-In")
         ),
         CoreOptionDef(
+            key = "melonds_render_mode",
+            displayName = "Render Mode",
+            values = listOf("software", "opengl"),
+            defaultValue = "opengl",
+            coreDefault = "software",
+            description = "OpenGL draws 3D on the GPU and can upscale it; Software is the most accurate. " +
+                "If a game looks wrong in OpenGL, switch back to Software. Takes effect after restarting the game",
+            valueLabels = mapOf("software" to "Software", "opengl" to "OpenGL (GPU)")
+        ),
+        CoreOptionDef(
+            key = "melonds_opengl_resolution",
+            displayName = "Internal Resolution",
+            values = listOf("1", "2", "3", "4", "5", "6", "7", "8"),
+            defaultValue = "4",
+            coreDefault = "1",
+            description = "How much 3D graphics are upscaled (OpenGL only). Takes effect after restarting the game",
+            valueLabels = mapOf(
+                "1" to "1x (256x192)", "2" to "2x (512x384)", "3" to "3x (768x576)",
+                "4" to "4x (1024x768)", "5" to "5x (1280x960)", "6" to "6x (1536x1152)",
+                "7" to "7x (1792x1344)", "8" to "8x (2048x1536)"
+            )
+        ),
+        CoreOptionDef(
+            key = "melonds_opengl_better_polygons",
+            displayName = "Improved Polygon Splitting",
+            values = listOf("enabled", "disabled"),
+            defaultValue = "enabled",
+            description = "Fixes 3D models that render incorrectly (OpenGL only)"
+        ),
+        CoreOptionDef(
             key = "melonds_threaded_renderer",
             displayName = "Threaded Software Renderer",
             values = listOf("enabled", "disabled"),

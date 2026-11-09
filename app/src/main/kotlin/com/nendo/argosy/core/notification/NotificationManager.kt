@@ -168,6 +168,9 @@ class NotificationManager @Inject constructor() {
         )
     }
 
+    /** Takes a persistent notification away without a closing message (work stopped or finished quietly). */
+    fun dismissPersistent(key: String) = removePersistent(key)
+
     private fun removePersistent(key: String) {
         _persistentNotifications.update { current ->
             current.filterNot { it.key == key }
