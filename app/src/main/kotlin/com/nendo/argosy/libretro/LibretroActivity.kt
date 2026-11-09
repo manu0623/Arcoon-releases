@@ -4120,6 +4120,7 @@ class LibretroActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        super.onPause()
         stopWatchingForSecondScreen()
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.available.value = false
         val pauseStartedAt = android.os.SystemClock.uptimeMillis()
