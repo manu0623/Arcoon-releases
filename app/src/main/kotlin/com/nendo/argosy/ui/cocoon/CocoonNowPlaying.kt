@@ -17,7 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -65,15 +65,9 @@ fun CocoonNowPlaying(style: CocoonNowPlayingStyle) {
     val session by (dsm?.playSessionTracker?.activeSession
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(null) }).collectAsState()
     val gameId = session?.gameId
-    val info by produceState(NowPlayingInfo(null, null, null), gameId) {
-        val id = gameId ?: return@produceState
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                val entry = EntryPointAccessors.fromApplication(context.applicationContext, CocoonNowPlayingEntryPoint::class.java)
-                val art = entry.imageCacheManager().artFor(id) ?: entry.imageCacheManager().loadArt(id)
-                NowPlayingInfo(entry.gameDao().cocoonTitleOf(id), art.backgroundPath ?: art.coverPath, art.logoPath)
-            }.getOrDefault(NowPlayingInfo(null, null, null))
-        }
+    var info by remember(gameId) { mutableStateOf(NowPlayingInfo(null, null, null)) }
+    LaunchedEffect(gameId, context) {
+        info = cocoonNowPlayingInfo(context, gameId)
     }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -140,5 +134,23 @@ fun CocoonNowPlaying(style: CocoonNowPlayingStyle) {
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.align(Alignment.TopEnd).padding(20.dp)
         )
+    }
+}
+
+private suspend fun cocoonNowPlayingInfo(context: android.content.Context, gameId: Long?): NowPlayingInfo {
+    val id = gameId ?: return NowPlayingInfo(null, null, null)
+    return withContext(Dispatchers.IO) {
+        runCatching {
+            val entry = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                CocoonNowPlayingEntryPoint::class.java
+            )
+            val art = entry.imageCacheManager().artFor(id) ?: entry.imageCacheManager().loadArt(id)
+            NowPlayingInfo(
+                entry.gameDao().cocoonTitleOf(id),
+                art.backgroundPath ?: art.coverPath,
+                art.logoPath
+            )
+        }.getOrDefault(NowPlayingInfo(null, null, null))
     }
 }

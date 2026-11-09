@@ -184,7 +184,7 @@ fun ArgosyApp(
         musicPlayerViewModel.uiState
             .map { it.browse?.notice }
             .distinctUntilChanged()
-    }.collectAsState(initial = musicPlayerViewModel.uiState.value.browse?.notice)
+    }.collectAsState(initial = null)
     val screenDimmerPrefs by viewModel.screenDimmerPreferences.collectAsState()
     val isEmulatorRunning by viewModel.isEmulatorRunning.collectAsState()
     val quickMenuState by quickMenuViewModel.uiState.collectAsState()
@@ -310,8 +310,13 @@ fun ArgosyApp(
         val owner = settingsLiftOwner
         if (asLiftedPanel) {
             // The floating panel: it ends the lift once its Settings has shown and gone again.
-            val settingsStillStacked = navController.currentBackStack.value.any {
-                it.destination.route?.startsWith(Screen.Settings.route) == true
+            // getBackStackEntry is the public read of a stack that NavController keeps closed:
+            // it throws when no destination matching the route is on this screen's stack.
+            val settingsStillStacked = try {
+                navController.getBackStackEntry(Screen.Settings.route)
+                true
+            } catch (_: IllegalArgumentException) {
+                false
             }
             if (owner == null) liftedSettingsShown = false
             if (owner != null && settingsStillStacked) liftedSettingsShown = true
