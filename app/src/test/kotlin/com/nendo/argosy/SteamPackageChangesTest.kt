@@ -44,8 +44,8 @@ class SteamPackageChangesTest {
     }
 
     private fun app() = ArgosyApp().also {
-        it.appsRepository = apps
-        it.gameNativeStoreSync = sync
+        it.appsRepositoryLazy = dagger.Lazy { apps }
+        it.gameNativeStoreSyncLazy = dagger.Lazy { sync }
     }
 
     @Test

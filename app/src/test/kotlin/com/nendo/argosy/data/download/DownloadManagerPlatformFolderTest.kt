@@ -95,6 +95,7 @@ class DownloadManagerPlatformFolderTest {
             customGridShapeStore = mockk(relaxed = true),
             extContentOrganizer = mockk(relaxed = true),
             romStagingManager = mockk(relaxed = true),
+            azaharTexturePacks = mockk(relaxed = true),
             platformFolderResolver = PlatformFolderResolver(mockk(relaxed = true), platformDao, gameDao, preferences),
             scope = CoroutineScope(testDispatcher)
         )
