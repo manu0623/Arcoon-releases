@@ -95,6 +95,7 @@ class DownloadManagerAutoStartTest {
             customGridShapeStore = mockk(relaxed = true),
             extContentOrganizer = mockk(relaxed = true),
             romStagingManager = mockk(relaxed = true),
+            azaharTexturePacks = mockk(relaxed = true),
             platformFolderResolver = PlatformFolderResolver(
                 context = mockk(relaxed = true),
                 platformDao = platformDao,
