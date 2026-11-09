@@ -172,4 +172,18 @@
     <!-- Emulator core selection. -->
 
     <string name="sync_launch_core_fallback">%1$s लोड करने में विफल, इसके बजाय %2$s इस्तेमाल हो रहा है</string>
+
+    <string name="sync_first_sync_title">दो सेव मिलीं</string>
+    <string name="sync_first_sync_message">RomM के पास दूसरे डिवाइस से \"%1$s\" का सेव है, और इस डिवाइस के पास अपना सेव है।</string>
+    <string name="sync_first_sync_question">आप किसे जारी रखना चाहते हैं? दूसरा सुरक्षित रहेगा और बाद में पुनर्स्थापित किया जा सकता है।</string>
+    <string name="sync_first_sync_cloud">क्लाउड सेव जारी रखें</string>
+    <string name="sync_first_sync_cloud_subtitle">दूसरे डिवाइस से आपकी प्रगति</string>
+    <string name="sync_first_sync_local">इस डिवाइस का सेव रखें</string>
+    <string name="sync_first_sync_local_subtitle">यह RomM में सेव बन जाता है</string>
+    <string name="sync_progress_first_sync">दो सेव मिलीं</string>
+    <string name="sync_cloud_unchecked_title">क्लाउड सेव जाँचा नहीं गया</string>
+    <string name="sync_cloud_unchecked_message">Arcoon \"%1$s\" का आपका सेव लाने के लिए RomM तक नहीं पहुँच सका। अगर आप अभी खेलते हैं, तो हो सकता है आप वहाँ से आगे न बढ़ें जहाँ आपने दूसरे डिवाइस पर छोड़ा था।</string>
+    <string name="sync_cloud_unchecked_play">फिर भी खेलें</string>
+    <string name="sync_cloud_unchecked_play_subtitle">जब तक RomM का सेव जाँचा नहीं जाता, कुछ भी अपलोड नहीं होगा</string>
+    <string name="sync_progress_cloud_unchecked">क्लाउड सेव जाँचा नहीं गया</string>
 </resources>

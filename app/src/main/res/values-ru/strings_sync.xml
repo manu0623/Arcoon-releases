@@ -155,4 +155,18 @@
     <string name="sync_steam_qr_disconnected">Steam не подключен</string>
 
     <string name="sync_launch_core_fallback">Не удалось загрузить %1$s, используется %2$s</string>
+
+    <string name="sync_first_sync_title">Найдено два сохранения</string>
+    <string name="sync_first_sync_message">В RomM есть сохранение для \"%1$s\" с другого устройства, а на этом устройстве есть своё.</string>
+    <string name="sync_first_sync_question">Какое продолжить? Второе сохранится, и его можно будет восстановить позже.</string>
+    <string name="sync_first_sync_cloud">Продолжить облачное сохранение</string>
+    <string name="sync_first_sync_cloud_subtitle">Ваш прогресс с другого устройства</string>
+    <string name="sync_first_sync_local">Оставить сохранение этого устройства</string>
+    <string name="sync_first_sync_local_subtitle">Оно станет сохранением в RomM</string>
+    <string name="sync_progress_first_sync">Найдено два сохранения</string>
+    <string name="sync_cloud_unchecked_title">Облачное сохранение не проверено</string>
+    <string name="sync_cloud_unchecked_message">Arcoon не смог связаться с RomM, чтобы получить ваше сохранение для \"%1$s\". Если начать играть сейчас, вы можете продолжить не с того места, где остановились на другом устройстве.</string>
+    <string name="sync_cloud_unchecked_play">Всё равно играть</string>
+    <string name="sync_cloud_unchecked_play_subtitle">Ничего не загружается, пока сохранение в RomM не проверено</string>
+    <string name="sync_progress_cloud_unchecked">Облачное сохранение не проверено</string>
 </resources>

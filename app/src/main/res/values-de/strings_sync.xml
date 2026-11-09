@@ -149,4 +149,18 @@
     <string name="sync_steam_qr_disconnected">Steam nicht verbunden</string>
 
     <string name="sync_launch_core_fallback">%1$s konnte nicht geladen werden, %2$s wird stattdessen verwendet</string>
+
+    <string name="sync_first_sync_title">Zwei Spielstände gefunden</string>
+    <string name="sync_first_sync_message">RomM hat einen Spielstand für \"%1$s\" von einem anderen Gerät, und dieses Gerät hat einen eigenen.</string>
+    <string name="sync_first_sync_question">Welchen möchtest du fortsetzen? Der andere bleibt erhalten und kann später wiederhergestellt werden.</string>
+    <string name="sync_first_sync_cloud">Cloud-Spielstand fortsetzen</string>
+    <string name="sync_first_sync_cloud_subtitle">Dein Fortschritt vom anderen Gerät</string>
+    <string name="sync_first_sync_local">Spielstand dieses Geräts behalten</string>
+    <string name="sync_first_sync_local_subtitle">Er wird zum Spielstand in RomM</string>
+    <string name="sync_progress_first_sync">Zwei Spielstände gefunden</string>
+    <string name="sync_cloud_unchecked_title">Cloud-Spielstand nicht geprüft</string>
+    <string name="sync_cloud_unchecked_message">Arcoon konnte RomM nicht erreichen, um deinen Spielstand für \"%1$s\" zu holen. Wenn du jetzt spielst, setzt du möglicherweise nicht dort fort, wo du auf einem anderen Gerät aufgehört hast.</string>
+    <string name="sync_cloud_unchecked_play">Trotzdem spielen</string>
+    <string name="sync_cloud_unchecked_play_subtitle">Nichts wird hochgeladen, bis der Spielstand in RomM geprüft wurde</string>
+    <string name="sync_progress_cloud_unchecked">Cloud-Spielstand nicht geprüft</string>
 </resources>

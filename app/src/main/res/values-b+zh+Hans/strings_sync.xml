@@ -146,4 +146,18 @@
     <string name="sync_steam_qr_disconnected">Steam未连接</string>
 
     <string name="sync_launch_core_fallback">加载%1$s失败，已改用%2$s</string>
+
+    <string name="sync_first_sync_title">找到两个存档</string>
+    <string name="sync_first_sync_message">RomM 上有来自另一台设备的 \"%1$s\" 存档，而本设备也有一个存档。</string>
+    <string name="sync_first_sync_question">要继续哪一个？另一个会被保留，之后可以恢复。</string>
+    <string name="sync_first_sync_cloud">继续云端存档</string>
+    <string name="sync_first_sync_cloud_subtitle">你在另一台设备上的进度</string>
+    <string name="sync_first_sync_local">保留本设备的存档</string>
+    <string name="sync_first_sync_local_subtitle">它将变为 RomM 中的存档</string>
+    <string name="sync_progress_first_sync">找到两个存档</string>
+    <string name="sync_cloud_unchecked_title">云端存档未检查</string>
+    <string name="sync_cloud_unchecked_message">Arcoon 无法连接 RomM 获取你的 \"%1$s\" 存档。如果现在开始游戏，可能无法从你在另一台设备上停下的位置继续。</string>
+    <string name="sync_cloud_unchecked_play">仍然游玩</string>
+    <string name="sync_cloud_unchecked_play_subtitle">在检查 RomM 的存档之前不会上传任何内容</string>
+    <string name="sync_progress_cloud_unchecked">云端存档未检查</string>
 </resources>

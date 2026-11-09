@@ -2843,4 +2843,15 @@
     <string name="settings_builtin_gpu_driver_reason_core_system_only">%1$s использует системный драйвер</string>
     <string name="settings_builtin_gpu_driver_reason_backend">Действует, когда рендерер Vulkan</string>
     <string name="settings_builtin_gpu_driver_reason_device">Свои драйверы требуют GPU Adreno</string>
+
+    <string name="settings_storage_rom_media_section">МЕДИА ROM</string>
+    <string name="settings_storage_rom_media_extract_title">Извлечь медиа из ROM</string>
+    <string name="settings_storage_rom_media_extract_subtitle">Читать встроенные значки из поддерживаемых локальных ROM NDS, а также значки и баннеры из поддерживаемых локальных ROM 3DS</string>
+    <string name="settings_storage_rom_media_use_banner_title">Использовать баннер 3DS как обложку</string>
+    <string name="settings_storage_rom_media_use_banner_subtitle">Предпочитать встроенные баннеры 3DS серверной обложке; вручную выбранное изображение по-прежнему в приоритете</string>
+    <string name="settings_interface_section_launcher">Лаунчер</string>
+    <string name="settings_interface_ui_mode_title">Главный экран и управление</string>
+    <string name="settings_interface_ui_mode_subtitle">Какой главный экран открывает лаунчер и какое меню управляется геймпадом</string>
+    <string name="settings_interface_ui_mode_cocoon">Cocoon</string>
+    <string name="settings_interface_ui_mode_classic">Argosy</string>
 </resources>

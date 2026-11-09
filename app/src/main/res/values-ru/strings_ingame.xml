@@ -585,4 +585,11 @@
 
     <string name="ingame_touch_generic_sys_select">Select</string>
     <string name="ingame_touch_generic_sys_start">Start</string>
+
+    <string name="ingame_settings_hud_shaders_title">Шейдеры</string>
+    <string name="ingame_settings_hud_shaders_subtitle">Шейдеры загружаются при запуске, новые компилируются во время игры</string>
+    <string name="ingame_hud_loading_shaders">Загрузка шейдеров %1$s</string>
+    <string name="ingame_hud_new_shaders">Шейдеры скомпилированы: %1$s</string>
+    <string name="ingame_home_handle">Открыть меню в игре</string>
+    <string name="ingame_suspend_handle">Приостановить игру</string>
 </resources>
