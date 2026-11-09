@@ -407,11 +407,17 @@ tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.co
 // 1. a copy of the APK goes to the Desktop folder, 2. it is published as a GitHub release (when a
 // token is set in local.properties) so the app on the Thor can update itself, 3. the build number
 // goes up by one for next time.
-val arcoonApkDir = file(arcoonLocalProperties.getProperty("arcoon.apkFolder", "C:/Users/manu0/Desktop/arcoon launcher apks"))
+val arcoonApkDir = if (System.getenv("CI") != null) {
+    layout.buildDirectory.dir("outputs/apk/releaseCopy").get().asFile
+} else {
+    runCatching { file(arcoonLocalProperties.getProperty("arcoon.apkFolder", "C:/Users/manu0/Desktop/arcoon launcher apks")) }
+        .getOrDefault(layout.buildDirectory.dir("outputs/apk/releaseCopy").get().asFile)
+}
 val arcoonApkName = "Arcoon-$arcoonVersionName.apk"
 
 val arcoonCopyApk = tasks.register("arcoonCopyApk") {
     doLast {
+        if (System.getenv("CI") != null) return@doLast
         val outDir = layout.buildDirectory.dir("outputs/apk/customRelease").get().asFile
         val apk = outDir.listFiles()?.filter { it.name.endsWith(".apk") }?.maxByOrNull { it.lastModified() }
         if (apk == null) {
