@@ -19,7 +19,11 @@ object FrameWatch {
 
     fun attach(activity: Activity) {
         if (!ENABLED) return
-        val display = runCatching { activity.display?.displayId }.getOrNull() ?: -1
+        val display = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            runCatching { activity.display?.displayId }.getOrNull() ?: -1
+        } else {
+            -1
+        }
         runCatching {
             activity.window.addOnFrameMetricsAvailableListener(
                 Window.OnFrameMetricsAvailableListener { _, m, dropped ->
