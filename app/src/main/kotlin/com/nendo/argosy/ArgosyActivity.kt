@@ -420,6 +420,7 @@ class ArgosyActivity : ComponentActivity() {
                     // Lifted Settings floats over the showcase picture instead of replacing it.
                     val settingsLifted = dualScreenManager.settingsLift.collectAsState().value != null
                     val companionHostsLauncher = dualScreenManager.companionHostsLauncher.collectAsState()
+                    val companionScreenUp = dualScreenManager.companionScreenUp.collectAsState()
                     val showsPresentation = rendersPresentation(
                         companionHoldsPrimary.value || companionHostsLauncher.value,
                         gameActive.value,
@@ -436,13 +437,42 @@ class ArgosyActivity : ComponentActivity() {
                     // Settings coming up here (or leaving) crossfades with the showcase picture; a
                     // screen swap keeps its own slide with no fade under it.
                     val swapping = com.nendo.argosy.ui.cocoon.cocoonSwapRecent()
-                    com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = rolesSwapped.value) {
+                    com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = rolesSwapped.value) { frameKey ->
+                    /*
+                     * The copy sliding away keeps the branch it was showing. Both copies render the
+                     * live branch otherwise, which composed the whole launcher twice in one frame
+                     * (the lag and the stutter) and stripped the leaving picture before the slide
+                     * covered it (the dock breaking). Inverting is only right for the
+                     * launcher/presentation pair, and a running game picks its own branch.
+                     */
+                    val swappedHere = frameKey as? Boolean ?: rolesSwapped.value
+                    /*
+                     * The branch for this copy's own arrangement, not for the live one:
+                     * companionHoldsPrimary and companionHostsLauncher both reduce to `!swapped &&
+                     * the companion is up`, so asking rendersPresentation with this copy's key
+                     * gives the picture that arrangement shows. A live flag lands a few frames
+                     * after the role does, and reading it let a running slide change picture
+                     * 293 ms in: a second board inside one swap (the flash), and both panels
+                     * settling on the same role (the replication).
+                     */
+                    val presentingHere = rendersPresentation(
+                        companionScreenUp.value && !swappedHere,
+                        gameActive.value,
+                        gameDisplay.value
+                    )
                     androidx.compose.animation.Crossfade(
-                        targetState = showsPresentation,
+                        targetState = presentingHere,
                         animationSpec = if (swapping) androidx.compose.animation.core.snap()
                         else androidx.compose.animation.core.tween(SETTINGS_LIFT_FADE_MS),
                         label = "main-window-role"
                     ) { presenting ->
+                    androidx.compose.runtime.LaunchedEffect(presenting) {
+                        com.nendo.argosy.util.ArcoonTrace.log(
+                            "main window branch composed presenting=$presenting swappedHere=$swappedHere " +
+                                "live=${rolesSwapped.value} swapping=$swapping " +
+                                "display=${window.decorView.display?.displayId}"
+                        )
+                    }
                     if (presenting) {
                         val slot by dualScreenManager.presentationSlot.collectAsState()
                         androidx.compose.runtime.LaunchedEffect(slot::class) {
@@ -452,7 +482,8 @@ class ArgosyActivity : ComponentActivity() {
                             FocusRequester()
                         }
                         androidx.compose.runtime.LaunchedEffect(Unit) {
-                            presentationSink.requestFocus()
+                            // Rebuilt by a role swap: the node can still be unattached here.
+                            runCatching { presentationSink.requestFocus() }
                         }
                         Box(
                             modifier = Modifier

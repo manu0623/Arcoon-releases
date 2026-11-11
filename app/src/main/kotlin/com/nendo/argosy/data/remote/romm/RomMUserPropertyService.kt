@@ -11,7 +11,6 @@ import com.nendo.argosy.data.local.dao.resolved
 import com.nendo.argosy.data.model.ArtSlot
 import com.nendo.argosy.data.model.VariantCategory
 import com.nendo.argosy.data.local.entity.SyncType
-import com.nendo.argosy.data.remote.steamgriddb.SteamGridDbCoverOwner
 import com.nendo.argosy.data.sync.SyncCoordinator
 import com.nendo.argosy.data.sync.unsentUserProps
 import com.nendo.argosy.util.Logger
@@ -33,7 +32,6 @@ class RomMUserPropertyService @Inject constructor(
     private val imageCacheManager: ImageCacheManager,
     private val syncCoordinator: dagger.Lazy<SyncCoordinator>,
     private val userPreferencesRepository: com.nendo.argosy.data.preferences.UserPreferencesRepository,
-    private val steamGridDbCoverOwner: SteamGridDbCoverOwner,
     private val gameFileSync: RomMGameFileSync,
     private val gameFileDao: GameFileDao,
     private val siblingGroupRepository: com.nendo.argosy.data.repository.SiblingGroupRepository,
@@ -222,9 +220,8 @@ class RomMUserPropertyService @Inject constructor(
 
             val rom = response.body() ?: return RomMResult.Error("Empty response")
 
-            val steamGridDbCovers = steamGridDbCoverOwner.ownsCover(game.id)
-            imageCacheManager.deleteGameImages(rommId, includeCovers = !steamGridDbCovers)
-            imageCacheManager.forgetCachedArt(game.id, includeCovers = !steamGridDbCovers)
+            imageCacheManager.deleteGameImages(rommId, includeCovers = true)
+            imageCacheManager.forgetCachedArt(game.id, includeCovers = true)
 
             val screenshotUrls = rom.screenshotUrls.ifEmpty {
                 rom.screenshotPaths?.mapNotNull { apiClient.buildMediaUrl(it) } ?: emptyList()
@@ -240,9 +237,7 @@ class RomMUserPropertyService @Inject constructor(
             val boxSpineUrls = if (boxArtEnabled) apiClient.buildBoxSpineUrls(rom) else emptyList()
             val logoUrls = apiClient.buildLogoUrls(rom)
             val box3dUrls = apiClient.buildBox3dUrls(rom)
-            if (!steamGridDbCovers) {
-                gameArtDao.setSourceUrl(game.id, ArtSlot.COVER, coverUrls.firstOrNull())
-            }
+            gameArtDao.setSourceUrl(game.id, ArtSlot.COVER, coverUrls.firstOrNull())
             gameArtDao.setSourceUrl(game.id, ArtSlot.BACKGROUND, backgroundUrls.firstOrNull())
             gameArtDao.setSourceUrl(game.id, ArtSlot.LOGO, logoUrls.firstOrNull())
             gameArtDao.setSourceUrl(game.id, ArtSlot.BOX_3D, box3dUrls.firstOrNull())
@@ -255,7 +250,7 @@ class RomMUserPropertyService @Inject constructor(
             imageCacheManager.cacheGameImagesNow(
                 rommId = rom.id,
                 gameTitle = rom.name,
-                coverUrls = if (steamGridDbCovers) emptyList() else coverUrls,
+                coverUrls = coverUrls,
                 backgroundUrls = backgroundUrls,
                 boxBackUrls = boxBackUrls,
                 boxSpineUrls = boxSpineUrls,

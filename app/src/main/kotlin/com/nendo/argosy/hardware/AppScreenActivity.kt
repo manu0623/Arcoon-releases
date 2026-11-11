@@ -77,7 +77,15 @@ class AppScreenActivity : ComponentActivity(), DualScreenManager.AppScreenHost {
                         .focusable()
                 ) {
                     com.nendo.argosy.ui.components.ProvideStatusBarItems(dsm.preferencesRepository.userPreferences) {
-                        PresentationSlotContent(PresentationSlot.Fallback, showControlHints = false)
+                        // This surface only holds the display; it is not a launcher. Drawing the
+                        // presentation with the suspend card enabled put the whole shrink on this
+                        // screen as well, because a handoff in flight lets the card through even on
+                        // the placeholder slot.
+                        PresentationSlotContent(
+                            PresentationSlot.Fallback,
+                            showControlHints = false,
+                            suspendedCard = false
+                        )
                     }
                 }
             }

@@ -18,8 +18,13 @@ import com.nendo.argosy.ui.common.BuiltinCoreSummaryLoader
 import com.nendo.argosy.ui.input.InputDispatcher.Companion.computeWrappedIndex
 import com.nendo.argosy.ui.input.SoundFeedbackManager
 import com.nendo.argosy.core.input.SoundType
+import com.nendo.argosy.data.model.ArtProvider
 import com.nendo.argosy.ui.screens.gamedetail.ArtCandidate
+import com.nendo.argosy.ui.screens.gamedetail.CoverSizeFilter
 import com.nendo.argosy.ui.screens.gamedetail.artGridStep
+import com.nendo.argosy.ui.screens.gamedetail.forProvider
+import com.nendo.argosy.ui.screens.gamedetail.matchesSize
+import com.nendo.argosy.ui.screens.gamedetail.providersIn
 import com.nendo.argosy.ui.screens.gamedetail.pickerConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,7 +66,13 @@ data class PickerModalState(
     val showArtPicker: Boolean = false,
     val artPickerSlot: ArtSlot = ArtSlot.COVER,
     val artPickerCanSearch: Boolean = false,
-    val artCandidates: List<ArtCandidate> = emptyList(),
+    /** Everything the last search returned, before the rail and size chips filter it. */
+    val artAllCandidates: List<ArtCandidate> = emptyList(),
+    /** Which provider the grid is showing; [artProviders] is what the last result set offered. */
+    val artProvider: ArtProvider = ArtProvider.ROMM,
+    val artProviders: List<ArtProvider> = emptyList(),
+    /** Cover shapes only: narrows the grid to the size the user wants to fetch. */
+    val artCoverSize: CoverSizeFilter = CoverSizeFilter.ANY,
     val artPickerFocusIndex: Int = 0,
     val artPickerLoading: Boolean = false,
     val artPickerError: String? = null,
@@ -75,6 +86,20 @@ data class PickerModalState(
     val hasAnyPickerOpen: Boolean
         get() = showEmulatorPicker || showCorePicker || showSteamLauncherPicker ||
                 showDiscPicker || showVariantPicker || showFilePicker || showArtPicker
+
+    /**
+     * The grid as the provider rail and cover-size filter leave it. Derived from the selections,
+     * so a setter can never publish a list that disagrees with the provider or size on screen.
+     */
+    val artVisibleCandidates: List<ArtCandidate>
+        get() {
+            val filtered = artAllCandidates.forProvider(artProvider)
+            return if (artPickerSlot == ArtSlot.COVER) {
+                filtered.filter { it.matchesSize(artCoverSize) }
+            } else {
+                filtered
+            }
+        }
 
     val visibleFilePickerRows: List<com.nendo.argosy.data.model.FilePickerRow>
         get() = filePickerRows.visibleWithCollapsed(filePickerCollapsed)
@@ -126,7 +151,8 @@ class PickerModalDelegate @Inject constructor(
                 showArtPicker = true,
                 artPickerSlot = slot,
                 artPickerCanSearch = canSearch,
-                artCandidates = emptyList(),
+                artAllCandidates = emptyList(),
+                artProviders = emptyList(),
                 artPickerFocusIndex = 0,
                 artPickerLoading = false,
                 artPickerError = null,
@@ -146,14 +172,25 @@ class PickerModalDelegate @Inject constructor(
 
     fun setArtPickerSearching() {
         _state.update {
-            it.copy(artPickerLoading = true, artPickerError = null, artCandidates = emptyList())
+            it.copy(
+                artPickerLoading = true,
+                artPickerError = null,
+                artAllCandidates = emptyList()
+            )
         }
     }
 
     fun setArtCandidates(candidates: List<ArtCandidate>, error: String? = null) {
-        _state.update {
-            it.copy(
-                artCandidates = candidates.distinctBy { candidate -> candidate.source },
+        _state.update { state ->
+            val all = candidates.distinctBy { candidate -> candidate.source }
+            val providers = all.providersIn()
+            val provider = state.artProvider.takeIf { it in providers }
+                ?: providers.firstOrNull()
+                ?: state.artProvider
+            state.copy(
+                artAllCandidates = all,
+                artProviders = providers,
+                artProvider = provider,
                 artPickerFocusIndex = 0,
                 artPickerLoading = false,
                 artPickerError = error
@@ -161,12 +198,37 @@ class PickerModalDelegate @Inject constructor(
         }
     }
 
+    /** Swaps the grid to another provider; every provider's results are already in hand. */
+    fun setArtProvider(provider: ArtProvider) {
+        _state.update { state ->
+            if (state.artProvider == provider) return@update state
+            state.copy(
+                artProvider = provider,
+                artPickerFocusIndex = 0
+            )
+        }
+        soundManager.play(SoundType.NAVIGATE)
+    }
+
+    /** Covers only: narrows the grid to a shape (1:1, portrait, wide) or anything. */
+    fun setArtCoverSize(size: CoverSizeFilter) {
+        _state.update { state ->
+            if (state.artCoverSize == size) return@update state
+            state.copy(
+                artCoverSize = size,
+                artPickerFocusIndex = 0
+            )
+        }
+        soundManager.play(SoundType.NAVIGATE)
+    }
+
     fun dismissArtPicker() {
         _state.update {
             it.copy(
                 showArtPicker = false,
                 showArtFileBrowser = false,
-                artCandidates = emptyList(),
+                artAllCandidates = emptyList(),
+                artProviders = emptyList(),
                 artPickerError = null
             )
         }
@@ -175,12 +237,12 @@ class PickerModalDelegate @Inject constructor(
 
     fun moveArtPickerFocus(delta: Int) {
         _state.update { state ->
-            if (state.artCandidates.isEmpty()) return@update state
+            if (state.artVisibleCandidates.isEmpty()) return@update state
             state.copy(
                 artPickerFocusIndex = artGridStep(
                     index = state.artPickerFocusIndex,
                     delta = delta,
-                    size = state.artCandidates.size,
+                    size = state.artVisibleCandidates.size,
                     columns = state.artPickerSlot.pickerConfig.columns
                 )
             )

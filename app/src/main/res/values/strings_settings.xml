@@ -5214,4 +5214,19 @@
     <string name="settings_interface_ui_mode_subtitle">Which home the launcher opens, and which menu the pad drives</string>
     <string name="settings_interface_ui_mode_cocoon">Cocoon</string>
     <string name="settings_interface_ui_mode_classic">Argosy</string>
+
+    <!-- Box Art: cover scrape -->
+    <string name="settings_box_art_section_artwork">Artwork</string>
+    <string name="settings_box_art_scrape_missing_title">Scrape missing covers</string>
+    <string name="settings_box_art_scrape_missing_subtitle">Fills games with no cover from the RomM art search</string>
+    <string name="settings_box_art_repair_shapes_title">Repair cover shapes</string>
+    <string name="settings_box_art_repair_shapes_subtitle">Re-fetches covers that do not fit the selected shape</string>
+    <string name="settings_box_art_replace_all_title">Replace all covers</string>
+    <string name="settings_box_art_replace_all_subtitle">Re-fetches every cover; hand-picked art is kept</string>
+    <string name="settings_box_art_scrape_status_title">Cover scan</string>
+    <string name="settings_box_art_scrape_status_idle">No scan running</string>
+    <string name="settings_box_art_scrape_status_running">%1$d of %2$d checked</string>
+    <string name="settings_box_art_scrape_status_done">%1$d covers updated</string>
+    <string name="settings_box_art_scrape_status_unavailable">RomM cover search is off</string>
+    <string name="settings_box_art_scrape_stop">Stop scan</string>
 </resources>

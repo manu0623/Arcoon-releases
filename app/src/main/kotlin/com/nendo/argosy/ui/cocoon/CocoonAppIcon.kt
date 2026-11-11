@@ -42,6 +42,11 @@ fun CocoonAppIcon(packageName: String, modifier: Modifier = Modifier) {
     if (bitmap != null) {
         Image(bitmap = bitmap, contentDescription = null, modifier = modifier)
     } else {
+        // A miss means the icon is drawn a moment later than the rest of the frame: that is the
+        // blink a rebuilt screen shows.
+        androidx.compose.runtime.LaunchedEffect(packageName) {
+            com.nendo.argosy.util.ArcoonTrace.log("app icon async-load pkg=$packageName")
+        }
         coil.compose.AsyncImage(
             model = com.nendo.argosy.ui.coil.AppIconData(packageName),
             contentDescription = null,

@@ -135,6 +135,15 @@
     <string name="cocoon_jingle_no_repos">No jingle collections yet. Pick &#8220;Add jingles from GitHub…&#8221; below.</string>
     <string name="cocoon_jingle_from_file">Choose a file…</string>
     <string name="cocoon_jingle_hints">A choose · X preview · B back</string>
+    <string name="cocoon_jingle_back">Back</string>
+    <string name="cocoon_jingle_search">Search jingles</string>
+    <string name="cocoon_jingle_preview">Preview</string>
+    <string name="cocoon_jingle_use">Use this jingle</string>
+    <string name="cocoon_art_size_any">Any size</string>
+    <string name="cocoon_art_size_square">1:1 square</string>
+    <string name="cocoon_art_size_portrait">Portrait</string>
+    <string name="cocoon_art_size_wide">Wide</string>
+    <string name="gamedetail_art_picker_origin_steam">Steam</string>
     <string name="cocoon_jingle_repos">Jingles from GitHub</string>
     <string name="cocoon_jingle_repo_add">Add a GitHub repository (owner/name)</string>
     <string name="cocoon_jingle_repo_hint">A add · X remove · B back</string>
@@ -301,6 +310,10 @@
     <string name="cocoon_dock_clear_slot">Clear Slot</string>
     <!-- Row title. Noun phrase: the in-game home handle. -->
     <string name="cocoon_personal_handle_size">On Screen Home Menu</string>
+    <!-- Value: the in-game Home button is on the screen. -->
+    <string name="cocoon_home_symbol_shown">Shown</string>
+    <!-- Value: the in-game Home button is hidden for this core. -->
+    <string name="cocoon_home_symbol_hidden">Hidden</string>
     <!-- Row title. Noun phrase: which corner the handle sits in. -->
     <string name="cocoon_personal_handle_position">Home Menu Corner</string>
     <!-- Value: the handle sits in the lower-left corner. -->
@@ -316,25 +329,8 @@
     <!-- Value: the handle sits in the middle of the lower edge. -->
     <string name="cocoon_handle_bottom_center">Bottom Center</string>
     <!-- Integrations row. SteamGridDB is a game art database, keyed by the user's own API key. -->
-    <string name="cocoon_steamgriddb_title">SteamGridDB</string>
-    <string name="cocoon_steamgriddb_subtitle">Cover art from SteamGridDB</string>
-    <string name="cocoon_steamgriddb_toggle">Use SteamGridDB</string>
-    <string name="cocoon_steamgriddb_toggle_subtitle">Offers SteamGridDB covers when you pick a game\'s artwork</string>
     <!-- Row that opens the API key entry. -->
-    <string name="cocoon_steamgriddb_key">API Key</string>
-    <string name="cocoon_steamgriddb_key_set">Saved</string>
-    <string name="cocoon_steamgriddb_key_unset">Not set</string>
-    <string name="cocoon_steamgriddb_key_hint">SteamGridDB API key</string>
-    <string name="cocoon_steamgriddb_key_save">Save Key</string>
     <!-- Integrations row. Walks the library and fetches a cover for every game that has none. -->
-    <string name="cocoon_steamgriddb_scrape">Scrape Library</string>
-    <string name="cocoon_steamgriddb_scrape_stop">Stop Scraping</string>
-    <string name="cocoon_steamgriddb_rescan">Start Over</string>
-    <string name="cocoon_steamgriddb_rescan_subtitle">Scrapes every game again from the first to the last, covers included</string>
-    <string name="cocoon_steamgriddb_scrape_subtitle">Replaces covers with SteamGridDB art, one game at a time</string>
-    <string name="cocoon_steamgriddb_scrape_running">Scraping art, %1$d of %2$d checked</string>
-    <string name="cocoon_steamgriddb_scrape_parked">Rate limit reached, resuming in %1$d min</string>
-    <string name="cocoon_steamgriddb_scrape_done">Filled %1$d covers</string>
     <string name="cocoon_journey_title">Your journey</string>
     <string name="cocoon_journey_close">Close</string>
     <string name="cocoon_journey_loading">Loading your journey…</string>
@@ -362,9 +358,6 @@
     <string name="cocoon_journey_session_count">%1$d unlocked</string>
     <string name="cocoon_journey_hours_minutes">%1$d h %2$d min</string>
     <string name="cocoon_journey_minutes">%1$d min</string>
-    <string name="cocoon_steamgriddb_restore_running">Restoring RomM covers, %1$d of %2$d</string>
-    <string name="cocoon_steamgriddb_restore_done">Restored %1$d RomM covers</string>
-    <string name="cocoon_steamgriddb_scrape_needs_key">Turn on SteamGridDB and add an API key first</string>
     <!-- Swap request shown when a search hit's title is not the game's own. -->
     <!-- Integrations row. The 3DS tool that reads an icon, a banner and a jingle out of a ROM. -->
     <string name="cocoon_rom_media_title">ROM Media</string>

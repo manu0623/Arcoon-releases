@@ -142,8 +142,8 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
     private val playSessionTracker: PlaySessionTracker get() = playSessionTrackerLazy.get()
 
     @Inject
-    lateinit var steamGridDbArtScraperLazy: dagger.Lazy<com.nendo.argosy.data.remote.steamgriddb.SteamGridDbArtScraper>
-    private val steamGridDbArtScraper: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbArtScraper get() = steamGridDbArtScraperLazy.get()
+    lateinit var coverArtScraperLazy: dagger.Lazy<com.nendo.argosy.data.cache.CoverArtScraper>
+    private val coverArtScraper: com.nendo.argosy.data.cache.CoverArtScraper get() = coverArtScraperLazy.get()
 
     @Inject
     lateinit var coreCrashControllerLazy: dagger.Lazy<CoreCrashController>
@@ -283,7 +283,7 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
         "coreManager" to coreManagerLazy,
         "compatCoreCache" to compatCoreCacheLazy,
         "playSessionTracker" to playSessionTrackerLazy,
-        "steamGridDbArtScraper" to steamGridDbArtScraperLazy,
+        "coverArtScraper" to coverArtScraperLazy,
         "coreCrashController" to coreCrashControllerLazy,
         "builtinPrefs" to builtinPrefsLazy,
         "quayPassService" to quayPassServiceLazy,
@@ -365,7 +365,7 @@ class ArgosyApp : Application(), Configuration.Provider, ImageLoaderFactory {
             }
         }
         lockScreenArtManager.start()
-        steamGridDbArtScraper.autoStart()
+        coverArtScraper.resumeIfInterrupted()
         appScope.launch {
             val storedOverride = builtinPrefs.getArchitectureOverride().first()
             if (storedOverride != null) {

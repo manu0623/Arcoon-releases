@@ -47,6 +47,7 @@ private enum class HomeSymbolRow(val labelRes: Int) {
     POSITION(R.string.cocoon_home_symbol_position),
     SIZE(R.string.cocoon_home_symbol_size),
     CLARITY(R.string.cocoon_home_symbol_clarity),
+    HIDE(R.string.ingame_settings_hide_home_title),
 }
 
 /** How far one press of the stick moves the symbol, as a fraction of the screen. */
@@ -62,8 +63,14 @@ private val HANDLE_SIZES = listOf("SMALL", "MEDIUM", "LARGE")
  * clears the game's touch panel.
  */
 @Composable
-fun CocoonHomeSymbolPage(onDismiss: () -> Unit): InputHandler {
+fun CocoonHomeSymbolPage(
+    hideInGameHome: Boolean = false,
+    onToggleInGameHome: (Boolean) -> Unit = {},
+    onDismiss: () -> Unit
+): InputHandler {
     val context = LocalContext.current
+    val currentHidden = rememberUpdatedState(hideInGameHome)
+    val currentOnToggle = rememberUpdatedState(onToggleInGameHome)
     var focus by remember { mutableIntStateOf(0) }
     var placing by remember { mutableStateOf(false) }
     var placedX by remember { mutableFloatStateOf(CocoonHomeStore.handleX) }
@@ -87,9 +94,15 @@ fun CocoonHomeSymbolPage(onDismiss: () -> Unit): InputHandler {
         return InputResult.HANDLED
     }
 
+    fun toggleHidden(): InputResult {
+        currentOnToggle.value(!currentHidden.value)
+        return InputResult.handled(SoundType.TOGGLE)
+    }
+
     fun cycle(delta: Int): InputResult = when (HomeSymbolRow.entries[focus]) {
         // The position is not a value to step through: A opens the placement.
         HomeSymbolRow.POSITION -> InputResult.HANDLED
+        HomeSymbolRow.HIDE -> toggleHidden()
         HomeSymbolRow.SIZE -> {
             val index = HANDLE_SIZES.indexOf(CocoonHomeStore.handleSize).coerceAtLeast(0)
             commit(size = HANDLE_SIZES[(index + delta).mod(HANDLE_SIZES.size)])
@@ -121,6 +134,7 @@ fun CocoonHomeSymbolPage(onDismiss: () -> Unit): InputHandler {
                         placing = true
                         InputResult.handled(SoundType.OPEN_MODAL)
                     }
+                    HomeSymbolRow.HIDE -> toggleHidden()
                     else -> cycle(1)
                 }
             }
@@ -205,6 +219,10 @@ fun CocoonHomeSymbolPage(onDismiss: () -> Unit): InputHandler {
                                     CocoonHomeStore.handleClarity >= 0.3f -> R.string.cocoon_home_symbol_clarity_clear
                                     else -> R.string.cocoon_home_symbol_clarity_normal
                                 }
+                            )
+                            HomeSymbolRow.HIDE -> stringResource(
+                                if (hideInGameHome) R.string.cocoon_home_symbol_hidden
+                                else R.string.cocoon_home_symbol_shown
                             )
                         },
                         style = MaterialTheme.typography.bodyMedium,

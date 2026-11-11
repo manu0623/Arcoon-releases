@@ -98,7 +98,7 @@ private const val AMBIENT_LIBRARY_WIDE = -1L
 class SettingsViewModel @Inject constructor(
     @ApplicationContext internal val context: Context,
     internal val preferencesRepository: UserPreferencesRepository,
-    private val steamGridDbArtScraper: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbArtScraper,
+    private val coverArtScraper: com.nendo.argosy.data.cache.CoverArtScraper,
     internal val hapticManager: HapticFeedbackManager,
     internal val platformRepository: PlatformRepository,
     private val reorderPlatforms: com.nendo.argosy.domain.usecase.platform.ReorderPlatformsUseCase,
@@ -528,10 +528,24 @@ class SettingsViewModel @Inject constructor(
         if (focusIndex >= 0) setFocusIndex(focusIndex)
     }
 
+    /** The cover scrape's live state, rendered by the Box Art section. */
+    val coverScrapeState: kotlinx.coroutines.flow.StateFlow<com.nendo.argosy.data.cache.CoverScrapeState>
+        get() = coverArtScraper.state
+
+    fun coverScrapeAvailable(): Boolean = coverArtScraper.canScrape()
+
+    fun scrapeMissingCovers() = coverArtScraper.scrapeMissing()
+
+    fun repairCoverShapes() = coverArtScraper.repairShapes()
+
+    fun replaceAllCovers() = coverArtScraper.replaceAll()
+
+    fun stopCoverScrape() = coverArtScraper.stop()
+
     fun clearPlatformArtCache(platformSlug: String) {
         viewModelScope.launch {
             val reclaimed = imageCacheManager.clearPlatformCache(platformSlug)
-            steamGridDbArtScraper.refreshPlatformFromSteamGridDb(platformSlug)
+            coverArtScraper.refillPlatform(platformSlug)
             notificationManager.show(
                 title = NotificationText.Res(R.string.settings_shell_vm_artwork_cache_title),
                 subtitle = if (reclaimed > 0) {
@@ -1106,6 +1120,7 @@ class SettingsViewModel @Inject constructor(
     fun checkRommConnection() = serverDelegate.checkRommConnection(viewModelScope)
 
     fun navigateBack(): Boolean = routeNavigateBack(this)
+
 
     fun moveFocus(delta: Int) = routeMoveFocus(this, delta)
 
@@ -2327,8 +2342,18 @@ class SettingsViewModel @Inject constructor(
         shaderChainManager.destroy()
     }
 
-    fun createInputHandler(onBack: () -> Unit): InputHandler =
-        SettingsInputHandler(this, onBack)
+    fun createInputHandler(
+        onBack: () -> Unit,
+        leaveAt: SettingsSection? = null
+    ): InputHandler =
+        SettingsInputHandler(this, onBack, leaveAt)
+
+    /** True while the screen still sits on the page it was opened straight into. */
+    fun atDirectEntry(entry: SettingsSection?): Boolean =
+        entry != null && _uiState.value.currentSection == entry
+
+    /** Modals and in-place prompts drawn over a section; Back closes them before the page. */
+    fun dismissOverlaysForBack(): Boolean = routeDismissTopOverlay(this)
 
     // --- Social ---
 

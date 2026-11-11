@@ -1656,6 +1656,7 @@ class ImageCacheManager @Inject constructor(
                 continue
             }
 
+            val downloadedRatio = coverRatioOf(bitmap)
             val cachedFile = writeCoverBitmap(bitmap, coverDir, baseName)
             if (cachedFile == null) {
                 logCandidateRejected("cover", idLabel, index, request.urls.size, url, "cached file did not decode")
@@ -1663,7 +1664,7 @@ class ImageCacheManager @Inject constructor(
             }
 
             Log.d(TAG, "Cached cover for $idLabel: ${cachedFile.length() / 1024}KB")
-            storeCachedArt(request, ArtSlot.COVER, cachedFile.absolutePath)
+            storeCachedArt(request, ArtSlot.COVER, cachedFile.absolutePath, downloadedRatio)
             pruneReplacedArt(coverDir, prefix, cachedFile, storedArtPath(request, ArtSlot.COVER))
             return
         }
@@ -1673,12 +1674,13 @@ class ImageCacheManager @Inject constructor(
         val steamAppId = game?.steamAppId
         if (steamAppId != null) {
             val steamBitmap = downloadSteamCoverFallback(steamAppId)
+            val steamRatio = steamBitmap?.let { coverRatioOf(it) }
             val cachedFile = steamBitmap?.let {
                 writeCoverBitmap(it, coverDir, "${prefix}_steam_$steamAppId")
             }
             if (cachedFile != null) {
                 Log.d(TAG, "Cached steam fallback cover for $idLabel: ${cachedFile.length() / 1024}KB")
-                storeCachedArt(request, ArtSlot.COVER, cachedFile.absolutePath)
+                storeCachedArt(request, ArtSlot.COVER, cachedFile.absolutePath, steamRatio)
                 pruneReplacedArt(coverDir, prefix, cachedFile, storedArtPath(request, ArtSlot.COVER))
                 return
             }
@@ -1706,9 +1708,30 @@ class ImageCacheManager @Inject constructor(
         return cachedFile
     }
 
-    private suspend fun storeCachedArt(request: ImageCacheRequest, slot: ArtSlot, localPath: String) {
+    /**
+     * The proportions of a cover image about to be written, or null when they are unusable.
+     * Callers take it before the bitmap is compressed and recycled.
+     */
+    private fun coverRatioOf(bitmap: Bitmap): Float? {
+        if (bitmap.width <= 0 || bitmap.height <= 0) return null
+        val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+        return ratio.takeIf { it.isFinite() }
+    }
+
+    private suspend fun storeCachedArt(
+        request: ImageCacheRequest,
+        slot: ArtSlot,
+        localPath: String,
+        ratio: Float? = null
+    ) {
         val game = storedGame(request) ?: return
         gameArtDao.setCached(game.id, slot, localPath, request.urls.firstOrNull())
+        // Setting the cached path resets the stored cover shape, so the shape of the file that
+        // was just written is recorded after it. Scraping repairs a cover whose stored shape
+        // falls outside the selected box-art shape, which needs this to be the real one.
+        if (slot == ArtSlot.COVER && ratio != null) {
+            gameArtDao.updateCoverAspectRatio(game.id, ratio)
+        }
         artRevision.value = artRevision.value + 1
     }
 

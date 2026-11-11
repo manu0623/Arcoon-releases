@@ -66,16 +66,36 @@ fun CocoonSuspendedCard(
         animationSpec = tween(300, easing = FastOutSlowInEasing),
         label = "cocoon-suspended-card"
     )
-    val arrive = androidx.compose.runtime.remember(session.gameId, session.startTimeMillis) {
-        androidx.compose.animation.core.Animatable(
-            if (System.currentTimeMillis() - session.startTimeMillis < 2_500) 0f else 1f
-        )
-    }
     // TEST suspend button: the game's own last frame, handed over at the game's exact size.
     val arrivingFromGame = androidx.compose.runtime.remember(session.gameId, session.startTimeMillis) {
         CocoonSuspendTest.fresh(session.gameId) != null
     }
+    /*
+     * One shrink per suspend. The card can be drawn twice for one suspend (the launcher's windows
+     * settle at different moments) and the second copy used to start again from full screen, so
+     * the picture flashed part-way through the animation. Both copies read the same clock, and the
+     * second guesses where the first has got to instead of starting over.
+     */
+    val arrive = androidx.compose.runtime.remember(session.gameId, session.startTimeMillis) {
+        androidx.compose.animation.core.Animatable(
+            when {
+                arrivingFromGame -> CocoonSuspendTest.shrinkProgress(
+                    CocoonSuspendTest.shrinkElapsed(session.gameId, session.startTimeMillis),
+                    CocoonSuspendTest.GAME_HOLD_MS + 60,
+                    440f
+                )
+                System.currentTimeMillis() - session.startTimeMillis < 2_500 -> 0f
+                else -> 1f
+            }
+        )
+    }
     val handoff = CocoonSuspendTest.picture(session.gameId)
+    val cardDisplay = androidx.compose.ui.platform.LocalView.current.display?.displayId
+    androidx.compose.runtime.LaunchedEffect(session.gameId) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "suspend card drawn for ${session.gameId} on display $cardDisplay"
+        )
+    }
     androidx.compose.runtime.DisposableEffect(session.gameId, handoff != null) {
         val counted = handoff != null
         if (counted) CocoonSuspendTest.cardAppeared()
@@ -91,11 +111,18 @@ fun CocoonSuspendedCard(
     androidx.compose.runtime.LaunchedEffect(arrive, handoff, resumeInProgress) {
         if (resumeInProgress) return@LaunchedEffect
         if (arrivingFromGame) {
+            val elapsed = CocoonSuspendTest.shrinkElapsed(session.gameId, session.startTimeMillis)
             if (arrive.value < 1f) {
-                kotlinx.coroutines.delay(CocoonSuspendTest.GAME_HOLD_MS + 60)
-                com.nendo.argosy.util.ArcoonTrace.log("test suspend: picture shrinking into the card")
+                // A copy joining a shrink already under way has already served part of the hold.
+                val holdLeft = (CocoonSuspendTest.GAME_HOLD_MS + 60 - elapsed).coerceAtLeast(0L)
+                if (holdLeft > 0) kotlinx.coroutines.delay(holdLeft)
+                com.nendo.argosy.util.ArcoonTrace.log(
+                    "test suspend: picture shrinking into the card (from ${(arrive.value * 100).toInt()}%)"
+                )
             }
-            arrive.animateTo(1f, tween(440, easing = FastOutSlowInEasing))
+            // A late copy has less distance left, so both copies land on the same frame.
+            val left = ((1f - arrive.value) * 440f).toInt().coerceAtLeast(1)
+            arrive.animateTo(1f, tween(left, easing = FastOutSlowInEasing))
             return@LaunchedEffect
         }
         // Wait out the black hold that hides Android's slide, then shrink into place.
@@ -168,8 +195,12 @@ fun CocoonSuspendedCard(
                 .size(width = cardW, height = cardH)
                 .shadow(14.dp * (1f - clear), shape)
                 .clip(shape)
+                // At screen size the card is standing in for the game's own frame, so its
+                // backdrop is black: while no picture is ready yet (a Home press carries no
+                // handoff, and the session screenshot still has to decode), painting the card's
+                // chrome grey across the whole screen flashed grey before the picture arrived.
                 .background(
-                    (if (handoff != null && a < 1f) Color.Black else Color(0xFF1C1C1F)).copy(alpha = 1f - clear)
+                    (if (a < 1f) Color.Black else Color(0xFF1C1C1F)).copy(alpha = 1f - clear)
                 )
                 // A faint glass tint and a brighter rim keep the clear window readable as a card.
                 .background(Color.White.copy(alpha = 0.04f * clear))

@@ -195,7 +195,7 @@ import com.nendo.argosy.data.local.entity.SteamLicenseEntity
         com.nendo.argosy.data.local.entity.AchievementJourneyEntity::class,
         com.nendo.argosy.data.local.entity.AchievementJourneyEventEntity::class
     ],
-    version = 222,
+    version = 223,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

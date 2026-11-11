@@ -27,7 +27,6 @@ import com.nendo.argosy.data.platform.LocalPlatformIds
 import com.nendo.argosy.data.platform.PlatformDefinitions
 import com.nendo.argosy.data.preferences.SyncFilterPreferences
 import com.nendo.argosy.data.preferences.UserPreferencesRepository
-import com.nendo.argosy.data.remote.steamgriddb.SteamGridDbCoverOwner
 import com.nendo.argosy.data.repository.BiosRepository
 import com.nendo.argosy.data.storage.StorageAttributionRepository
 import com.nendo.argosy.data.storage.StorageCategory
@@ -66,7 +65,6 @@ class RomMLibrarySyncService @Inject constructor(
     private val apiClient: RomMApiClient,
     private val connectionManager: RomMConnectionManager,
     private val userPreferencesRepository: UserPreferencesRepository,
-    private val steamGridDbCoverOwner: SteamGridDbCoverOwner,
     private val database: ALauncherDatabase,
     private val gameDao: GameDao,
     private val homeTileDao: com.nendo.argosy.data.local.dao.HomeTileDao,
@@ -1185,8 +1183,7 @@ class RomMLibrarySyncService @Inject constructor(
 
         val contentChanged = existing != null && existing.title != rom.name
         if (contentChanged) {
-            val keepCovers = existing?.let { steamGridDbCoverOwner.ownsCover(it.id) } == true
-            imageCacheManager.deleteGameImages(rom.id, clearDecoded = false, includeCovers = !keepCovers)
+            imageCacheManager.deleteGameImages(rom.id, clearDecoded = false, includeCovers = true)
             decodedImageCacheDirty = true
         }
 
@@ -1282,8 +1279,7 @@ class RomMLibrarySyncService @Inject constructor(
         val savedGame = gameDao.getByRommId(rom.id)
         if (savedGame != null) {
             if (contentChanged) {
-                val keepCover = steamGridDbCoverOwner.ownsCover(savedGame.id)
-                imageCacheManager.forgetCachedArt(savedGame.id, includeCovers = !keepCover)
+                imageCacheManager.forgetCachedArt(savedGame.id, includeCovers = true)
             }
             writeArtSources(savedGame.id, rom, artSources)
             val screenshots = gameScreenshotDao.replaceSources(savedGame.id, screenshotUrls)
@@ -1305,9 +1301,7 @@ class RomMLibrarySyncService @Inject constructor(
     }
 
     private suspend fun writeArtSources(gameId: Long, rom: RomMRom, sources: Map<ArtSlot, List<String>>) {
-        val steamGridDbCovers = steamGridDbCoverOwner.ownsCover(gameId)
         sources.forEach { (slot, urls) ->
-            if (slot == ArtSlot.COVER && steamGridDbCovers) return@forEach
             if (urls.isEmpty()) imageCacheManager.forgetCachedArt(gameId, slot)
             recordArtSource(gameArtDao, imageCacheManager, gameId, slot, urls, rom.name, rommId = rom.id)
         }

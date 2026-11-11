@@ -43,6 +43,13 @@ fun PresentOnCompanion(owner: SlotOwner, slot: PresentationSlot) {
     }
 }
 
+/**
+ * The Cocoon mirror's owner. The board and an open folder are two surfaces showing the same
+ * thing, so they share one owner: whichever publishes last wins, and a surface leaving cannot
+ * release a slot another surface has already replaced.
+ */
+val COCOON_MIRROR_OWNER = SlotOwner("cocoon-mirror")
+
 /** Which on-screen publisher last presented each slot owner. */
 private object SlotPublishers {
     val latest = java.util.concurrent.ConcurrentHashMap<SlotOwner, Any>()

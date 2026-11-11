@@ -49,6 +49,14 @@
     <string name="dual_dashboard_rail_states">States</string>
     <!-- Rail entry for the running game's achievements. Noun, plural. Keep very short. -->
     <string name="dual_dashboard_rail_trophies">Trophies</string>
+    <!-- In-game chrome button: send the game to the background and return to the launcher. -->
+    <string name="dual_ingame_chrome_home">Home</string>
+    <!-- In-game chrome button: open the list of installed apps. -->
+    <string name="dual_ingame_chrome_apps">Apps</string>
+    <!-- In-game chrome button: open the running game's settings. -->
+    <string name="dual_ingame_chrome_tools">Game settings</string>
+    <!-- In-game chrome button: open the running game's trophy list. -->
+    <string name="dual_ingame_chrome_trophies">Trophies</string>
     <!-- Rail entry that opens the game's instruction manual. Noun. Keep very short. -->
     <string name="dual_dashboard_rail_manual">Manual</string>
     <!-- Rail entry that opens the game's walkthrough. Noun. Keep very short. -->

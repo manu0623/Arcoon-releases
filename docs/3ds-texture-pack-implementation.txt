@@ -1,0 +1,154 @@
+ARGOSY - NINTENDO 3DS TEXTURE PACKS (CURRENT IMPLEMENTATION)
+===========================================================
+
+IN ONE SENTENCE
+---------------
+Argosy does not render anything itself; the built-in Azahar core does the
+texture swapping. Argosy's job is to put a pack's files in the exact folder
+Azahar reads, flip Azahar's "citra_custom_textures" option on for that one
+game, and keep the pack from being mistaken for the game's ROM.
+
+Scope: only the built-in Azahar core (core id "azahar"), only games whose
+platform is 3ds or n3ds. External Azahar/Citra apps are not touched.
+
+
+WHERE THE PACK LIVES
+--------------------
+    <save base>/Azahar/load/textures/<16-hex Title ID>/
+
+The save base comes from BuiltinSaveBase:
+  1. the game's own save-path override, if one is set;
+  2. otherwise beside the ROM, if "saves beside ROM" is enabled;
+  3. otherwise the platform or global libretro save folder.
+
+The "Azahar/load/textures/<Title ID>" shape is Azahar's own user-directory
+layout, which is why no per-game config file is needed inside the pack.
+
+Variant launches get a copy. When a game has variants/<file id>/ folders
+(each with its own moved save directory), the pack is copied into every
+variant's Azahar/load/textures/<Title ID>/ as well, so a variant launch
+still finds it.
+
+
+THE TWO WAYS A PACK GETS IN
+---------------------------
+1. Manual import (Game Details -> per-game settings)
+
+   The "Texture Pack" row opens the system file picker. The picked
+   content:// stream is copied to a cache zip and installed. Success shows
+   "Installed N texture files"; failures show "Couldn't read that texture
+   pack" or "Title ID not detected for this game".
+
+2. Automatic on download (RomM)
+
+   After any download on a 3ds/n3ds game, DownloadManager calls
+   installTexturePackIfNeeded. A file counts as a texture pack when any of
+   these is true:
+     - its RomM category is "mod";
+     - its filename contains texture / tex pack / custom tex / hd pack /
+       hd textures / upscal / retex (case-insensitive);
+     - the archive or folder contains a pack.json anywhere.
+
+   The app then finds the game's Title ID, either from the game record or
+   from a 16-hex folder name inside the pack (which it saves onto the game
+   if it was missing). It installs the pack, enables it, and then replaces
+   the downloaded archive: the game-file record is pointed at the installed
+   folder and the archive is deleted, so a 2 GB pack is not stored twice.
+
+   A failed install never fails the download; it is logged and the
+   downloaded file is left in place.
+
+
+WHAT "INSTALL" ACTUALLY DOES
+----------------------------
+AzaharTexturePacks.installFromFile accepts a folder, .zip, .7z, or a single
+file:
+
+1. Unpacks into a cache staging folder, stripping the single top-level
+   wrapper folder most packs ship with (MyPack/... becomes ...).
+
+2. Skips junk (__MACOSX, .DS_Store, Thumbs.db) and refuses path-traversal
+   entries.
+
+3. Limits: 20,000 entries, 512 MB per file, 4 GB total.
+
+4. Finds the real pack root:
+     - a folder containing pack.json, preferring one whose path ends in
+       load/textures/<Title ID>;
+     - else a folder named after the Title ID;
+     - else a single subfolder that actually contains .png/.dds/.ktx files.
+
+5. Replaces the old pack completely: the old files are deleted first, so an
+   updated pack cannot leave stale textures behind. The primary folder gets
+   the files by a move (no second copy); variant folders get a copy.
+
+6. Writes a .argosy-source file containing "filename|size", used to
+   recognise "this exact download is already installed" on a re-download.
+   In that case the app only re-enables the pack instead of reinstalling.
+
+7. Records file count, total bytes, and whether pack.json exists.
+
+There is also a repair pass on every load (repairLayout): if an older
+install left the pack nested one folder too deep, the contents are hoisted
+up into the Title ID folder.
+
+
+HOW IT GETS TURNED ON
+---------------------
+The toggle is not a separate Argosy setting. It writes a per-game core
+option override:
+
+    core      = azahar
+    option    = citra_custom_textures
+    value     = enabled / disabled
+
+Enabling also turns on perGameSettingsEnabled for the game, so the override
+is actually applied. At launch, GameLauncher calls
+CoreOptionResolver.resolveVariables(core, gameId) and passes the result to
+libretro. The resolver layers: game overrides, then global overrides, then
+Azahar manifest defaults.
+
+Removing the per-game override would fall back to the global Azahar
+setting.
+
+The UI only shows the two texture rows when the selected core is the
+built-in azahar core and the game has a valid 16-hex Title ID. Also note
+that "supported" only requires a valid Title ID, not that a pack exists, so
+the toggle can appear before anything is installed; the pack row then says
+"None installed".
+
+
+THE SUBTLE PART: PACKS VS. THE ROM
+----------------------------------
+A 3DS game folder can hold the ROM and its HD pack, and the pack is often
+the bigger file. BaseRomFileResolver therefore filters texture-pack-looking
+files out when it re-elects the base ROM (the case that used to launch
+Ocarina of Time 3D's pack and get refused by the core).
+
+Detail: that filter uses the same name/pack.json heuristics, so a pack with
+an entirely generic name and no pack.json at its top level could still be
+mistaken for a ROM candidate.
+
+
+WHAT IT DELIBERATELY DOES NOT DO
+--------------------------------
+- It does not parse pack.json or validate texture contents; it only checks
+  for its presence and whether files exist.
+- It does not offer an uninstall/space-reclaim action. Replacing a pack
+  replaces the folder, but there is no "remove this pack" path in the
+  per-game settings.
+- It does not apply to external emulator apps, only the built-in Azahar
+  core.
+
+
+RELEVANT CODE
+-------------
+- data/emulator/AzaharTexturePacks.kt      installer and enabler
+- data/download/DownloadManager.kt         auto-install after download
+- data/emulator/BaseRomFileResolver.kt     don't launch the pack as the ROM
+- ui/screens/gamedetail/delegates/PerGameSettingsDelegate.kt
+                                           UI wiring and toggle/import
+- libretro/coreoptions/CoreOptionResolver.kt and data/emulator/GameLauncher.kt
+                                           turn the option into libretro
+                                           variables at launch
+- data/emulator/BuiltinSaveBase.kt         where the save base comes from

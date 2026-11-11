@@ -175,7 +175,8 @@ internal fun CompanionDetail.withLiveArt(art: com.nendo.argosy.data.model.Resolv
         backUrl = art.boxBackPath ?: backUrl,
         // A local logo (including an extracted 3DS banner, which takes the logo slot) wins over
         // the remote one.
-        logoUrl = art.logoPath?.takeIf { it.startsWith("/") } ?: logoUrl
+        logoUrl = art.logoPath?.takeIf { it.startsWith("/") } ?: logoUrl,
+        logoIsBanner = art.logoPath?.startsWith("/") == true && art.logoFromEmbeddedBanner
     )
 }
 

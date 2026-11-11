@@ -81,6 +81,19 @@ fun PresentationSlotContent(
     suspendedCard: Boolean = true
 ) {
     val manager = com.nendo.argosy.DualScreenManagerHolder.instance
+    val presentationInstance = remember {
+        com.nendo.argosy.util.RebuildTrace.id("presentation")
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "presentation composed id=$presentationInstance slot=${slot::class.simpleName}"
+        )
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            com.nendo.argosy.util.ArcoonTrace.log("presentation disposed id=$presentationInstance")
+        }
+    }
     val dimmerPrefs = remember(manager) {
         manager?.preferencesRepository?.userPreferences
             ?.map { it.toScreenDimmerPreferences() }?.distinctUntilChanged()
@@ -266,20 +279,32 @@ private fun PresentationSlotScene(
             is PresentationSlot.CocoonHero -> com.nendo.argosy.ui.cocoon.CocoonHeroScene(slot)
             is PresentationSlot.SaveGame -> SaveGameSlot(slot, bottomInset = hintsHeight)
             is PresentationSlot.MultitaskOverlay -> TopScreenOverlay(uiState = slot.uiState, modifier = Modifier.fillMaxSize())
+            // What this screen shows while a game runs is Cocoon's Now Playing style, so the
+            // dashboard style still gets the dashboard; the rest get the hero, which settles into
+            // black a few seconds into the session.
             is PresentationSlot.InGame -> {
                 val manager = com.nendo.argosy.DualScreenManagerHolder.instance ?: return@Box
                 val bar = rememberInGameAppBarState()
-                val controls by manager.sessionControls.collectAsState()
-                val actions = remember(manager) { dashboardActions(manager) }
-                com.nendo.argosy.ui.dualscreen.dashboard.InGameDashboard(
-                    state = slot.state,
-                    controls = controls,
-                    achievements = slot.achievements,
-                    sessionTimer = manager.swappedSessionTimer,
-                    reader = manager.dashboardReader,
-                    actions = actions,
-                    appBar = { modifier -> if (bar != null) InGameAppBar(bar, modifier) }
-                )
+                if (com.nendo.argosy.ui.cocoon.CocoonHomeStore.nowPlaying ==
+                    com.nendo.argosy.ui.cocoon.CocoonNowPlayingStyle.DASHBOARD
+                ) {
+                    val controls by manager.sessionControls.collectAsState()
+                    val actions = remember(manager) { dashboardActions(manager) }
+                    com.nendo.argosy.ui.dualscreen.dashboard.InGameDashboard(
+                        state = slot.state,
+                        controls = controls,
+                        achievements = slot.achievements,
+                        sessionTimer = manager.swappedSessionTimer,
+                        reader = manager.dashboardReader,
+                        actions = actions,
+                        appBar = { modifier -> if (bar != null) InGameAppBar(bar, modifier) }
+                    )
+                } else {
+                    InGameHero(
+                        state = slot.state,
+                        appBar = { modifier -> if (bar != null) InGameAppBar(bar, modifier) }
+                    )
+                }
             }
         }
         // Just left a game with Home: the top screen starts black and fades up, hiding Android's
@@ -335,6 +360,33 @@ private fun PresentationSlotScene(
             val wait = (COCOON_LEAVE_HOLD_MS - (System.currentTimeMillis() - start)).coerceAtLeast(0)
             delay(wait + 300)
             cardHoldOver = true
+        }
+        /*
+         * The handoff picture is set before the launcher starts, a frame or more ahead of the
+         * session state reaching this composition. Painting it at full size here means the first
+         * launcher frame is already the frozen game, instead of the wallpaper showing for that
+         * frame before the card arrives.
+         */
+        if (suspended == null) {
+            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value
+                ?.takeIf { com.nendo.argosy.ui.cocoon.CocoonSuspendTest.fresh(it.gameId) != null }
+                ?.let { handoff ->
+                    // Fitted, not cropped: the game's window shows the same frame letterboxed, and
+                    // the card starts from a box fitted to the picture, so cropping here would
+                    // make the launcher's first frame a different crop than both of them.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black)
+                    ) {
+                        androidx.compose.foundation.Image(
+                            bitmap = handoff.picture,
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
         }
         val nowPlayingHero = slot is PresentationSlot.CocoonHero && slot.hidesMirror
         if (suspendedCard && suspended != null && (nowPlayingHero || cardHoldOver || handingOver) &&

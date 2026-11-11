@@ -17,6 +17,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -32,6 +33,7 @@ interface CocoonOptimizeEntryPoint {
     fun imageCacheManager(): com.nendo.argosy.data.cache.ImageCacheManager
     fun database(): com.nendo.argosy.data.local.ALauncherDatabase
     fun quickPanelOverlay(): com.nendo.argosy.ui.quickpanel.QuickPanelOverlay
+    fun romMRepository(): com.nendo.argosy.data.remote.romm.RomMRepository
 }
 
 enum class CocoonOptimizeStep(@StringRes val labelRes: Int, val weight: Float) {
@@ -201,6 +203,11 @@ object CocoonOptimizer {
             app.packageManager.getPackageInfo(app.packageName, 0).lastUpdateTime
         }.getOrDefault(0L)
         val entry = EntryPointAccessors.fromApplication(app, CocoonOptimizeEntryPoint::class.java)
+        // Optimization reads the library, so it waits for a running library sync: the platforms and
+        // covers it works from must be the ones the server actually has.
+        runCatching {
+            entry.romMRepository().syncProgress.first { !it.isSyncing }
+        }
         val games = runCatching { entry.gameDao().cocoonOptimizeGames() }.getOrDefault(emptyList())
         val icm = entry.imageCacheManager()
 

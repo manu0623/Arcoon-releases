@@ -262,8 +262,6 @@ class UserPreferencesRepository @Inject constructor(
             quayPassMessageSyncPending = sync.quayPassMessageSyncPending,
             embeddedMediaExtractionEnabled = app.embeddedMediaExtractionEnabled,
             useEmbedded3dsBannerForHero = app.useEmbedded3dsBannerForHero,
-            steamGridDbEnabled = app.steamGridDbEnabled,
-            steamGridDbApiKey = app.steamGridDbApiKey,
             quayPassGreeting = sync.quayPassGreeting,
             quayPassTicketBalance = sync.quayPassTicketBalance,
             mediaStoragePath = storage.mediaStoragePath,
@@ -555,8 +553,6 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun setCustomBiosPath(path: String?) = storagePrefs.setCustomBiosPath(path)
     suspend fun setEmbeddedMediaExtractionEnabled(enabled: Boolean) = appPrefs.setEmbeddedMediaExtractionEnabled(enabled)
     suspend fun setUseEmbedded3dsBannerForHero(enabled: Boolean) = appPrefs.setUseEmbedded3dsBannerForHero(enabled)
-    suspend fun setSteamGridDbEnabled(enabled: Boolean) = appPrefs.setSteamGridDbEnabled(enabled)
-    suspend fun setSteamGridDbApiKey(key: String?) = appPrefs.setSteamGridDbApiKey(key)
     suspend fun setWeeklyIntegrityCheckEnabled(enabled: Boolean) = storagePrefs.setWeeklyIntegrityCheckEnabled(enabled)
     suspend fun setLastIntegrityCheckTime(timeMs: Long) = storagePrefs.setLastIntegrityCheckTime(timeMs)
     suspend fun setMediaStoragePath(path: String?) = storagePrefs.setMediaStoragePath(path)
@@ -627,6 +623,11 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun setBuiltinAnalogAsDpad(enabled: Boolean) = builtinPrefs.setBuiltinAnalogAsDpad(enabled)
     suspend fun setBuiltinDpadAsAnalog(enabled: Boolean) = builtinPrefs.setBuiltinDpadAsAnalog(enabled)
     suspend fun setBuiltinCoreForPlatform(platformSlug: String, coreId: String) = builtinPrefs.setBuiltinCoreForPlatform(platformSlug, coreId)
+
+    fun observeInGameHideChromeHomeCores() = builtinPrefs.observeInGameHideChromeHomeCores()
+
+    suspend fun setInGameHideChromeHome(coreId: String, hidden: Boolean) =
+        builtinPrefs.setInGameHideChromeHome(coreId, hidden)
     suspend fun setBuiltinFastForwardEnabled(enabled: Boolean) = builtinPrefs.setBuiltinFastForwardEnabled(enabled)
     suspend fun setBuiltinFastForwardSpeed(speed: Int) = builtinPrefs.setBuiltinFastForwardSpeed(speed)
     suspend fun setBuiltinFastForwardMode(mode: com.nendo.argosy.data.local.entity.FastForwardMode) = builtinPrefs.setBuiltinFastForwardMode(mode)
@@ -842,8 +843,6 @@ data class UserPreferences(
     val firstRunComplete: Boolean = false,
     val embeddedMediaExtractionEnabled: Boolean = true,
     val useEmbedded3dsBannerForHero: Boolean = false,
-    val steamGridDbEnabled: Boolean = false,
-    val steamGridDbApiKey: String? = null,
     val rommBaseUrl: String? = null,
     val rommUsername: String? = null,
     val rommUserId: Long? = null,

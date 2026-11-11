@@ -310,7 +310,7 @@ class LibretroActivity : ComponentActivity() {
     private var deferPauseForSuspend = false
     private var deferredPauseWork: Runnable? = null
 
-    /** Black cover laid over the game as Home is pressed, so the system's slide shows only black. */
+    /** Black cover over the game across a swap with the launcher: the system's slide moves black. */
     private var leaveVeil: android.view.View? = null
     private var canEnableBFI = false
 
@@ -389,6 +389,33 @@ class LibretroActivity : ComponentActivity() {
         get() = if (::netplay.isInitialized) netplay.isGuestJoinedSession else false
     private var corePath: String = ""
     private var resolvedCoreId: String? = null
+
+    private var hideInGameHomeState = androidx.compose.runtime.mutableStateOf(false)
+    private var homeSymbolPageVisible by androidx.compose.runtime.mutableStateOf(false)
+
+    /**
+     * The Home button is drawn by the in-game chrome, so this only publishes the per-core value for
+     * it: the chrome collects the manager's flow and the running game follows the toggle.
+     */
+    private fun applyInGameHomeVisibility(hidden: Boolean) {
+        hideInGameHomeState.value = hidden
+        com.nendo.argosy.DualScreenManagerHolder.instance?.setHideInGameChromeHome(hidden)
+    }
+
+    private fun observeInGameHomeSetting() {
+        lifecycleScope.launch {
+            val coreId = resolvedCoreId ?: return@launch
+            preferencesRepository.observeInGameHideChromeHomeCores().collect { hiddenCores ->
+                applyInGameHomeVisibility(coreId in hiddenCores)
+            }
+        }
+    }
+
+    private fun setInGameHomeHidden(hidden: Boolean) {
+        val coreId = resolvedCoreId ?: return
+        applyInGameHomeVisibility(hidden)
+        lifecycleScope.launch { preferencesRepository.setInGameHideChromeHome(coreId, hidden) }
+    }
     private var dualScreenOutput: DualScreenOutput? = null
     private var secondScreen: SecondScreenPresentation? = null
 
@@ -611,6 +638,7 @@ class LibretroActivity : ComponentActivity() {
             com.nendo.argosy.DualScreenManagerHolder.instance?.registerLiveMoveHost(liveMoveHost)
         }
         loadCoreOptionOverrides()
+        observeInGameHomeSetting()
         loadControllerTypes()
         createRetroView(corePath, systemDir, savesDir, settings, restoredSram)
         achievementBridge = LibretroAchievementBridge(
@@ -1781,6 +1809,13 @@ class LibretroActivity : ComponentActivity() {
                         sectionContent = { section -> menuSectionContent(section) }
                     )
                 }
+                if (homeSymbolPageVisible) {
+                    activeMenuHandler = com.nendo.argosy.ui.cocoon.CocoonHomeSymbolPage(
+                        hideInGameHome = hideInGameHomeState.value,
+                        onToggleInGameHome = ::setInGameHomeHidden,
+                        onDismiss = { homeSymbolPageVisible = false }
+                    )
+                }
                 readerKind?.let { kind ->
                     val reader = inGameDocuments.reader(kind)
                     activeMenuHandler = androidx.compose.runtime.remember(kind) {
@@ -2599,6 +2634,7 @@ class LibretroActivity : ComponentActivity() {
                 hudShowShaders = touchSettingsState.hudShowShaders
             ),
             onControlsAction = ::handleControlsAction,
+            onOpenHomeSymbol = { homeSymbolPageVisible = true },
             coreOptions = buildCoreOptionItems(),
             coreOptionsSupported = resolvedCoreId?.let {
                 CoreOptionManifestRegistry.getManifest(it) != null
@@ -3669,10 +3705,13 @@ class LibretroActivity : ComponentActivity() {
         // Back before the suspended save ran: the game never stopped, so the save is skipped and
         // the rolling save takes over again below.
         takeDeferredPause()
-        leaveVeil?.let { veil ->
-            (veil.parent as? android.view.ViewGroup)?.removeView(veil)
-            leaveVeil = null
-        }
+        /*
+         * The cover that went up when this game was left. It is not dropped here: Android is
+         * still running the task swap when onResume fires, and the frame it animates is the last
+         * one each window presented, so a live game underneath is the bright edge that sweeps
+         * across. Held through the swap, the slide moves black and the game fades up out of it.
+         */
+        leaveVeil?.let { veil -> liftLeaveVeilAfterSwap(veil) }
         if (suspendedByHome) {
             showArrivalPictureIfTest()
             // Back from a suspend: the game is the active session again on both screens.
@@ -3707,6 +3746,13 @@ class LibretroActivity : ComponentActivity() {
      * the game cuts straight to the launcher already showing its last frame at the same size.
      */
     private var arrivalPicture: android.view.View? = null
+
+    /**
+     * The game's own window frozen on the frame captured at the press. The core keeps drawing
+     * that frame, but the window is paused and covered a moment later, and whatever it showed in
+     * between read as a grey flash before the picture started shrinking. The launcher draws the
+     * same bitmap at the same size, so this cover is invisible once it takes over.
+     */
 
     /**
      * TEST resume: the card has just grown to the game's size on the launcher. Until the game
@@ -3748,36 +3794,87 @@ class LibretroActivity : ComponentActivity() {
         }
     }
 
-    private fun suspendFromTestButton() {
-        if (!canSuspend() || suspendedByHome) return
-        com.nendo.argosy.util.ArcoonTrace.log("test suspend: button pressed")
-        suspendToLauncher()
+    /**
+     * Lays black over the whole game window and leaves it there across the swap.
+     *
+     * A task transition cannot be skipped on this SDK, and Android animates a frame of each
+     * window: the leaving window's edge against the arriving one is the line that sweeps across.
+     * Black on both sides is what leaves the slide nothing to reveal, so both suspend paths put
+     * this up before they ask for the launcher, and the launcher fades onto the picture it was
+     * handed once the swap is over.
+     */
+    private fun showLeaveVeil() {
+        leaveVeil?.let { existing ->
+            // A cover still fading from an earlier return: give back its black, never stack one.
+            existing.animate().cancel()
+            existing.alpha = 1f
+            return
+        }
+        if (isFinishing || isDestroyed) return
+        val veil = android.view.View(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            alpha = 1f
+        }
+        (window.decorView as? android.view.ViewGroup)?.addView(
+            veil,
+            android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        leaveVeil = veil
+        com.nendo.argosy.util.ArcoonTrace.log("game: covered before the swap")
     }
+
+    /**
+     * Lifts the cover after the platform's swap rather than at the resume itself: held for the
+     * length of the slide, the swap moves black and the game then fades up out of it, instead of
+     * the game appearing underneath an animation that is still running.
+     */
+    private fun liftLeaveVeilAfterSwap(veil: android.view.View) {
+        veil.animate().cancel()
+        veil.animate()
+            .alpha(0f)
+            .setStartDelay(SWAP_COVER_HOLD_MS)
+            .setDuration(SWAP_COVER_FADE_MS)
+            .withEndAction {
+                com.nendo.argosy.util.ArcoonTrace.log("game: cover lifted after the swap")
+                (veil.parent as? android.view.ViewGroup)?.removeView(veil)
+                if (leaveVeil === veil) leaveVeil = null
+            }
+            .start()
+    }
+
+    /** Drops the cover at once, for a suspend that never left the game. */
+    private fun dropLeaveVeil() {
+        leaveVeil?.let { veil ->
+            veil.animate().cancel()
+            (veil.parent as? android.view.ViewGroup)?.removeView(veil)
+        }
+        leaveVeil = null
+    }
+
+    private fun suspendFromTestButton() = requestSuspend("test suspend: button pressed")
 
     /**
      * The corner handle on the console's second screen. A two-screen game is the picture on both
      * displays, so suspending has to be reachable from the game itself, not only from Home or from
      * a menu that would cover the frame.
      */
-    private fun suspendFromHomeHandle() {
-        if (!canSuspend() || suspendedByHome) return
-        com.nendo.argosy.util.ArcoonTrace.log("home handle: suspend pressed")
-        suspendToLauncher()
-    }
 
-    /** Capture the frame, leave the session suspended, and bring the launcher up on that picture. */
-    private fun suspendToLauncher() {
-        com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(-1L)
-        suspendedByHome = true
+    /**
+     * Hands the game's last frame to the launcher before it comes forward: the picture shrinks into
+     * the suspended card and grows back out of it on resume. Both suspend paths use this, so a Home
+     * press gets the same Cocoon motion as the in-game control. Returns the frame the card's
+     * snapshot should use, or null when the core had nothing to hand over.
+     */
+    private fun handOverSuspendPicture(whole: android.graphics.Bitmap?): android.graphics.Bitmap? {
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.resumeInProgress.value = false
         com.nendo.argosy.ui.cocoon.CocoonSuspendTest.suspendedGameId = gameId
-        val whole = captureFrameOrNull()
         // A two-screen console draws both screens in one frame; each display gets only its own.
         val split = dualScreenOutput
         val frame = whole?.let { if (split != null) cropFraction(it, split.primary) else it }
         val lower = whole?.let { if (split != null) cropFraction(it, split.secondary) else null }
-        if (::retroView.isInitialized) retroView.pauseEmulation()
-        deferPauseForSuspend = true
         if (frame != null) {
             val copy = frame.copy(frame.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
             com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = com.nendo.argosy.ui.cocoon.CocoonSuspendTest.Handoff(
@@ -3788,6 +3885,27 @@ class LibretroActivity : ComponentActivity() {
                 lower = lower?.asImageBitmap()
             )
         }
+        return frame
+    }
+
+    /** Both Arcoon-owned suspend controls land here, so neither can drift from the other. */
+    private fun requestSuspend(trace: String) {
+        if (!canSuspend() || suspendedByHome) return
+        com.nendo.argosy.util.ArcoonTrace.log(trace)
+        suspendToLauncher()
+    }
+
+    /** Capture the frame, leave the session suspended, and bring the launcher up on that picture. */
+    private fun suspendToLauncher() {
+        com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(-1L)
+        suspendedByHome = true
+        val frame = handOverSuspendPicture(captureFrameOrNull())
+        if (::retroView.isInitialized) retroView.pauseEmulation()
+        // Black, not the frozen frame: a bright picture under the incoming launcher is exactly
+        // the edge the system's slide draws a line with. The frame itself travels with the
+        // handoff and is shown once the launcher's own veil lifts.
+        showLeaveVeil()
+        deferPauseForSuspend = true
         gameSessionManager.suspendBuiltIn(
             gameId = gameId,
             title = gameName,
@@ -3810,27 +3928,41 @@ class LibretroActivity : ComponentActivity() {
         val options = android.app.ActivityOptions.makeCustomAnimation(this, 0, 0)
             .setLaunchDisplayId(displayId)
             .toBundle()
-        val started = runCatching { startActivity(intent, options) }
-        if (started.isSuccess) {
-            // Tell the launcher which game it is coming back to, so it can step off that game's
-            // details page rather than leaving a screen no button reaches.
-            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.value = gameId
-        }
-        if (started.isFailure) {
-            deferPauseForSuspend = false
-            if (::retroView.isInitialized) retroView.resumeEmulation()
-            suspendedByHome = false
-            gameSessionManager.onBuiltInResumed(gameId)
-            com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
-                gameId,
-                isHardcore = hardcoreMode,
-                channelName = playSessionTracker.activeSession.value?.channelName
-            )
-            com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = null
-            com.nendo.argosy.util.ArcoonTrace.log(
-                "test suspend: launcher handoff failed (${started.exceptionOrNull()?.message})"
-            )
-        }
+        // The launcher's window is what the platform animates as it arrives, and a start into an
+        // existing task is a task-to-front whatever flags it carries. So the launcher is covered
+        // first: it comes up black over the game's frozen frame, then fades onto the picture it
+        // was handed, and the swap itself shows nothing move.
+        com.nendo.argosy.ui.cocoon.CocoonVeil.arm()
+        /*
+         * The cover has to be presented, not merely added. Android animates the last frame each
+         * window presented, so a launcher raised in this same message is animated over a live
+         * game and its edge draws the line. One frame's grace lets the black draw first.
+         */
+        window.decorView.postDelayed({
+            com.nendo.argosy.util.ArcoonTrace.log("suspend: launcher raised with the veil drawn")
+            val started = runCatching { startActivity(intent, options) }
+            if (started.isSuccess) {
+                // Tell the launcher which game it is coming back to, so it can step off that
+                // game's details page rather than leaving a screen no button reaches.
+                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.value = gameId
+            }
+            if (started.isFailure) {
+                deferPauseForSuspend = false
+                if (::retroView.isInitialized) retroView.resumeEmulation()
+                suspendedByHome = false
+                gameSessionManager.onBuiltInResumed(gameId)
+                com.nendo.argosy.DualScreenManagerHolder.instance?.onSessionChanged(
+                    gameId,
+                    isHardcore = hardcoreMode,
+                    channelName = playSessionTracker.activeSession.value?.channelName
+                )
+                com.nendo.argosy.ui.cocoon.CocoonSuspendTest.handoff.value = null
+                dropLeaveVeil()
+                com.nendo.argosy.util.ArcoonTrace.log(
+                    "test suspend: launcher handoff failed (${started.exceptionOrNull()?.message})"
+                )
+            }
+        }, SWAP_COVER_FRAME_MS)
     }
 
     /**
@@ -3869,8 +4001,6 @@ class LibretroActivity : ComponentActivity() {
     private fun setMatchScreenSizes(enabled: Boolean) {
         dualScreenMatchSize = enabled
         dualScreenOutput?.let { applyMatchedScreens(it, secondScreenDisplay()) }
-        // The picture's bars just changed, so the handle has to move with them.
-        secondScreenHandle?.refresh()
         if (gameId == -1L) return
         lifecycleScope.launch(Dispatchers.IO) {
             preferencesRepository.setBuiltinGameMatchScreenSize(gameId, enabled)
@@ -3928,7 +4058,6 @@ class LibretroActivity : ComponentActivity() {
      * Rebuilds the second screen's window. Its surface belongs to the display, not to us, so it is
      * taken down whenever this activity leaves and built again on the way back rather than kept.
      */
-    private var secondScreenHandle: HomeHandlePresentation? = null
 
     private fun showSecondScreen() {
         if (dualScreenOutput == null || secondScreen != null) return
@@ -3960,7 +4089,6 @@ class LibretroActivity : ComponentActivity() {
             .isSuccess
         secondScreen = presentation.takeIf { shown }
         Log.i(TAG, "Second screen: show on display ${display.displayId} shown=$shown")
-        if (shown) showHomeHandle(display)
         if (shown && !arrivalRevealed) {
             lifecycleScope.launch {
                 snapshotFlow { arrivalRevealed }.first { it }
@@ -3969,82 +4097,7 @@ class LibretroActivity : ComponentActivity() {
         }
     }
 
-    /** Puts the faint home handle on the same display as the game's second screen. */
-    private fun showHomeHandle(display: android.view.Display) {
-        if (secondScreenHandle != null) return
-        val handle = HomeHandlePresentation(this, display, { homeHandleBand(display) }) {
-            suspendFromHomeHandle()
-        }
-        val shown = runCatching { handle.show() }.isSuccess
-        secondScreenHandle = handle.takeIf { shown }
-        Log.i(TAG, "Second screen: home handle shown=$shown")
-    }
-
-    /**
-     * The bar left around the second screen's picture, which is the only place a handle may sit:
-     * this console's touch panel is that screen, so a handle over the picture eats the game's taps.
-     * The bar on the side the chosen corner points at is preferred, and null means the picture
-     * covers the whole panel with nothing worth putting a handle in.
-     */
-    private fun homeHandleBand(display: android.view.Display): android.graphics.Rect? {
-        val output = dualScreenOutput ?: return null
-        val metrics = android.util.DisplayMetrics()
-        @Suppress("DEPRECATION")
-        display.getRealMetrics(metrics)
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-        if (width <= 0 || height <= 0) return null
-        val aspect = if (output.secondaryAspect > 0f) {
-            output.secondaryAspect
-        } else {
-            width.toFloat() / height
-        }
-        val matched = matchedScreens
-        val pictureWidth: Int
-        val pictureHeight: Int
-        if (matched != null) {
-            // Matched screens rest the picture on the top edge and fill the width.
-            pictureWidth = width
-            pictureHeight = matched.secondary.height.coerceIn(1, height)
-        } else if (width / aspect <= height) {
-            pictureWidth = width
-            pictureHeight = (width / aspect).toInt().coerceIn(1, height)
-        } else {
-            pictureHeight = height
-            pictureWidth = (height * aspect).toInt().coerceIn(1, width)
-        }
-        // The navigation bar is drawn above app windows and takes every touch in its band, so a bar
-        // the picture leaves empty inside that band is still no use for a handle.
-        val appMetrics = android.util.DisplayMetrics()
-        @Suppress("DEPRECATION")
-        display.getMetrics(appMetrics)
-        val usableBottom = appMetrics.heightPixels.coerceIn(0, height)
-        val pictureTop = if (matched != null) 0 else (height - pictureHeight) / 2
-        val pictureLeft = (width - pictureWidth) / 2
-        val below = android.graphics.Rect(
-            0,
-            (pictureTop + pictureHeight).coerceAtMost(usableBottom),
-            width,
-            usableBottom
-        )
-        val above = android.graphics.Rect(0, 0, width, pictureTop)
-        val after = android.graphics.Rect(pictureLeft + pictureWidth, pictureTop, width, pictureTop + pictureHeight)
-        val before = android.graphics.Rect(0, pictureTop, pictureLeft, pictureTop + pictureHeight)
-        // A bar thinner than this cannot hold a handle worth pressing; try another side instead.
-        val minimum = (24 * resources.displayMetrics.density).toInt()
-        val order = if (com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleY < 0.5f) {
-            listOf(above, below, after, before)
-        } else {
-            listOf(below, above, after, before)
-        }
-        return order.firstOrNull { it.width() >= minimum && it.height() >= minimum }
-    }
-
     private fun hideSecondScreen() {
-        secondScreenHandle?.let { handle ->
-            secondScreenHandle = null
-            runCatching { handle.dismiss() }
-        }
         secondScreen?.let { presentation ->
             secondScreen = null
             runCatching { presentation.dismiss() }
@@ -4070,27 +4123,20 @@ class LibretroActivity : ComponentActivity() {
             // if that page is the game's own details, nothing on it can leave it (the pad belongs
             // to the other screen there). Mark the return so the launcher steps off it.
             com.nendo.argosy.ui.cocoon.CocoonSuspendTest.launcherReturn.value = gameId
+            // The same handover the in-game suspend control does, so Home leaves a picture the
+            // card can shrink from and grow back out of, instead of a bare cut on resume.
+            val frame = handOverSuspendPicture(captureFrameOrNull())
             gameSessionManager.suspendBuiltIn(
                 gameId = gameId,
                 title = gameName,
                 platformName = platformSlug,
-                snapshot = captureFrameOrNull(),
+                snapshot = frame,
                 gameDisplayId = currentDisplayId()
             )
             // Android slides the game away on Home and an app cannot stop that, so the game goes
             // black the instant Home is pressed (its last frame is already saved for the card):
-            // the slide then moves nothing visible, and the top screen fades up from black.
-            if (leaveVeil == null) {
-                val veil = android.view.View(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
-                (window.decorView as? android.view.ViewGroup)?.addView(
-                    veil,
-                    android.view.ViewGroup.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                )
-                leaveVeil = veil
-            }
+            // the slide then moves nothing visible, and the screen fades up from black on return.
+            showLeaveVeil()
         } else {
             finish()
         }
@@ -4391,6 +4437,21 @@ class LibretroActivity : ComponentActivity() {
             }
         }
 
+        override fun openAchievements() {
+            runOnUiThread {
+                if (coreDestroyed || isClosing) return@runOnUiThread
+                showMenu()
+                handleMenuAction(InGameMenuAction.Achievements)
+            }
+        }
+
+        override fun suspendSession() {
+            runOnUiThread {
+                if (coreDestroyed || isClosing) return@runOnUiThread
+                requestSuspend("companion chrome: suspend pressed")
+            }
+        }
+
         override fun quit() {
             runOnUiThread {
                 if (coreDestroyed || isClosing) return@runOnUiThread
@@ -4442,6 +4503,16 @@ class LibretroActivity : ComponentActivity() {
             Log.e(TAG, "saveFrameToGallery failed", e)
             false
         }
+    }
+
+    override fun onStop() {
+        /*
+         * The cover stays up while this game is suspended: it is what the task swap moves when
+         * the game is brought back, and lifting it here would leave a bright frame under that
+         * slide. onResume lifts it once the swap is over. A stop that is not a suspend drops it.
+         */
+        if (!suspendedByHome) dropLeaveVeil()
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -4545,6 +4616,13 @@ class LibretroActivity : ComponentActivity() {
 
         /** Long enough for the suspend picture to shrink into its card and settle. */
         private const val SUSPEND_PAUSE_DELAY_MS = 900L
+
+        /** Black cover held across the platform's task swap, then the fade up out of it. */
+        private const val SWAP_COVER_HOLD_MS = 320L
+        private const val SWAP_COVER_FADE_MS = 180L
+
+        /** Long enough for an added cover to be drawn and presented before the swap is asked for. */
+        private const val SWAP_COVER_FRAME_MS = 48L
 
         private const val CORE_INPUT_PULSE_MS = 50L
 

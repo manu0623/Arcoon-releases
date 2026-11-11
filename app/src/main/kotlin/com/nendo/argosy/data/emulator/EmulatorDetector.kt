@@ -199,6 +199,15 @@ class EmulatorDetector @Inject constructor(
         }
         if (installed.isEmpty()) return null
 
+        /*
+         * The built-in core is the default wherever it can run the platform: it needs no second
+         * app installed, and its saves and states are the ones Argosy itself places. Only the
+         * platforms its cores do not cover (Dolphin's, the Switch emulators, DOS, and so on) fall
+         * through to the recommended list below. A game or platform the player configured still
+         * wins, because EmulatorResolver asks for this only as its last tier.
+         */
+        installed.firstOrNull { it.def.id == EmulatorRegistry.BUILTIN_ID }?.let { return it }
+
         val recommended = EmulatorRegistry.getRecommendedEmulators()[canonical]
         if (recommended != null) {
             val filteredRecommended = if (builtinEnabled) recommended else recommended.filter { it != EmulatorRegistry.BUILTIN_ID }

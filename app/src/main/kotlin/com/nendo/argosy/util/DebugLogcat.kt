@@ -70,3 +70,17 @@ object ArcoonTrace {
         Log.i("ArcoonTrace", message)
     }
 }
+
+/**
+ * Per-name instance ids for rebuild traces. A subtree keeps its id across recomposition and takes
+ * a new one when it is built again from scratch, so a log can separate "the same picture redrew"
+ * from "the picture was thrown away and rebuilt" - which is what decides whether the entrance
+ * animations (a folder's covers, the board's tiles) play again.
+ */
+object RebuildTrace {
+    private val counters =
+        java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
+
+    fun id(name: String): Int =
+        counters.getOrPut(name) { java.util.concurrent.atomic.AtomicInteger(0) }.incrementAndGet()
+}

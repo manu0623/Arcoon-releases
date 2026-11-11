@@ -87,9 +87,6 @@ class GameSessionService : Service() {
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
     /** The home handle over a third-party emulator; null while there is none. */
-    private var homeHandleView: View? = null
-    private var homeHandleWindowManager: WindowManager? = null
-    private var handleJob: Job? = null
 
     private var activityJob: Job? = null
     private var presenceJob: Job? = null
@@ -139,7 +136,6 @@ class GameSessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                hideHomeHandle()
                 startForegroundWithNotification(currentGameTitle, NotificationState.PLAYING)
                 awaitingForeground.set(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -174,8 +170,6 @@ class GameSessionService : Service() {
                 sessionStartTime = if (startTime > 0) startTime else System.currentTimeMillis()
                 lastMidGameCacheId = -1
                 lastOverlayShownAt = 0L
-                showHomeHandle()
-                startHomeHandleWatch()
 
                 cleanupPresenceKeepalive()
                 startForegroundWithNotification(gameTitle, NotificationState.PLAYING)
@@ -200,7 +194,6 @@ class GameSessionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        hideHomeHandle()
         Logger.debug(TAG, "Service destroyed")
         stopPresenceWatch()
         stopActivityReporting()
@@ -306,12 +299,10 @@ class GameSessionService : Service() {
                 val held = runCatching { dsm?.gameSessionManager?.restoreSuspendedExternal() }.getOrNull()
                 if (held != null && !held.builtIn) {
                     Logger.info(TAG, "Emulator still holds '${held.title}' suspended; keeping its session")
-                    handler.post { hideHomeHandle() }
                     return@launch
                 }
                 if (dsm != null && runCatching { dsm.suspendExternalSession() }.getOrDefault(false)) {
                     Logger.info(TAG, "Emulator left the screen for gameId=$currentGameId, keeping it suspended")
-                    handler.post { hideHomeHandle() }
                     return@launch
                 }
                 Logger.info(TAG, "Emulator left the screen for gameId=$currentGameId, ending session | emulator=${emulator.packageName}")
@@ -706,179 +697,6 @@ class GameSessionService : Service() {
             Logger.debug(TAG, "Overlay shown")
         } catch (e: Exception) {
             Logger.error(TAG, "Failed to show overlay", e)
-        }
-    }
-
-    /**
-     * Third-party emulators own the screen, so the home handle cannot live in the launcher's
-     * compose tree while one runs: it is an overlay window, the same way the save mark is drawn.
-     */
-    private fun showHomeHandle() {
-        if (homeHandleView != null) return
-        if (!Settings.canDrawOverlays(this)) {
-            Logger.debug(TAG, "Home handle: overlay permission missing")
-            return
-        }
-        val pkg = currentEmulatorPackage ?: return
-        if (pkg == EmulatorRegistry.BUILTIN_PACKAGE || pkg == packageName) return
-        // The game is not using the console's other screen, so that is where the handle goes.
-        val display = secondaryDisplay()
-        if (display == null) {
-            Logger.debug(TAG, "Home handle: no second screen to put it on")
-            return
-        }
-        val displayContext = createDisplayContext(display)
-        val displayWindowManager = displayContext.getSystemService(WindowManager::class.java)
-        if (displayWindowManager == null) return
-        val density = displayContext.resources.displayMetrics.density
-        fun dip(value: Int): Int = (value * density).toInt()
-        // The navigation bar is drawn above application overlays, so a handle placed at the raw
-        // corner is behind it and takes no taps. Sit past the system insets instead.
-        val insets = runCatching {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                androidx.core.view.WindowInsetsCompat.toWindowInsetsCompat(
-                    displayWindowManager.currentWindowMetrics.windowInsets
-                ).getInsets(
-                    androidx.core.view.WindowInsetsCompat.Type.navigationBars() or
-                        androidx.core.view.WindowInsetsCompat.Type.statusBars() or
-                        androidx.core.view.WindowInsetsCompat.Type.displayCutout()
-                )
-            } else {
-                androidx.core.graphics.Insets.NONE
-            }
-        }.getOrDefault(androidx.core.graphics.Insets.NONE)
-        // A secondary display can report a bar it has hidden while that bar's window still takes
-        // every touch in the band, so the area apps may not use is the floor for the offset.
-        val realMetrics = android.util.DisplayMetrics().also { display.getRealMetrics(it) }
-        val appMetrics = android.util.DisplayMetrics().also { display.getMetrics(it) }
-        val bandBottom = maxOf(
-            insets.bottom,
-            (realMetrics.heightPixels - appMetrics.heightPixels).coerceAtLeast(0)
-        )
-        // Settings ▸ Displays ▸ Home Symbol decides the size, the position and the clarity. The
-        // launcher may never have composed the board in this process, so read the saved values
-        // from disk first.
-        com.nendo.argosy.ui.cocoon.CocoonHomeStore.ensureLoaded(this)
-        val target = dip(com.nendo.argosy.ui.cocoon.cocoonHandleTargetDp())
-        val icon = dip(com.nendo.argosy.ui.cocoon.cocoonHandleIconDp())
-        // Free placement, in fractions of the area the navigation bar leaves usable. Coordinates
-        // rather than a gravity-relative offset: on a secondary display that offset is not applied
-        // to a gravity-placed overlay window.
-        val usableWidth = realMetrics.widthPixels.coerceAtLeast(target)
-        val usableHeight = (realMetrics.heightPixels - bandBottom).coerceAtLeast(target)
-        val handleX = ((usableWidth - target) * com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleX)
-            .toInt().coerceAtLeast(0)
-        val handleY = ((usableHeight - target) * com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleY)
-            .toInt().coerceAtLeast(0)
-        Logger.debug(
-            TAG,
-            "Home handle geometry: size=${com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleSize}" +
-                " at=${com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleX}," +
-                "${com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleY}" +
-                " clarity=${com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleClarity}" +
-                " target=${target}px icon=${icon}px density=$density band=$bandBottom"
-        )
-        val view = FrameLayout(displayContext).apply {
-            // The whole tap target answers, not only the glyph inside it.
-            isClickable = true
-            setOnClickListener {
-                Logger.debug(TAG, "Home handle tapped")
-                suspendFromHomeHandle()
-            }
-            addView(
-                ImageView(displayContext).apply {
-                    setImageResource(R.drawable.ic_home_handle)
-                    imageAlpha = (com.nendo.argosy.ui.cocoon.CocoonHomeStore.handleClarity * 255).toInt()
-                    contentDescription = getString(R.string.ingame_suspend_handle)
-                    setOnClickListener {
-                        Logger.debug(TAG, "Home handle tapped")
-                        suspendFromHomeHandle()
-                    }
-                },
-                FrameLayout.LayoutParams(icon, icon, Gravity.CENTER)
-            )
-        }
-        val params = WindowManager.LayoutParams(
-            target,
-            target,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            this.gravity = Gravity.TOP or Gravity.START
-            x = handleX
-            y = handleY
-        }
-        runCatching {
-            displayWindowManager.addView(view, params)
-            homeHandleView = view
-            homeHandleWindowManager = displayWindowManager
-            Logger.debug(TAG, "Home handle shown on display ${display.displayId}")
-        }.onFailure { Logger.debug(TAG, "Home handle could not be added: ${it.message}") }
-    }
-
-    /** The handle's one job: keep the external game suspended and let the launcher take over. */
-    private fun suspendFromHomeHandle() {
-        val dsm = DualScreenManagerHolder.instance
-        if (dsm == null) {
-            Logger.debug(TAG, "Home handle: no dual screen manager to suspend through")
-            return
-        }
-        serviceScope.launch {
-            val suspended = runCatching { dsm.suspendExternalSession() }
-                .onFailure { Logger.debug(TAG, "Home handle: suspend failed ${it.message}") }
-                .getOrDefault(false)
-            if (suspended) handler.post {
-                // Recording the session as suspended is not the same as suspending the game: the
-                // emulator is still the app in front. The handle's whole job is to hand the screen
-                // back, so the launcher is brought forward over it. This service owns an overlay
-                // window, which is the permission that allows starting an activity from here.
-                runCatching {
-                    startActivity(
-                        android.content.Intent(this@GameSessionService, com.nendo.argosy.ArgosyActivity::class.java)
-                            .addFlags(
-                                android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                                    android.content.Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                            )
-                    )
-                }.onFailure {
-                    Logger.debug(TAG, "Home handle: could not bring the launcher forward: ${it.message}")
-                }
-                hideHomeHandle()
-            }
-            if (!suspended) Logger.debug(TAG, "Home handle: this session cannot be suspended")
-        }
-    }
-
-    private fun hideHomeHandle() {
-        val view = homeHandleView ?: return
-        homeHandleView = null
-        val manager = homeHandleWindowManager
-        homeHandleWindowManager = null
-        runCatching { manager?.removeView(view) }
-    }
-
-    /** The console's other screen: the one the external game is not drawing on. */
-    private fun secondaryDisplay(): android.view.Display? {
-        val manager = getSystemService(android.hardware.display.DisplayManager::class.java) ?: return null
-        return manager.displays.firstOrNull { it.displayId != android.view.Display.DEFAULT_DISPLAY }
-    }
-
-    /**
-     * A session can come back from suspension without the service restarting, so the handle follows
-     * the session instead of only appearing once when it starts.
-     */
-    private fun startHomeHandleWatch() {
-        handleJob?.cancel()
-        val pkg = currentEmulatorPackage ?: return
-        if (pkg == EmulatorRegistry.BUILTIN_PACKAGE || pkg == packageName) return
-        handleJob = serviceScope.launch {
-            gameSessionManager.sessionState.collect { suspended ->
-                val active = playSessionTracker.get().activeSession.value != null
-                handler.post { if (active && suspended == null) showHomeHandle() else hideHomeHandle() }
-            }
         }
     }
 

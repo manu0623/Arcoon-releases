@@ -24,7 +24,13 @@ enum class RomMCoverArtType(val wireName: String) {
  */
 fun List<RomMCoverSearchResult>.usableResources(artType: RomMCoverArtType): List<RomMCoverResource> =
     filter { artType == RomMCoverArtType.GRID || it.artType == artType.wireName }
-        .flatMap { it.resources.orEmpty() }
+        .flatMap { result ->
+            // RomM searches its configured providers and says which one answered; keep that with
+            // every image so the picker can separate them. An older server omits it: its cover
+            // search only ever returned SteamGridDB grids.
+            val provider = result.provider?.lowercase() ?: "sgdb"
+            result.resources.orEmpty().map { it.copy(provider = provider) }
+        }
         .filterNot { it.isAnimated }
         .mapNotNull { resource -> resource.fullResUrl(artType)?.let { resource.copy(url = it) } }
 

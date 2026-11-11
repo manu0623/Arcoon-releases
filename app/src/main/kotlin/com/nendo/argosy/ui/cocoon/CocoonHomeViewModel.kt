@@ -817,7 +817,10 @@ class CocoonHomeViewModel @Inject constructor(
         addHomeItem("widget:" + CocoonWidgetKind.IMAGE_PIN.name, path)
     }
 
-    /** Opens a Home shortcut: apps launch, Pods open, game widgets open their game. */
+    /**
+     * Opens a Home shortcut: apps launch, Pods open, game widgets open their game, and the square
+     * for the game left running goes back into it.
+     */
     fun openHomeTile(tile: CocoonTile) {
         when (val target = tile.target) {
             is CocoonTileTarget.App -> launchPackage(target.packageName)
@@ -850,6 +853,9 @@ class CocoonHomeViewModel @Inject constructor(
             is CocoonTileTarget.Game -> viewModelScope.launch {
                 _events.emit(CocoonHomeEvent.Navigate(com.nendo.argosy.ui.navigation.Screen.GameDetail.createRoute(target.gameId)))
             }
+            // A, or a tap on the square, is one press back into the game it was left in - that is
+            // the whole reason the square exists. Its page is still reachable from the game's own
+            // cover in its folder; a suspend is not a detour through the details screen.
             is CocoonTileTarget.NowPlaying -> resumeNowPlaying()
             is CocoonTileTarget.Smart -> viewModelScope.launch {
                 val filters = when (target.kind) {
@@ -1332,7 +1338,11 @@ class CocoonHomeViewModel @Inject constructor(
             }
             closeTileMenu()
             when (row) {
-                CocoonTileMenuRow.OPEN -> onOpen(tile)
+                CocoonTileMenuRow.OPEN -> if (tile.target is CocoonTileTarget.NowPlaying) {
+                    resumeNowPlaying()
+                } else {
+                    onOpen(tile)
+                }
                 CocoonTileMenuRow.CLOSE -> closeNowPlayingTile()
                 CocoonTileMenuRow.PLATFORM -> onEditTile(tile)
                 CocoonTileMenuRow.EDIT_GRID -> startEditGrid()

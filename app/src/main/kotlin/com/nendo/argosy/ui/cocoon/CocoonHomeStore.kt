@@ -58,7 +58,7 @@ object CocoonHomeStore {
      * tabs), SIDE (a labeled menu on the left), TILES (big action tiles over the blurred art) or
      * SPLIT (details on the top screen, big buttons on the lower one).
      */
-    private val detailsLayoutState = androidx.compose.runtime.mutableStateOf("CLASSIC")
+    private val detailsLayoutState = androidx.compose.runtime.mutableStateOf("TABS")
     val detailsLayout: String get() = detailsLayoutState.value
     fun setDetailsLayout(context: Context, value: String) {
         detailsLayoutState.value = value
@@ -138,7 +138,7 @@ object CocoonHomeStore {
         heroStyleState.value = p.getString("hero_style", "FULL") ?: "FULL"
         iconStyleState.value = p.getString("icon_style", "COLORED") ?: "COLORED"
         motionState.value = p.getString("motion", "COMFORTABLE") ?: "COMFORTABLE"
-        detailsLayoutState.value = p.getString("details_layout", "CLASSIC") ?: "CLASSIC"
+        detailsLayoutState.value = p.getString("details_layout", "TABS") ?: "TABS"
         heroShareState.floatValue = p.getFloat("hero_share", 0.45f)
         nowPlayingState.value = CocoonNowPlayingStyle.entries.firstOrNull { it.name == p.getString("now_playing", null) }
             ?: CocoonNowPlayingStyle.ARTWORK

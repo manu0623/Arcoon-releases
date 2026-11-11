@@ -333,6 +333,11 @@
     <!-- Tab of the in-game settings panel holding the emulation engine's own settings. Noun
          phrase, plural. -->
     <string name="ingame_settings_tab_core_options">Core Options</string>
+    <!-- In-game settings Video tab, beside Home symbol: hides the launcher's on-screen Home button
+         over the game. Per core. -->
+    <string name="ingame_settings_hide_home_title">Hide Home button</string>
+    <string name="ingame_settings_hide_home_on">No Home button over the game</string>
+    <string name="ingame_settings_hide_home_off">Home button shown over the game</string>
 
     <!-- Footer hint in the in-game settings panel. Noun: the shoulder buttons move between
          the panel's tabs. -->

@@ -75,6 +75,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import com.nendo.argosy.R
 import com.nendo.argosy.ui.common.ScreenshotImage
 import com.nendo.argosy.ui.common.rememberFileImageModel
@@ -105,18 +106,26 @@ fun GameHeader(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(Dimens.spacingXl)
     ) {
-        AsyncImage(
-            model = rememberFileImageModel(
-                com.nendo.argosy.ui.common.rememberResolvedCoverPath(game.id, game.coverPath)
-            ),
-            contentDescription = game.title,
-            contentScale = ContentScale.Crop,
+        Box(
             modifier = Modifier
                 .width(200.dp)
                 .height(280.dp)
                 .clip(RoundedCornerShape(Dimens.radiusLg))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-        )
+        ) {
+            // The slot breathes while Coil decodes instead of showing a flat grey card: the cover
+            // is the first thing the page puts on screen, so an empty rectangle there read as a
+            // game whose art was missing.
+            SubcomposeAsyncImage(
+                model = rememberFileImageModel(
+                    com.nendo.argosy.ui.common.rememberResolvedCoverPath(game.id, game.coverPath)
+                ),
+                contentDescription = game.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+                loading = { GameDetailCoverPlaceholder(modifier = Modifier.fillMaxSize()) }
+            )
+        }
 
         Column(modifier = Modifier.weight(1f)) {
             GameTitle(

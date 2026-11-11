@@ -47,11 +47,12 @@ fun CocoonLeaveVeil(modifier: Modifier = Modifier, blackOnArm: Boolean = true) {
     LaunchedEffect(generation) {
         if (generation == 0) return@LaunchedEffect
         try {
-        if (CocoonSuspendTest.freshAny()) {
-            alpha.snapTo(0f)
-            com.nendo.argosy.util.ArcoonTrace.log("veil skipped: test suspend handoff (display=${blackOnArm})")
-            return@LaunchedEffect
-        }
+        /*
+         * A handed-over suspend is covered like every other swap now. This used to skip the veil
+         * because an in-app suspend was assumed to swap with no platform animation; measured on
+         * the handhelds we ship on, the launcher's arrival still animates, so the cover is what
+         * keeps that out of sight. The picture the launcher was handed shows once the veil lifts.
+         */
         if (blackOnArm) alpha.snapTo(1f)
         // Wait for the game to cover us; if it never does (launch failed, or this window stays
         // up beside the game), let go again.
@@ -72,11 +73,6 @@ fun CocoonLeaveVeil(modifier: Modifier = Modifier, blackOnArm: Boolean = true) {
                 // black when a game closed on it, since the focus signal came from the other screen.
                 if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) break
                 kotlinx.coroutines.delay(40)
-            }
-            if (CocoonSuspendTest.freshAny()) {
-                alpha.snapTo(0f)
-                com.nendo.argosy.util.ArcoonTrace.log("veil skipped: test suspend handoff (display=${blackOnArm})")
-                return@LaunchedEffect
             }
             // Hold black while Android's slide runs, then fade in.
             kotlinx.coroutines.delay(com.nendo.argosy.ui.dualscreen.COCOON_LEAVE_HOLD_MS)

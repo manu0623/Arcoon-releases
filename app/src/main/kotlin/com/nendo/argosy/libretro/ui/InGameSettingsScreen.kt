@@ -336,6 +336,7 @@ fun InGameSettingsScreen(
     perGameSettingsSupported: Boolean = false,
     perGameSettingsEnabled: Boolean = false,
     onTogglePerGameSettings: (Boolean) -> Unit = {},
+    onOpenHomeSymbol: () -> Unit = {},
     modalCallbacks: InGameModalCallbacks,
     onDismiss: () -> Unit
 ): InputHandler {
@@ -347,7 +348,6 @@ fun InGameSettingsScreen(
     var showInputMappingModal by remember { mutableStateOf(false) }
     var showHotkeysModal by remember { mutableStateOf(false) }
     var showGripSettingsModal by remember { mutableStateOf(false) }
-    var showHomeSymbolPage by remember { mutableStateOf(false) }
 
     val currentOnDismiss = rememberUpdatedState(onDismiss)
     val currentControlsState = rememberUpdatedState(controlsState)
@@ -592,7 +592,7 @@ fun InGameSettingsScreen(
                         val hudItem = getHudItemAtIndex(focusedIndex)
                         if (hudItem != null) return handleHudConfirm(hudItem)
                         if (focusedIndex == homeSymbolFocusIndex) {
-                            showHomeSymbolPage = true
+                            onOpenHomeSymbol()
                             return InputResult.handled(SoundType.OPEN_MODAL)
                         }
                         val setting = getSettingAtIndex(focusedIndex) ?: return InputResult.HANDLED
@@ -713,7 +713,7 @@ fun InGameSettingsScreen(
                                         title = stringResource(R.string.cocoon_home_symbol_title),
                                         subtitle = stringResource(R.string.cocoon_home_symbol_subtitle),
                                         isFocused = focusedIndex == homeSymbolFocusIndex,
-                                        onClick = { showHomeSymbolPage = true }
+                                        onClick = onOpenHomeSymbol
                                     )
                                 }
                             }
@@ -819,13 +819,6 @@ fun InGameSettingsScreen(
                 onClearCoreBind = modalCallbacks.onClearCoreBind
             )
         }
-    }
-
-    if (showHomeSymbolPage) {
-        val pageHandler = com.nendo.argosy.ui.cocoon.CocoonHomeSymbolPage(
-            onDismiss = { showHomeSymbolPage = false }
-        )
-        return pageHandler
     }
 
     return inputHandler

@@ -74,16 +74,10 @@ fun MainDrawer(
     modifier: Modifier = Modifier
 ) {
     val revealHaptics = com.nendo.argosy.ui.input.LocalHaptics.current
-    val wasOpen = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // The drawer slides in behind this: a light cue travels with the slide, and only on the way
     // in - a drawer that is already open when the app starts must not tick.
     // Each opening plays Cocoon's drop-down: once the sheet has slid in, the rows populate top
     // to bottom with a tick each (CocoonPopulate), then the cursor fades in on the focused row.
-    val openings = androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
-    LaunchedEffect(isOpen) {
-        if (isOpen && !wasOpen.value) openings.intValue++
-        wasOpen.value = isOpen
-    }
     // Cocoon's left sheet: a near-black panel with rounded right corners.
     ModalDrawerSheet(
         modifier = modifier.width(Dimens.navDrawerWidth),
@@ -113,10 +107,8 @@ fun MainDrawer(
 
             com.nendo.argosy.ui.cocoon.CocoonPopulating(
                 com.nendo.argosy.ui.cocoon.CocoonPopulate.Style.DROP,
-                key = openings.intValue,
-                startDelayMs = com.nendo.argosy.ui.theme.Motion.durationSlide.toLong(),
-                // Nothing to play before the drawer has ever opened.
-                enabled = openings.intValue > 0
+                key = isOpen,
+                startDelayMs = if (isSettled) 0L else com.nendo.argosy.ui.theme.Motion.durationSlide.toLong()
             ) {
                 NavigationContent(
                 items = items,

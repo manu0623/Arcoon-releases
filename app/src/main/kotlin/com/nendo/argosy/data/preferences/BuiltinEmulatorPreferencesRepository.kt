@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.nendo.argosy.data.emulator.GpuDriverToken
 import com.nendo.argosy.data.local.entity.FastForwardMode
 import com.nendo.argosy.data.local.entity.SelectAsBackMode
@@ -89,6 +90,8 @@ class BuiltinEmulatorPreferencesRepository @Inject constructor(
         val HUD_SHOW_FPS = booleanPreferencesKey("builtin_hud_show_fps")
         val HUD_SHOW_LAST_SAVE = booleanPreferencesKey("builtin_hud_show_last_save")
         val HUD_SHOW_SHADERS = booleanPreferencesKey("builtin_hud_show_shaders")
+        val INGAME_HIDE_CHROME_HOME_CORES =
+            stringSetPreferencesKey("builtin_ingame_hide_chrome_home_cores")
     }
 
     fun isBuiltinLibretroEnabled(): Flow<Boolean> = dataStore.data.map { prefs ->
@@ -180,6 +183,19 @@ class BuiltinEmulatorPreferencesRepository @Inject constructor(
 
     fun isBuiltinMigrationComplete(): Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[Keys.BUILTIN_MIGRATION_V1] ?: false
+    }
+
+    /** Core ids whose in-game screen hides the chrome's Home button. */
+    fun observeInGameHideChromeHomeCores(): Flow<Set<String>> = dataStore.data.map { prefs ->
+        prefs[Keys.INGAME_HIDE_CHROME_HOME_CORES].orEmpty()
+    }
+
+    suspend fun setInGameHideChromeHome(coreId: String, hidden: Boolean) {
+        dataStore.edit { prefs ->
+            val current = prefs[Keys.INGAME_HIDE_CHROME_HOME_CORES].orEmpty()
+            prefs[Keys.INGAME_HIDE_CHROME_HOME_CORES] =
+                if (hidden) current + coreId else current - coreId
+        }
     }
 
     suspend fun removeBuiltinCoreSelectionsByCore(coreId: String) {

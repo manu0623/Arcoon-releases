@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -45,6 +46,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -171,19 +173,24 @@ fun GameDetailTabsBar(
         }
 
         // Tabs, switched with L1 / R1.
+        val tabListState = rememberLazyListState()
+        val focusedTabIndex = tabs.indexOfFirst { it == focusedItem }
+        LaunchedEffect(focusedTabIndex, tabs.size) {
+            if (focusedTabIndex >= 0) tabListState.animateScrollToItem(focusedTabIndex)
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ShoulderBadge("L1")
-            Row(
+            LazyRow(
+                state = tabListState,
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(50))
-                    .background(PanelColor)
-                    .horizontalScroll(rememberScrollState())
-                    .padding(4.dp),
+                    .background(PanelColor),
+                contentPadding = PaddingValues(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                tabs.forEach { item ->
+                itemsIndexed(tabs, key = { _, item -> item.toString() }) { _, item ->
                     TabChip(
                         label = tabLabel(item),
                         active = item == activeTab,

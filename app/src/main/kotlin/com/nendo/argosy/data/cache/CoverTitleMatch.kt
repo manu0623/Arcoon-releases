@@ -1,4 +1,4 @@
-package com.nendo.argosy.data.remote.steamgriddb
+package com.nendo.argosy.data.cache
 
 private val TITLE_NOISE = Regex("[^a-z0-9]+")
 private val BRACKETED = Regex("\\([^)]*\\)|\\[[^\\]]*\\]")

@@ -23,6 +23,7 @@ data class CompanionDetail(
     val backUrl: String? = null,
     val box3dUrl: String? = null,
     val logoUrl: String? = null,
+    val logoIsBanner: Boolean = false,
     val stats: CompanionGameStats? = null,
     val gameId: Long? = null
 )

@@ -46,10 +46,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.lerp
 import coil.compose.AsyncImage
 import com.nendo.argosy.ui.dualscreen.CompanionDetail
 import com.nendo.argosy.ui.dualscreen.withLiveArt
+import com.nendo.argosy.ui.dualscreen.inGameRestFade
+import com.nendo.argosy.ui.dualscreen.inGameRestLogoFilter
 import com.nendo.argosy.ui.theme.CocoonSurface
 
 /**
@@ -64,10 +67,16 @@ fun CocoonGameHero(
     rawDetail: CompanionDetail,
     modifier: Modifier = Modifier,
     showInfo: Boolean = true,
-    showJourney: Boolean = false
+    showJourney: Boolean = false,
+    dim: Float = 0f
 ) {
     val liveArt = rawDetail.gameId?.let { com.nendo.argosy.ui.common.rememberResolvedArt(it) }
     val detail = rawDetail.withLiveArt(liveArt)
+    // 0 at full light, 1 settled: a running game's hero goes dark a few seconds in (InGameHero),
+    // leaving the logo as a grey ghost rather than a dimmed colour version of itself.
+    val rest = dim.coerceIn(0f, 1f)
+    val restFade = inGameRestFade(rest)
+    val restLogoFilter = inGameRestLogoFilter(rest)
     val backdrop = detail.backdropUrl ?: detail.artUrl
     val t by animateFloatAsState(
         targetValue = if (showInfo) 1f else 0f,
@@ -121,6 +130,10 @@ fun CocoonGameHero(
                 )
             )
         }
+        // The settle stage: the art goes out completely, the logo staying above it.
+        if (rest > 0f) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = rest)))
+        }
         // The logo follows the art a beat later: fades up, rising a little and growing to size.
         val logoIn = androidx.compose.runtime.remember(detail.gameId) { androidx.compose.animation.core.Animatable(0f) }
         androidx.compose.runtime.LaunchedEffect(detail.gameId) {
@@ -144,18 +157,21 @@ fun CocoonGameHero(
             val logo = if (detail.embeddedBannerBackdrop) null
             else detail.logoUrl ?: detail.artUrl?.takeIf { t > 0.5f && detail.logoUrl == null }
             if (logo != null) {
-                val logoW = w * 0.46f
-                val logoH = h * 0.42f
+                // A 3DS banner is a wide picture, not a wordmark: it gets its own box so it reads
+                // at full size while a game logo keeps the box it was tuned for.
+                val logoW = if (detail.logoIsBanner) w * 0.72f else w * 0.46f
+                val logoH = if (detail.logoIsBanner) h * 0.62f else h * 0.42f
                 val centerX = w * 0.5f
                 AsyncImage(
                     model = com.nendo.argosy.ui.common.rememberFileImageModel(logo),
                     contentDescription = detail.title,
+                    colorFilter = restLogoFilter,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .absoluteOffset(x = centerX - logoW / 2, y = (h - logoH) / 2)
                         .size(width = logoW, height = logoH)
                         .graphicsLayer {
-                            alpha = logoIn.value
+                            alpha = logoIn.value * restFade
                             val s = 0.94f + 0.06f * logoIn.value
                             scaleX = s
                             scaleY = s
@@ -185,7 +201,7 @@ fun CocoonGameHero(
                         .absoluteOffset(x = left, y = panelTop)
                         .width(panelW)
                         .height(panelH)
-                        .graphicsLayer { alpha = t }
+                        .graphicsLayer { alpha = t * restFade }
                         .background(CocoonSurface.Panel.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
@@ -204,7 +220,7 @@ fun CocoonGameHero(
                             .absoluteOffset(x = left, y = stripTop)
                             .width(panelW)
                             .height(stripH)
-                            .graphicsLayer { alpha = t }
+                            .graphicsLayer { alpha = t * restFade }
                             .background(CocoonSurface.Panel.copy(alpha = 0.92f), RoundedCornerShape(18.dp))
                             .padding(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -231,6 +247,7 @@ fun CocoonGameHero(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(start = 20.dp, bottom = 18.dp)
+                        .graphicsLayer { alpha = restFade }
                         .background(CocoonSurface.Chip, RoundedCornerShape(50))
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
@@ -244,7 +261,10 @@ fun CocoonGameHero(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "${stats.earnedAchievementCount}/${stats.achievementCount}",
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = com.nendo.argosy.ui.theme.generated.ComponentDefaults
+                                    .FrostedSurface.chromeFontSizeSp.sp
+                            ),
                             fontWeight = FontWeight.Bold,
                             color = CocoonSurface.TextPrimary
                         )
@@ -344,7 +364,7 @@ fun CocoonInfoPill(active: Boolean, modifier: Modifier = Modifier, journey: Bool
     Row(
         modifier = modifier
             .background(if (active) CocoonSurface.TextPrimary.copy(alpha = 0.18f) else CocoonSurface.Chip, RoundedCornerShape(50))
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         com.nendo.argosy.ui.primitives.InputGlyph(
@@ -361,7 +381,11 @@ fun CocoonInfoPill(active: Boolean, modifier: Modifier = Modifier, journey: Bool
                     else -> com.nendo.argosy.R.string.cocoon_info
                 }
             ),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = com.nendo.argosy.ui.theme.generated.ComponentDefaults
+                    .FrostedSurface.chromeFontSizeSp.sp
+            ),
+            fontWeight = FontWeight.Bold,
             color = CocoonSurface.TextPrimary
         )
     }

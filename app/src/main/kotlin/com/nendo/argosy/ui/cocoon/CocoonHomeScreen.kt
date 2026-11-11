@@ -106,7 +106,7 @@ import com.nendo.argosy.ui.primitives.cocoonBrackets
 import com.nendo.argosy.ui.theme.CocoonSurface
 import com.nendo.argosy.ui.util.clickableNoFocus
 
-private val BOARD_OWNER = SlotOwner("cocoon-board")
+private val BOARD_OWNER = com.nendo.argosy.ui.dualscreen.COCOON_MIRROR_OWNER
 
 /**
  * Cocoon's home board: three rows of folders that run off to the right. On a two-screen device the
@@ -129,6 +129,20 @@ fun CocoonHomeScreen(
     viewModel: CocoonHomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val homeDisplay = androidx.compose.ui.platform.LocalView.current.display?.displayId
+    val homeInstance = androidx.compose.runtime.remember {
+        com.nendo.argosy.util.RebuildTrace.id("home")
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "home screen composed id=$homeInstance display=$homeDisplay active=$active"
+        )
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            com.nendo.argosy.util.ArcoonTrace.log("home screen disposed id=$homeInstance")
+        }
+    }
     val manager by com.nendo.argosy.DualScreenManagerHolder.instanceFlow.collectAsState()
     // The game left running keeps a square on the board. It is read from the session itself, so it
     // goes the moment that game is resumed or quits.
@@ -238,8 +252,46 @@ fun CocoonHomeScreen(
         wasActive = active
     }
 
+    /*
+     * Only the board on the window that actually holds the launcher may publish. The companion
+     * window keeps a hidden copy of this launcher alive so its state survives a game taking the
+     * screen; that copy used to publish its own, frozen cursor over the live board's, which left
+     * the top screen showing a tile the visible board had already moved off.
+     */
+    val ownDisplayId = androidx.compose.ui.platform.LocalView.current.display?.displayId
+    val publishesMirror = com.nendo.argosy.DualScreenManagerHolder.instance?.let { dsm ->
+        ownDisplayId == null || ownDisplayId == dsm.interactiveDisplayId()
+    } ?: true
+
     val focused = state.focusedTile
-    if (focused != null && active) {
+    // The dock's own entries mirror the way a folder does: one large icon and the item's name.
+    val dockMirror = if (active && state.inDock) {
+        when (cocoonDockTarget(state.dockIndex, state.dockApps)) {
+            CocoonDockTarget.AllApps -> PresentationSlot.CocoonHero(
+                title = null,
+                titleRes = R.string.cocoon_dock_all_apps,
+                kindRes = R.string.cocoon_kind_app,
+                glyph = CocoonGlyph.APPS,
+                platformSlug = null,
+                colorIndex = 0
+            )
+            CocoonDockTarget.Pods -> PresentationSlot.CocoonHero(
+                title = null,
+                titleRes = R.string.cocoon_pods_title,
+                kindRes = R.string.cocoon_kind_pod,
+                glyph = CocoonGlyph.POD,
+                platformSlug = null,
+                colorIndex = 0
+            )
+            else -> null
+        }
+    } else {
+        null
+    }
+    if (dockMirror != null && publishesMirror) {
+        PresentOnCompanion(BOARD_OWNER, dockMirror)
+    }
+    if (focused != null && active && dockMirror == null && publishesMirror) {
         val artGameId = (focused.target as? CocoonTileTarget.NowPlaying)?.gameId
             ?: (focused.target as? CocoonTileTarget.Game)?.gameId
         val art = artGameId?.let { com.nendo.argosy.ui.common.rememberResolvedArt(it) }
@@ -581,6 +633,21 @@ private fun CocoonBoard(
 ) {
     val gridState = rememberLazyGridState()
     val appearedKeys = remember(animateReturnJourney) { mutableSetOf<String>() }
+    val boardDisplay = androidx.compose.ui.platform.LocalView.current.display?.displayId
+    val boardInstance = androidx.compose.runtime.remember {
+        com.nendo.argosy.util.RebuildTrace.id("board")
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "board composed id=$boardInstance display=$boardDisplay returnJourney=$animateReturnJourney " +
+                "slots=${state.slotCount}"
+        )
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            com.nendo.argosy.util.ArcoonTrace.log("board disposed id=$boardInstance")
+        }
+    }
     BoxWithConstraints(modifier = modifier) {
         // Measured from Cocoon on the Thor's 1240x1080 lower panel: ~95dp tiles on a ~120dp pitch,
         // three rows, five columns in view with a sixth clipped at the edge.
@@ -713,6 +780,9 @@ private fun CocoonBoard(
                 }
                 LaunchedEffect(tile.key, arrival) {
                     if (arrival.value < 1f) {
+                        com.nendo.argosy.util.ArcoonTrace.log(
+                            "board tile arrival board=$boardInstance key=${tile.key}"
+                        )
                         val columnsAway = kotlin.math.abs(index / COCOON_BOARD_ROWS - state.focusedIndex / COCOON_BOARD_ROWS)
                         kotlinx.coroutines.delay((columnsAway * 28L).coerceAtMost(140L))
                         arrival.animateTo(
@@ -807,6 +877,17 @@ private fun CocoonBoard(
                                 .clickableNoFocus { onTap(index, tile) }
                         )
                         return@Box
+                    }
+                    // Diagnostic: which window draws a smart folder's face (the only square on
+                    // the board that shows a game's own art), and when.
+                    if (tile.target is CocoonTileTarget.Smart) {
+                        val smartDisplay =
+                            androidx.compose.ui.platform.LocalView.current.display?.displayId
+                        androidx.compose.runtime.LaunchedEffect(tile.key) {
+                            com.nendo.argosy.util.ArcoonTrace.log(
+                                "board smart tile ${tile.key} drawn on display $smartDisplay"
+                            )
+                        }
                     }
                     val tapTile = remember(index, tile, onTap) { { onTap(index, tile) } }
                     CocoonBoardFolder(

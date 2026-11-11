@@ -192,8 +192,6 @@ internal fun routeConfirm(vm: SettingsViewModel): InputResult {
                 MainSettingsItem.Social -> vm.navigateToSection(SettingsSection.SOCIAL)
                 MainSettingsItem.Jingles ->
                     com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
-                MainSettingsItem.SteamGridDb ->
-                    com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value = true
                 MainSettingsItem.RomMedia ->
                     com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value = true
                 MainSettingsItem.Steam -> vm.navigateToSection(SettingsSection.STEAM_SETTINGS)
@@ -1018,6 +1016,22 @@ private fun routeBoxArtConfirm(vm: SettingsViewModel, state: SettingsUiState): I
             vm.toggleGradientAdvancedMode()
             return InputResult.handled(SoundType.TOGGLE)
         }
+        BoxArtItem.ScrapeMissing -> {
+            vm.scrapeMissingCovers()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        BoxArtItem.RepairShapes -> {
+            vm.repairCoverShapes()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        BoxArtItem.ReplaceCovers -> {
+            vm.replaceAllCovers()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
+        BoxArtItem.ScrapeStatus -> {
+            vm.stopCoverScrape()
+            return InputResult.handled(SoundType.TOGGLE)
+        }
         else -> {}
     }
     return InputResult.HANDLED
@@ -1265,7 +1279,7 @@ internal fun routeNavigateBack(vm: SettingsViewModel): Boolean {
  * Modals, pickers and in-place prompts drawn over a section. These consume Back ahead of the
  * section itself, matching the order [ModalInputRouter] already applies to the modals it owns.
  */
-private fun routeDismissTopOverlay(vm: SettingsViewModel): Boolean {
+internal fun routeDismissTopOverlay(vm: SettingsViewModel): Boolean {
     val state = vm._uiState.value
     return when {
         state.playTime.engagedFigure != null -> { vm.setPlayTimeEngagedFigure(null); true }

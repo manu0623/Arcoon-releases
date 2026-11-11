@@ -2,7 +2,6 @@ package com.nendo.argosy.ui.cocoon
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -22,7 +21,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nendo.argosy.R
-import com.nendo.argosy.ui.util.clickableNoFocus
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -83,6 +81,42 @@ object CocoonSuspendTest {
     @Volatile var suspendedGameId: Long = -1L
 
     /**
+     * When this session's picture began shrinking into the card.
+     *
+     * One suspend can draw the card twice: the launcher's windows settle at different moments, and
+     * a copy composed late used to start its shrink from full screen again, flashing the picture
+     * part-way through the animation. Both copies share this clock, so the second joins the shrink
+     * where the first has got to.
+     */
+    @Volatile private var shrinkGameId: Long = -1L
+    @Volatile private var shrinkSessionAt: Long = -1L
+    @Volatile private var shrinkBeganAt: Long = 0L
+
+    /** How long ago this session's shrink began, recording the start on the first card to ask. */
+    fun shrinkElapsed(gameId: Long, sessionAt: Long): Long {
+        val now = System.currentTimeMillis()
+        if (shrinkGameId != gameId || shrinkSessionAt != sessionAt) {
+            shrinkGameId = gameId
+            shrinkSessionAt = sessionAt
+            shrinkBeganAt = now
+            return 0L
+        }
+        return (now - shrinkBeganAt).coerceAtLeast(0L)
+    }
+
+    /** A shrink's progress [elapsedMs] after it began, once [holdMs] of hold has passed. */
+    fun shrinkProgress(elapsedMs: Long, holdMs: Long, durationMs: Float): Float =
+        androidx.compose.animation.core.FastOutSlowInEasing.transform(
+            ((elapsedMs - holdMs).toFloat() / durationMs).coerceIn(0f, 1f)
+        )
+
+    fun forgetShrink() {
+        shrinkGameId = -1L
+        shrinkSessionAt = -1L
+        shrinkBeganAt = 0L
+    }
+
+    /**
      * How many suspended cards are on screen. A count, not a flag: a second copy of the card
      * (drawn for a moment on the lower screen) used to switch the flag off as it went away while
      * the real card was still up, so the grow-back was skipped.
@@ -105,6 +139,7 @@ object CocoonSuspendTest {
         suspendedGameId = -1L
         growThen.value = null
         resumeInProgress.value = false
+        forgetShrink()
     }
 
     /** Length of the grow back into the game. */
@@ -114,6 +149,7 @@ object CocoonSuspendTest {
         if (!resumeInProgress.value) handoff.value = null
         suspendedGameId = -1L
         growThen.value = null
+        forgetShrink()
     }
 
     const val HANDOFF_FRESH_MS = 2_500L
@@ -133,6 +169,12 @@ fun CocoonSuspendLowerPicture(modifier: Modifier = Modifier) {
     val handoff = CocoonSuspendTest.handoff.value ?: return
     val lower = handoff.lower ?: return
     val resuming = CocoonSuspendTest.resumeInProgress.value
+    val lowerDisplay = androidx.compose.ui.platform.LocalView.current.display?.displayId
+    androidx.compose.runtime.LaunchedEffect(handoff) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "suspend lower picture for ${handoff.gameId} on display $lowerDisplay (resuming=$resuming)"
+        )
+    }
     val leaving = androidx.compose.runtime.remember(handoff) { CocoonSuspendTest.fresh(handoff.gameId) != null }
     val alpha = androidx.compose.runtime.remember(handoff) {
         androidx.compose.animation.core.Animatable(if (leaving) 1f else 0f)
@@ -176,30 +218,4 @@ fun CocoonSuspendLowerPicture(modifier: Modifier = Modifier) {
 private const val LOWER_FADE_DELAY_MS = 60L
 private const val LOWER_FADE_MS = 440
 
-@Composable
-fun CocoonSuspendTestButton(modifier: Modifier = Modifier) {
-    val available by CocoonSuspendTest.available.collectAsState()
-    if (!available) return
-    val size = com.nendo.argosy.ui.cocoon.cocoonHandleTargetDp().dp
-    val glyph = com.nendo.argosy.ui.cocoon.cocoonHandleIconDp().dp
-    val x = CocoonHomeStore.handleX
-    val y = CocoonHomeStore.handleY
-    val clarity = CocoonHomeStore.handleClarity
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .offset(x = (maxWidth - size) * x, y = (maxHeight - size) * y)
-                .size(size)
-                .clickableNoFocus { CocoonSuspendTest.requests.tryEmit(Unit) },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Home,
-                contentDescription = stringResource(R.string.ingame_suspend_handle),
-                tint = Color.White.copy(alpha = clarity),
-                modifier = Modifier.size(glyph)
-            )
-        }
-    }
-}
 

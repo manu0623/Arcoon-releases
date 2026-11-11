@@ -425,6 +425,24 @@ class DualScreenManager(
      */
     fun rederiveRolesFromLayout() {
         if (displayAffinityHelper.isDesktopMode) return
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "role rederive asked sinceSwap=${System.currentTimeMillis() - lastSwapTimeMs} " +
+                "session=${sessionStateStore.hasActiveSession()}"
+        )
+        /*
+         * The swap is written to the stored layout asynchronously (persistPrimaryRole). Deriving
+         * the roles from that layout while the write is still in flight resolves the old value and
+         * commits it, undoing the swap a moment after it happened: the transition then starts and
+         * is pulled back. Wait the write out, then re-derive from what actually landed.
+         */
+        val sinceSwap = System.currentTimeMillis() - lastSwapTimeMs
+        if (lastSwapTimeMs != 0L && sinceSwap < ROLE_REDERIVE_GRACE_MS) {
+            activityIndependentScope.launch {
+                kotlinx.coroutines.delay(ROLE_REDERIVE_GRACE_MS - sinceSwap)
+                rederiveRolesFromLayout()
+            }
+            return
+        }
         if (displayAffinityHelper.isDockedDark) {
             if (_isRolesSwapped.value) commitRoleSwap(false)
             return
@@ -439,6 +457,19 @@ class DualScreenManager(
     }
 
     private fun applyLayoutRoles(swapped: Boolean) {
+        /*
+         * The guard in rederiveRolesFromLayout only covers entering it. A derive that resolved the
+         * layout before a swap and lands after it would commit the old arrangement here and undo
+         * the swap a moment after the user made it. A swap inside the grace always wins; the
+         * rederive re-runs once the layout write has landed.
+         */
+        val sinceSwap = System.currentTimeMillis() - lastSwapTimeMs
+        if (lastSwapTimeMs != 0L && sinceSwap < ROLE_REDERIVE_GRACE_MS) {
+            com.nendo.argosy.util.ArcoonTrace.log(
+                "layout roles ignored ${sinceSwap}ms after a swap (was going to set swapped=$swapped)"
+            )
+            return
+        }
         recordOverrideFollowingLayout(swapped)
         if (swapped == _isRolesSwapped.value) return
         if (sessionStateStore.hasActiveSession()) {
@@ -890,8 +921,10 @@ class DualScreenManager(
         fun loadState(slotNumber: Int, savedAtMillis: Long)
         fun screenshot()
         fun openCheats()
+        fun openAchievements()
         fun openGameSettings()
         fun quit()
+        fun suspendSession()
     }
 
     var sessionQuickActions: SessionQuickActions? = null
@@ -900,6 +933,14 @@ class DualScreenManager(
             _swappedCompanionState.update { it.copy(quickActionsAvailable = value != null) }
             if (value == null) _sessionControls.value = com.nendo.argosy.ui.dualscreen.dashboard.SessionControls()
         }
+
+    private val _hideInGameChromeHome = MutableStateFlow(false)
+    val hideInGameChromeHome: StateFlow<Boolean> = _hideInGameChromeHome
+
+    /** The in-game chrome reads this: the Home button is off the screen for this core. */
+    fun setHideInGameChromeHome(hidden: Boolean) {
+        _hideInGameChromeHome.value = hidden
+    }
 
     /**
      * Quits the running game from the dashboard. A built-in game quits itself. An external one is
@@ -1152,6 +1193,21 @@ class DualScreenManager(
             !swapped && (grace || (dualScreen && companionActive))
         }.stateIn(activityIndependentScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
 
+    /**
+     * The companion window is up (or held through sleep), regardless of who holds the primary role.
+     * [companionHoldsPrimary] and [companionHostsLauncher] are both `!swapped && this`, so a panel
+     * drawing the role another arrangement stands for needs this part alone, read without the
+     * swapped flag that a swap changes underneath it.
+     */
+    val companionScreenUp: StateFlow<Boolean> =
+        kotlinx.coroutines.flow.combine(
+            _isDualScreenDevice,
+            _isCompanionActive,
+            _companionGrace
+        ) { dualScreen, companionActive, grace ->
+            grace || (dualScreen && companionActive)
+        }.stateIn(activityIndependentScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, false)
+
     private var companionGraceJob: kotlinx.coroutines.Job? = null
 
     /**
@@ -1212,12 +1268,19 @@ class DualScreenManager(
         owner: com.nendo.argosy.ui.dualscreen.SlotOwner,
         slot: com.nendo.argosy.ui.dualscreen.PresentationSlot
     ) {
+        // A screen republishes as its data lands (a settings showcase once its covers decode, a
+        // hero on every focus change). Replacing an identical slot only churns the presentation
+        // through another compose; every case is a data class, so equality is meaningful.
+        val current = _presentationSlots.value.firstOrNull { it.first == owner }?.second
+        if (current == slot) return
+        com.nendo.argosy.util.ArcoonTrace.log("slot publish $owner -> ${slot::class.simpleName}")
         _presentationSlots.update { entries ->
             entries.filterNot { it.first == owner } + (owner to slot)
         }
     }
 
     fun releaseSlot(owner: com.nendo.argosy.ui.dualscreen.SlotOwner) {
+        com.nendo.argosy.util.ArcoonTrace.log("slot release $owner")
         _presentationSlots.update { entries -> entries.filterNot { it.first == owner } }
     }
 
@@ -1698,13 +1761,14 @@ class DualScreenManager(
             val suspended = flowArray[5] as? com.nendo.argosy.domain.model.multitasking.SuspendedGameSession
 
             val detail = details.lastOrNull()?.second
-            val heroForRunningGame = inGame.externalEmulator && detail?.gameId == inGame.gameId
             when {
                 // A suspended game's card is drawn over the normal top screen (PresentationSlotContent).
                 // While it is suspended (Home pressed), the game's own screen has no game on it any
                 // more: it shows the normal top screen instead of the in-game panel, which on the
                 // game's display draws nothing and left the screen black.
-                gameActive && inGame.isLoaded && suspended == null && !heroForRunningGame ->
+                // Every running game, external emulator included: one presentation (InGameHero),
+                // so the settle stage is not skipped on one path and applied on another.
+                gameActive && inGame.isLoaded && suspended == null ->
                     com.nendo.argosy.ui.dualscreen.PresentationSlot.InGame(inGame, achievements)
                 slots.isNotEmpty() -> slots.last().second
                 detail != null -> com.nendo.argosy.ui.dualscreen.PresentationSlot.Detail(detail)
@@ -2521,6 +2585,9 @@ class DualScreenManager(
     }
 
     private fun applyUserRoleChange(swapped: Boolean) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "role user change swapped=$swapped (live=${_isRolesSwapped.value})"
+        )
         val nextPrimary = displayAffinityHelper.getRoleDisplayIds(swapped)?.first
         if (nextPrimary != null && displayAffinityHelper.usableDisplayId(nextPrimary) == null) {
             Log.i(TAG, "Role swap refused: display $nextPrimary is off in the screen layout")
@@ -2546,6 +2613,24 @@ class DualScreenManager(
     }
 
     private fun commitRoleSwap(newSwapped: Boolean) {
+        if (newSwapped != _isRolesSwapped.value) {
+            /*
+             * Four frames, not one: every DualScreenManager frame is skipped, so a single name only
+             * ever reported whichever outside caller happened to be on the stack (the input handler
+             * stayed there even when a re-derive was what committed).
+             */
+            val caller = Throwable().stackTrace
+                .filter { it.className != DualScreenManager::class.java.name }
+                .take(4)
+                .joinToString(" <- ") {
+                    "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}"
+                }
+                .ifEmpty { "?" }
+            com.nendo.argosy.util.ArcoonTrace.log(
+                "role commit swapped=$newSwapped sinceSwap=${System.currentTimeMillis() - lastSwapTimeMs} " +
+                    "by $caller"
+            )
+        }
         dockReorder.value?.let { cancelDockReorder(it.token) }
         _isRolesSwapped.value = newSwapped
         sessionStateStore.setRolesSwapped(newSwapped)
@@ -2740,7 +2825,10 @@ class DualScreenManager(
         private const val DOCKED_RESYNC_DELAY_MS = 2000L
         private const val COMPANION_LAUNCH_VERIFY_MS = 8000L
         private const val MAX_COMPANION_LAUNCH_ATTEMPTS = 3
-        private const val SWAP_DEBOUNCE_MS = 500L
+        private const val SWAP_DEBOUNCE_MS = 250L
+
+        /** How long a user swap is safe from a re-derive reading a layout its write has not reached. */
+        private const val ROLE_REDERIVE_GRACE_MS = 2_000L
         private const val GAME_MOVE_CONFIRM_MS = 2_000L
 
         /**

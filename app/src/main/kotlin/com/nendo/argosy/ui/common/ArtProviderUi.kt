@@ -10,4 +10,6 @@ val ArtProvider.labelRes: Int
         ArtProvider.ROMM -> R.string.gamedetail_art_picker_origin_romm
         ArtProvider.SCREENSCRAPER -> R.string.gamedetail_art_picker_origin_screenscraper
         ArtProvider.LAUNCHBOX -> R.string.gamedetail_art_picker_origin_launchbox
+        ArtProvider.STEAMGRIDDB -> R.string.gamedetail_art_picker_origin_steamgriddb
+        ArtProvider.STEAM -> R.string.gamedetail_art_picker_origin_steam
     }

@@ -34,7 +34,9 @@ import com.nendo.argosy.ui.screens.settings.sections.input.ThemeSoundsSectionInp
 
 class SettingsInputHandler(
     private val viewModel: SettingsViewModel,
-    private val onBackNavigation: () -> Unit
+    private val onBackNavigation: () -> Unit,
+    /** The page this screen was opened straight into from outside Settings, if any. */
+    private val leaveAt: SettingsSection? = null
 ) : InputHandler {
 
     companion object {
@@ -204,6 +206,15 @@ class SettingsInputHandler(
         viewModel.exitTouchMode()
         val state = viewModel.uiState.value
         modalRouter.intercept(state, InputMethod.BACK)?.let { return it }
+        // A modal or in-place prompt still owns Back first.
+        if (viewModel.dismissOverlaysForBack()) return InputResult.HANDLED
+        // Opened straight into this page from a folder or a game (Y ▸ platform settings): Back
+        // leaves Settings for whatever sent it here. Stepping up to Settings' own list instead
+        // read as being stuck on the page, because the list was not where the user came from.
+        if (viewModel.atDirectEntry(leaveAt)) {
+            onBackNavigation()
+            return InputResult.HANDLED
+        }
         return if (!viewModel.navigateBack()) {
             onBackNavigation()
             InputResult.HANDLED

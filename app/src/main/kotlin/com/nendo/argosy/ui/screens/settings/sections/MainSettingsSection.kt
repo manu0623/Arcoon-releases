@@ -174,13 +174,6 @@ internal sealed class MainSettingsItem(
     data object Jingles :
         MainSettingsItem("jingles", Icons.Default.MusicNote, R.string.cocoon_jingles, "connections")
 
-    data object SteamGridDb : MainSettingsItem(
-        "steamGridDb",
-        Icons.Default.Movie,
-        R.string.cocoon_steamgriddb_title,
-        "connections"
-    )
-
     data object RomMedia : MainSettingsItem(
         "romMedia",
         Icons.Default.Storage,
@@ -223,7 +216,7 @@ internal sealed class MainSettingsItem(
                 Header("gameplayHeader", "gameplay", R.string.settings_main_section_gameplay),
                 BuiltinEmulator, Saves, Bios, Drivers,
                 Header("connectionsHeader", "connections", R.string.settings_main_section_connections),
-                RomM, RetroAchievements, Steam, Jellyfin, Social, Jingles, SteamGridDb, RomMedia,
+                RomM, RetroAchievements, Steam, Jellyfin, Social, Jingles, RomMedia,
                 Header("systemHeader", "system", R.string.settings_main_section_system),
                 Permissions, ManagedInstallers, DeviceSettings,
                 Header("aboutHeader", "about", R.string.cocoon_settings_about),
@@ -365,7 +358,6 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
             else -> context.getString(R.string.settings_main_social_subtitle_unlinked)
         }
         MainSettingsItem.Jingles -> context.getString(R.string.cocoon_jingles_subtitle)
-        MainSettingsItem.SteamGridDb -> context.getString(R.string.cocoon_steamgriddb_subtitle)
         MainSettingsItem.RomMedia -> context.getString(R.string.cocoon_rom_media_subtitle)
         MainSettingsItem.Permissions -> if (uiState.permissions.allGranted) {
             context.getString(R.string.settings_main_permissions_subtitle_all)
@@ -410,8 +402,6 @@ fun MainSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) 
             MainSettingsItem.Social -> viewModel.navigateToSection(SettingsSection.SOCIAL)
             MainSettingsItem.Jingles ->
                 com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = true
-            MainSettingsItem.SteamGridDb ->
-                com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value = true
             MainSettingsItem.RomMedia ->
                 com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.romMediaOpen.value = true
             MainSettingsItem.Permissions -> viewModel.navigateToSection(SettingsSection.PERMISSIONS)

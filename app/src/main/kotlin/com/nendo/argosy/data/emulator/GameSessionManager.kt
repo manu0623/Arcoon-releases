@@ -25,7 +25,6 @@ import javax.inject.Singleton
 private const val TAG = "GameSessionManager"
 private const val CLOSE_WAIT_MS = 4_000L
 private const val CLOSE_POLL_MS = 50L
-private const val VEIL_AFTER_GROW_MS = 400L
 private const val RESUME_REQUEST_TIMEOUT_MS = 5_000L
 
 /**
@@ -367,7 +366,7 @@ open class GameSessionManager @Inject constructor(
                 com.nendo.argosy.util.ArcoonTrace.log("test resume: asking the card to grow back first")
                 val once = java.util.concurrent.atomic.AtomicBoolean(false)
                 test.growThen.value = {
-                    if (once.compareAndSet(false, true)) bringBuiltInToFront(session, armVeilAfter = true)
+                    if (once.compareAndSet(false, true)) bringBuiltInToFront(session)
                 }
             }
             return
@@ -377,10 +376,10 @@ open class GameSessionManager @Inject constructor(
                 "test resume: no grow (card shown=${test.cardShown}, picture=${test.picture(session.gameId) != null})"
             )
         }
-        bringBuiltInToFront(session, armVeilAfter = false)
+        bringBuiltInToFront(session)
     }
 
-    private fun bringBuiltInToFront(session: SuspendedGameSession, armVeilAfter: Boolean) {
+    private fun bringBuiltInToFront(session: SuspendedGameSession) {
         val task = builtInTask()
         if (task == null) {
             Logger.warn(TAG, "Suspended game task is gone; clearing '${session.title}'")
@@ -389,32 +388,43 @@ open class GameSessionManager @Inject constructor(
         }
         // Like a launch, the game comes back with Argosy's own transition rather than the
         // system's sideways slide: it grows back out of its card. AppTask.moveToFront() cannot
-        // carry animation options, so the task is moved through the activity manager instead.
-        // Brought back the way a launch brings a game up: a start with NO_ANIMATION, here into
-        // the game's own task, so the paused activity is reordered to the front (onNewIntent with
-        // no action, which the game ignores) instead of the system sliding its task in.
-        // After the test grow the launcher must not go black while still in view, so the veil
-        // (which hides a later Home slide) is armed once the game already covers it.
-        if (!armVeilAfter) com.nendo.argosy.ui.cocoon.CocoonVeil.arm()
-        val moved = runCatching {
+        // carry animation options, and AppTask.startActivity drops them (it reaches the system as
+        // startActivityFromRecents with a null options bundle), so the task is moved through the
+        // activity manager instead, which is the move that carries them.
+        // The platform animates a task coming forward whatever this app asks for, so the swap is
+        // covered first: the veil goes up here, before the move, and lifts once the game is on
+        // screen. Armed after the move it covers nothing, and the slide plays over the launcher's
+        // picture, which reads as an Android animation tacked onto the end of the grow.
+        com.nendo.argosy.ui.cocoon.CocoonVeil.arm()
+        /*
+         * The veil is a Compose overlay, so arming it only queues a recomposition: the window has
+         * not presented black yet. Android animates the last frame a window presented, so a move
+         * issued in this same message swaps while the grown card is still on screen, and that
+         * card is the bright edge the system's slide sweeps across. The move waits two frames for
+         * the cover to be drawn, so the swap happens under black and the game fades up out of it.
+         */
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            // Through the activity manager, which is the move that leaves the task swap without
+            // the system's slide; a start into the task is kept for a build that refuses it.
             val intent = android.content.Intent(context, LibretroActivity::class.java).addFlags(
                 android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
                     android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
                     android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION
             )
             val options = android.app.ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()
-            task.startActivity(context, intent, options)
-        }.isSuccess
-        if (!moved) {
-            runCatching { task.moveToFront() }
-                .onFailure { Logger.error(TAG, "Could not bring '${session.title}' to the front", it) }
-        }
-        if (armVeilAfter) {
-            scope.launch(Dispatchers.Main) {
-                delay(VEIL_AFTER_GROW_MS)
-                com.nendo.argosy.ui.cocoon.CocoonVeil.arm()
+            val movedViaIntent = runCatching {
+                task.startActivity(context, intent, options)
+                true
+            }.getOrDefault(false)
+
+            val taskId = runCatching { task.taskInfo.taskId }.getOrNull()
+            val moved = movedViaIntent || (taskId != null && com.nendo.argosy.hardware.TaskToFront.move(context, taskId))
+            if (!moved) {
+                runCatching { task.moveToFront() }.onFailure {
+                    Logger.error(TAG, "Could not bring '${session.title}' to the front", it)
+                }
             }
-        }
+        }, 48L)
     }
 
     /** Quits the suspended game through its normal shutdown (save written, session ended). */

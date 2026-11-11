@@ -84,7 +84,6 @@ fun cocoonFolderMenuInput(
     dockSize: () -> Int = { 0 },
     onDockSlot: (Int) -> Unit = {},
     suspendedFocused: () -> Boolean = { false },
-    onResumeSuspended: () -> Unit = {},
     onCloseSuspended: () -> Unit = {},
     interceptLaunch: () -> Boolean = { false },
 ): InputHandler = object : InputHandler by base {
@@ -109,7 +108,8 @@ fun cocoonFolderMenuInput(
         else InputResult.handled(com.nendo.argosy.core.input.SoundType.BOUNDARY)
     }
 
-    // Start opens the shared Cocoon drawer (the same one as on the board); Select opens Sort.
+    // Start opens the shared Cocoon drawer (the same one as on the board); Select swaps the
+    // screens, or opens Sort when no swap is available (single screen, or Classic's own mapping).
     override fun onMenu(): InputResult {
         if (dialog) return swallow
         if (isOpen) {
@@ -121,6 +121,9 @@ fun cocoonFolderMenuInput(
     override fun onSelect(): InputResult {
         if (dialog) return swallow
         if (isOpen) return InputResult.HANDLED
+        // Select belongs to the screen swap while the swap rule gives it to a single press; the
+        // app-level handler performs it on UNHANDLED. Inside a folder it used to open Sort instead.
+        if (com.nendo.argosy.ui.dualscreen.selectSwapsRoles()) return InputResult.UNHANDLED
         onRow(CocoonFolderMenuRow.SORT)
         return InputResult.HANDLED
     }
@@ -167,12 +170,9 @@ fun cocoonFolderMenuInput(
             onDockSlot(slot)
             return InputResult.HANDLED
         }
-        // Cocoon: A on the suspended game resumes it; A on another game while one is suspended
-        // asks to switch games first.
-        if (suspendedFocused()) {
-            onResumeSuspended()
-            return InputResult.handled(com.nendo.argosy.core.input.SoundType.SELECT)
-        }
+        // The game left running takes the same A as any other cover, and that launch path resumes
+        // a suspended built-in session rather than starting it over. Its page is still reachable
+        // from the item's own actions menu.
         if (interceptLaunch()) return InputResult.handled(com.nendo.argosy.core.input.SoundType.SELECT)
         return base.onConfirm()
     }

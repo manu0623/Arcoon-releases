@@ -1,5 +1,8 @@
 package com.nendo.argosy.ui.screens.gamedetail
 
+import com.nendo.argosy.data.model.ArtProvider
+import com.nendo.argosy.ui.common.labelRes
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nendo.argosy.data.cache.ImageCacheManager
@@ -109,7 +112,7 @@ class GameDetailViewModel @Inject constructor(
     private val gameNavigationContext: GameNavigationContext,
     private val configureEmulatorUseCase: ConfigureEmulatorUseCase,
     private val romMRepository: RomMRepository,
-    private val steamGridDbClient: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbClient,
+    private val coverArtScraper: com.nendo.argosy.data.cache.CoverArtScraper,
     private val soundManager: SoundFeedbackManager,
     private val gameActions: GameActionsDelegate,
     private val gameLaunchDelegate: GameLaunchDelegate,
@@ -198,11 +201,6 @@ class GameDetailViewModel @Inject constructor(
     private var backgroundRepairPending = false
     private var serverArtCandidates: List<ArtCandidate> = emptyList()
 
-    /** SteamGridDB is switched on with a key: the picker can search it directly. */
-    @Volatile private var steamGridDbActive = false
-
-    /** Covers are drawn square in the Cocoon home, so square SteamGridDB grids lead the list there. */
-    @Volatile private var squareCovers = false
     private var gameFilesObserverJob: kotlinx.coroutines.Job? = null
     private var gameEntityObserverJob: kotlinx.coroutines.Job? = null
     private var activeSaveObserverJob: kotlinx.coroutines.Job? = null
@@ -263,12 +261,6 @@ class GameDetailViewModel @Inject constructor(
     }
 
     init {
-        viewModelScope.launch {
-            preferencesRepository.userPreferences.collect { prefs ->
-                steamGridDbActive = prefs.steamGridDbEnabled && !prefs.steamGridDbApiKey.isNullOrBlank()
-                squareCovers = prefs.launcherUiMode == com.nendo.argosy.data.preferences.LauncherUiMode.COCOON
-            }
-        }
         modalResetSignal.signal.onEach { resetAllModals() }.launchIn(viewModelScope)
 
         viewModelScope.launch {
@@ -2054,10 +2046,7 @@ class GameDetailViewModel @Inject constructor(
     private fun showArtPicker(slot: ArtSlot, switching: Boolean = false) {
         val state = _uiState.value
         val game = state.game ?: return
-        // SteamGridDB is searched directly, so a server without cover search still gets results
-        // when SteamGridDB is on.
-        val canSearch = slot.pickerConfig.canSearch(state.canSearchCovers) ||
-            (steamGridDbActive && slot.steamGridDbAsset != null)
+        val canSearch = slot.pickerConfig.canSearch(state.canSearchCovers)
         if (switching) {
             pickerModalDelegate.switchArtSlot(slot, game.title, canSearch)
         } else {
@@ -2085,7 +2074,11 @@ class GameDetailViewModel @Inject constructor(
         val rommId = gameRepository.getById(currentGameId)?.rommId ?: return emptyList()
         return when (val result = romMRepository.getServerArt(rommId, slot)) {
             is RomMResult.Success -> result.data.map { art ->
-                ArtCandidate(source = art.url, originRes = art.provider.labelRes)
+                ArtCandidate(
+                    source = art.url,
+                    originRes = art.provider.labelRes,
+                    provider = art.provider
+                )
             }
             is RomMResult.Error -> emptyList()
         }
@@ -2123,70 +2116,40 @@ class GameDetailViewModel @Inject constructor(
         pickerModalDelegate.setArtPickerSearching()
         viewModelScope.launch {
             val onServer = offlineArtCandidates(slot)
-            val steamGridDb = steamGridDbCandidates(term, slot)
             val result = if (serverSearches) romMRepository.searchCovers(term, artType) else null
             val current = pickerModalDelegate.state.value
             if (!current.showArtPicker || current.artPickerSlot != slot) return@launch
             when (result) {
                 is RomMResult.Success -> showArtCandidates(
                     slot,
-                    serverArtCandidates + steamGridDb + result.data.mapNotNull { resource ->
+                    serverArtCandidates + result.data.mapNotNull { resource ->
                         resource.url?.let { url ->
+                            // RomM says which of its providers answered, so each image keeps that
+                            // and the rail can separate them. Square 1:1 grids come too.
+                            val provider = artProviderOf(resource.provider)
                             ArtCandidate(
                                 source = url,
                                 thumbUrl = resource.thumb,
                                 width = resource.width,
                                 height = resource.height,
-                                originRes = R.string.gamedetail_art_picker_origin_steamgriddb
+                                originRes = provider.labelRes,
+                                provider = provider
                             )
                         }
                     } + screenshotCandidates(slot).takeIf { serverArtCandidates.isEmpty() }.orEmpty()
                 )
                 is RomMResult.Error -> showArtCandidates(
                     slot,
-                    onServer + steamGridDb,
+                    onServer,
                     error = context.getString(R.string.gamedetail_art_picker_error, result.message)
                 )
                 null -> showArtCandidates(
                     slot,
-                    serverArtCandidates + steamGridDb +
+                    serverArtCandidates +
                         screenshotCandidates(slot).takeIf { serverArtCandidates.isEmpty() }.orEmpty()
                 )
             }
         }
-    }
-
-    /**
-     * SteamGridDB's own results for the slot: grids for the cover (square ones first in the
-     * Cocoon home, where covers are square), heroes for the background, logos for the logo.
-     */
-    private suspend fun steamGridDbCandidates(term: String, slot: ArtSlot): List<ArtCandidate> {
-        val asset = slot.steamGridDbAsset ?: return emptyList()
-        val prefs = preferencesRepository.userPreferences.first()
-        if (!prefs.steamGridDbEnabled) return emptyList()
-        val apiKey = prefs.steamGridDbApiKey?.takeIf { it.isNotBlank() } ?: return emptyList()
-        val results = steamGridDbClient.search(term, apiKey, asset)
-            .getOrElse { return emptyList() }
-            .grids
-        val ordered = if (asset == com.nendo.argosy.data.remote.steamgriddb.SteamGridDbAsset.GRID && squareCovers) {
-            val square = steamGridDbClient.searchSquareGrids(term, apiKey).getOrNull()?.grids.orEmpty()
-            (square + results).distinctBy { it.url }.sortedBy { grid ->
-                val w = grid.width; val h = grid.height
-                if (w != null && h != null && kotlin.math.abs(w.toFloat() / h - 1f) < 0.1f) 0 else 1
-            }
-        } else {
-            results
-        }
-        return ordered
-            .map { grid ->
-                ArtCandidate(
-                    source = grid.url,
-                    thumbUrl = grid.thumb,
-                    width = grid.width,
-                    height = grid.height,
-                    originRes = R.string.gamedetail_art_picker_origin_steamgriddb
-                )
-            }
     }
 
     fun selectArtCandidate(candidate: ArtCandidate) {
@@ -2195,7 +2158,12 @@ class GameDetailViewModel @Inject constructor(
             candidate.isScrape -> {
                 closeArtwork()
                 moreOptionsDelegate.reset()
-                refreshAndroidOrRommData()
+                val game = _uiState.value.game
+                if (game?.isAndroidApp == true) {
+                    refreshAndroidOrRommData()
+                } else if (game != null) {
+                    coverArtScraper.scrapeGame(game.id)
+                }
             }
             candidate.isRevert -> revertArtwork(slot)
             else -> applyArtwork(slot, candidate.source)
@@ -2228,9 +2196,35 @@ class GameDetailViewModel @Inject constructor(
 
     fun moveArtPickerFocus(delta: Int) = pickerModalDelegate.moveArtPickerFocus(delta)
 
+    /** The provider rail: one entry per provider RomM's results came from. */
+    fun selectArtProvider(provider: ArtProvider) {
+        if (!pickerModalDelegate.state.value.showArtPicker) return
+        pickerModalDelegate.setArtProvider(provider)
+    }
+
+    /** Steps along the providers this result set has, wrapping at the ends. */
+    private fun stepArtProvider(direction: Int) {
+        val picker = pickerModalDelegate.state.value
+        val providers = picker.artProviders
+        if (providers.size < 2) return
+        val index = providers.indexOf(picker.artProvider).coerceAtLeast(0)
+        selectArtProvider(providers[(index + direction).mod(providers.size)])
+    }
+
+    /** Covers only: the shape filter (1:1, portrait, wide). */
+    fun selectArtCoverSize(size: CoverSizeFilter) {
+        if (!pickerModalDelegate.state.value.showArtPicker) return
+        pickerModalDelegate.setArtCoverSize(size)
+    }
+
+    private fun artProviderOf(wire: String?): ArtProvider = when (wire?.lowercase()) {
+        "steam" -> ArtProvider.STEAM
+        else -> ArtProvider.STEAMGRIDDB
+    }
+
     private fun confirmArtPickerSelection() {
         val picker = pickerModalDelegate.state.value
-        val candidate = picker.artCandidates.getOrNull(picker.artPickerFocusIndex)
+        val candidate = picker.artVisibleCandidates.getOrNull(picker.artPickerFocusIndex)
         if (candidate == null) openArtFileBrowser() else selectArtCandidate(candidate)
     }
 
@@ -2835,7 +2829,16 @@ class GameDetailViewModel @Inject constructor(
                     }
                     return InputResult.HANDLED
                 }
-                pickerState.showArtPicker -> { moveArtPickerFocus(-1); return InputResult.HANDLED }
+                pickerState.showArtPicker -> {
+                    // Left at the first column steps out to the provider rail, as it looks.
+                    val columns = pickerState.artPickerSlot.pickerConfig.columns
+                    if (pickerState.artPickerFocusIndex.mod(columns) == 0) {
+                        stepArtProvider(-1)
+                    } else {
+                        moveArtPickerFocus(-1)
+                    }
+                    return InputResult.HANDLED
+                }
                 state.showScreenshotViewer -> { moveViewerIndex(-1); return InputResult.HANDLED }
                 state.showRatingPicker -> { changeRatingValue(-1); return InputResult.HANDLED }
                 state.showPermissionModal -> return InputResult.HANDLED
@@ -2872,7 +2875,17 @@ class GameDetailViewModel @Inject constructor(
                     }
                     return InputResult.HANDLED
                 }
-                pickerState.showArtPicker -> { moveArtPickerFocus(1); return InputResult.HANDLED }
+                pickerState.showArtPicker -> {
+                    val columns = pickerState.artPickerSlot.pickerConfig.columns
+                    val atRowEnd = pickerState.artPickerFocusIndex.mod(columns) == columns - 1 ||
+                        pickerState.artPickerFocusIndex == pickerState.artVisibleCandidates.lastIndex
+                    if (atRowEnd) {
+                        stepArtProvider(1)
+                    } else {
+                        moveArtPickerFocus(1)
+                    }
+                    return InputResult.HANDLED
+                }
                 state.showScreenshotViewer -> { moveViewerIndex(1); return InputResult.HANDLED }
                 state.showRatingPicker -> { changeRatingValue(1); return InputResult.HANDLED }
                 state.showPermissionModal -> return InputResult.HANDLED
@@ -3119,12 +3132,3 @@ class GameDetailViewModel @Inject constructor(
         }
     }
 }
-
-/** The SteamGridDB art kind that fills an artwork slot, or null for slots it has none for. */
-private val ArtSlot.steamGridDbAsset: com.nendo.argosy.data.remote.steamgriddb.SteamGridDbAsset?
-    get() = when (this) {
-        ArtSlot.COVER -> com.nendo.argosy.data.remote.steamgriddb.SteamGridDbAsset.GRID
-        ArtSlot.BACKGROUND -> com.nendo.argosy.data.remote.steamgriddb.SteamGridDbAsset.HERO
-        ArtSlot.LOGO -> com.nendo.argosy.data.remote.steamgriddb.SteamGridDbAsset.LOGO
-        else -> null
-    }

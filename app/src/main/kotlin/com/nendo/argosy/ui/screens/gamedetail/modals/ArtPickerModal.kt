@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -18,8 +19,13 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.VideogameAsset
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.nendo.argosy.R
 import com.nendo.argosy.data.model.ArtSlot
+import com.nendo.argosy.ui.common.labelRes
 import com.nendo.argosy.ui.components.InputButton
 import com.nendo.argosy.ui.components.Modal
 import com.nendo.argosy.ui.components.ModalSearchField
@@ -47,7 +54,9 @@ import com.nendo.argosy.ui.components.animateScrollToItemCentered
 import com.nendo.argosy.ui.primitives.FocusIndicators
 import com.nendo.argosy.ui.primitives.argosyFocusIndicators
 import com.nendo.argosy.ui.screens.gamedetail.ArtCandidate
+import com.nendo.argosy.data.model.ArtProvider
 import com.nendo.argosy.ui.screens.gamedetail.ArtPickerConfig
+import com.nendo.argosy.ui.screens.gamedetail.CoverSizeFilter
 import com.nendo.argosy.ui.screens.gamedetail.PICKABLE_ART_SLOTS
 import com.nendo.argosy.ui.screens.gamedetail.components.OptionItem
 import com.nendo.argosy.ui.screens.gamedetail.pickerConfig
@@ -63,6 +72,9 @@ import kotlin.math.ceil
 fun ArtPickerModal(
     gameTitle: String,
     slot: ArtSlot,
+    provider: ArtProvider,
+    providers: List<ArtProvider>,
+    coverSize: CoverSizeFilter,
     candidates: List<ArtCandidate>,
     focusIndex: Int,
     isLoading: Boolean,
@@ -74,6 +86,8 @@ fun ArtPickerModal(
     onChooseFile: () -> Unit,
     onSelect: (ArtCandidate) -> Unit,
     onSelectSlot: (ArtSlot) -> Unit,
+    onSelectProvider: (ArtProvider) -> Unit,
+    onSelectCoverSize: (CoverSizeFilter) -> Unit,
     onDismiss: () -> Unit
 ) {
     val config = slot.pickerConfig
@@ -108,6 +122,15 @@ fun ArtPickerModal(
             }
         }
     ) {
+        // The provider rail down the left, as on the reference: two sources, the grid on the right.
+        Row(modifier = Modifier.fillMaxWidth()) {
+            ArtProviderRail(
+                selected = provider,
+                providers = providers.ifEmpty { listOf(provider) },
+                onSelect = onSelectProvider,
+                modifier = Modifier.padding(end = Dimens.spacingSm)
+            )
+            Column(modifier = Modifier.weight(1f)) {
         ArtSlotTabs(
             selected = slot,
             onSelect = onSelectSlot,
@@ -122,6 +145,41 @@ fun ArtPickerModal(
                 onSearch = onSearch,
                 modifier = Modifier.padding(bottom = Dimens.spacingSm)
             )
+        }
+        // Covers only: the shape the user wants, since RomM serves tall and square art alike.
+        if (slot == ArtSlot.COVER) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(Dimens.spacingSm),
+                modifier = Modifier.padding(bottom = Dimens.spacingSm)
+            ) {
+                CoverSizeFilter.entries.forEach { size ->
+                    val chosen = size == coverSize
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(Dimens.radiusLg))
+                            .background(
+                                if (chosen) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                }
+                            )
+                            .clickableNoFocus { onSelectCoverSize(size) }
+                            .padding(horizontal = Dimens.spacingMd, vertical = Dimens.spacingSm)
+                    ) {
+                        Text(
+                            text = stringResource(size.labelRes),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (chosen) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                }
+            }
         }
         when {
             isLoading -> LoadingState()
@@ -142,23 +200,100 @@ fun ArtPickerModal(
                         modifier = Modifier.padding(bottom = Dimens.spacingSm)
                     )
                 }
+                // The chosen shape is the tile shape: a size filter only means something when
+                // the grid stops cropping every cover into one uniform cell.
+                val tileAspect = when {
+                    slot != ArtSlot.COVER -> config.tileAspectRatio
+                    coverSize == CoverSizeFilter.SQUARE -> 1f
+                    coverSize == CoverSizeFilter.WIDE -> 16f / 9f
+                    else -> 2f / 3f
+                }
+                val cropToTile = config.cropsToTile &&
+                    (slot != ArtSlot.COVER || coverSize == CoverSizeFilter.ANY)
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(config.columns),
                     state = gridState,
                     horizontalArrangement = Arrangement.spacedBy(Dimens.spacingMd),
                     verticalArrangement = Arrangement.spacedBy(Dimens.spacingMd),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().padding(top = Dimens.spacingXs)
                 ) {
                     itemsIndexed(candidates, key = { _, candidate -> candidate.source }) { index, candidate ->
                         ArtTile(
                             candidate = candidate,
                             slot = slot,
                             config = config,
+                            tileAspect = tileAspect,
+                            cropToTile = cropToTile,
                             isFocused = index == focusIndex,
                             onClick = { onSelect(candidate) }
                         )
                     }
                 }
+            }
+        }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArtProviderRail(
+    selected: ArtProvider,
+    providers: List<ArtProvider>,
+    onSelect: (ArtProvider) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        providers.forEach { entry ->
+            val isSelected = entry == selected
+            val shape = RoundedCornerShape(Dimens.radiusLg)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .width(64.dp)
+                    .clip(shape)
+                    .background(
+                        if (isSelected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        }
+                    )
+                    .clickableNoFocus { onSelect(entry) }
+                    .padding(vertical = Dimens.spacingXs)
+            ) {
+                Icon(
+                    imageVector = when (entry) {
+                        ArtProvider.ROMM -> Icons.Filled.Storage
+                        ArtProvider.SCREENSCRAPER -> Icons.Filled.Image
+                        ArtProvider.LAUNCHBOX -> Icons.Filled.SportsEsports
+                        ArtProvider.STEAMGRIDDB -> Icons.Filled.Movie
+                        ArtProvider.STEAM -> Icons.Filled.VideogameAsset
+                    },
+                    contentDescription = stringResource(entry.labelRes),
+                    tint = if (isSelected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.size(Dimens.iconMd)
+                )
+                Text(
+                    text = stringResource(entry.labelRes),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isSelected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    modifier = Modifier.padding(top = Dimens.spacingXs)
+                )
             }
         }
     }
@@ -214,7 +349,9 @@ private fun ArtSlotTabs(
             ) {
                 Text(
                     text = stringResource(slot.tabLabelRes),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    softWrap = false,
                     color = if (isSelected) {
                         MaterialTheme.colorScheme.onPrimary
                     } else {
@@ -241,6 +378,8 @@ private fun ArtTile(
     candidate: ArtCandidate,
     slot: ArtSlot,
     config: ArtPickerConfig,
+    tileAspect: Float,
+    cropToTile: Boolean,
     isFocused: Boolean,
     onClick: () -> Unit
 ) {
@@ -249,7 +388,7 @@ private fun ArtTile(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(config.tileAspectRatio)
+                .aspectRatio(tileAspect)
                 .clip(shape)
                 .then(
                     if (config.checkeredBackdrop) {
@@ -261,6 +400,9 @@ private fun ArtTile(
                 .argosyFocusIndicators(
                     focused = isFocused,
                     indicators = FocusIndicators.Ring,
+                    // No lift: this ring sits directly under the tab and size rows, and a lifted
+                    // tile draws its ring over them.
+                    liftDp = 0.dp,
                     shape = shape
                 )
                 .clickableNoFocus(onClick = onClick)
@@ -307,7 +449,7 @@ private fun ArtTile(
                 AsyncImage(
                     model = candidate.thumbUrl ?: candidate.source,
                     contentDescription = null,
-                    contentScale = if (config.cropsToTile) ContentScale.Crop else ContentScale.Fit,
+                    contentScale = if (cropToTile) ContentScale.Crop else ContentScale.Fit,
                     modifier = Modifier.matchParentSize()
                 )
             }

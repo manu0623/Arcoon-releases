@@ -26,7 +26,11 @@ data class GameArtEntity(
     val cachedFromUrl: String? = null,
     val overridePath: String? = null,
     val gradientColors: String? = null,
-    val coverAspectRatio: Float? = null
+    val coverAspectRatio: Float? = null,
+    /** When a scrape last chose this cover, or null if no scrape has. */
+    val scrapedAt: Long? = null,
+    /** The Box Art Shape the scraped cover was chosen for, as a token. */
+    val scrapedShape: String? = null
 ) {
     val resolvedPath: String? get() = resolveArtPath(overridePath, cachedPath, sourceUrl)
 

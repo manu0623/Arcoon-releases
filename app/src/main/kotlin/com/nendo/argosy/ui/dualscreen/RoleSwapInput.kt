@@ -53,4 +53,14 @@ private fun swapRule(
     gameActive: Boolean,
     liveSwap: Boolean,
     mode: SelectSwapMode
-): SelectSwapMode? = mode.takeIf { dualScreen && hasPresentation && (!gameActive || liveSwap) }
+): SelectSwapMode? {
+    /*
+     * Cocoon's controller map gives Select to the screen swap on a single press. Classic keeps the
+     * configured option (tap, hold or off) untouched, which is why the override lives here rather
+     * than at the call sites: every screen and every footer asks this one function.
+     */
+    val effective =
+        if (com.nendo.argosy.ui.cocoon.CocoonMode.useClassicHome.value) mode
+        else SelectSwapMode.TAP
+    return effective.takeIf { dualScreen && hasPresentation && (!gameActive || liveSwap) }
+}

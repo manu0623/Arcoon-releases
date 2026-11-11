@@ -172,6 +172,12 @@ data class ArtCandidate(
     val width: Int? = null,
     val height: Int? = null,
     @StringRes val originRes: Int? = null,
+    /**
+     * Which rail fetched this art: RomM (its stored art and its own cover search, square grids
+     * included) or SteamGridDB queried directly with the user's key. [originRes] still names the
+     * provider that made the picture, which is not always the one that served it.
+     */
+    val provider: com.nendo.argosy.data.model.ArtProvider = com.nendo.argosy.data.model.ArtProvider.ROMM,
     val isRevert: Boolean = false,
     /** The "Scrape Game" tile: re-fetches this game's info and art from its source. */
     val isScrape: Boolean = false

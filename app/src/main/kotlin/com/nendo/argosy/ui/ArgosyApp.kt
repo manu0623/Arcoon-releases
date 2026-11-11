@@ -165,6 +165,19 @@ fun ArgosyApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val routeDisplay = androidx.compose.ui.platform.LocalView.current.display?.displayId
+    val launcherInstance = androidx.compose.runtime.remember {
+        com.nendo.argosy.util.RebuildTrace.id("launcher")
+    }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "launcher composed id=$launcherInstance display=$routeDisplay lifted=$asLiftedPanel"
+        )
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            com.nendo.argosy.util.ArcoonTrace.log("launcher disposed id=$launcherInstance")
+        }
+    }
     LaunchedEffect(currentRoute) {
         com.nendo.argosy.util.ArcoonTrace.log("launcher on display $routeDisplay now on route: $currentRoute")
     }
@@ -1498,7 +1511,9 @@ fun ArgosyApp(
                     if (!keySinkFocused && !drawerState.isOpen) {
                         delay(KEY_SINK_RECLAIM_GRACE_MS)
                         if (imeManager?.isAcceptingText == true) return@LaunchedEffect
-                        rootFocusRequester.requestFocus()
+                        // A role swap rebuilds this sink; a reclaim that lands while the new
+                        // node is not attached yet throws. The next lost-focus event asks again.
+                        runCatching { rootFocusRequester.requestFocus() }
                     }
                 }
 

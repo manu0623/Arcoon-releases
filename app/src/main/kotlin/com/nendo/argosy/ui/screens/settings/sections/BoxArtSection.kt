@@ -13,7 +13,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import com.nendo.argosy.data.cache.CoverScrapeStage
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -39,8 +42,10 @@ import com.nendo.argosy.data.preferences.SystemIconPosition
 import com.nendo.argosy.ui.common.label
 import com.nendo.argosy.ui.common.labelRes
 import com.nendo.argosy.ui.common.rememberCoverAspectRatio
+import com.nendo.argosy.ui.components.ActionPreference
 import com.nendo.argosy.ui.components.CyclePreference
 import com.nendo.argosy.ui.components.GameCard
+import com.nendo.argosy.ui.components.InfoPreference
 import com.nendo.argosy.ui.components.SegmentedPreference
 import com.nendo.argosy.ui.components.SwitchPreference
 import com.nendo.argosy.ui.screens.home.HomeGameUi
@@ -67,6 +72,12 @@ internal sealed class BoxArtItem(
     data object CornerRadius : BoxArtItem("cornerRadius", "styling")
     data object BorderThickness : BoxArtItem("borderThickness", "styling")
     data object BorderStyle : BoxArtItem("borderStyle", "styling")
+
+    // The wide-context cover scrape sits here because the Box Art Shape is what it aims at.
+    data object ScrapeMissing : BoxArtItem("scrapeMissing", "artwork")
+    data object RepairShapes : BoxArtItem("repairShapes", "artwork")
+    data object ReplaceCovers : BoxArtItem("replaceCovers", "artwork")
+    data object ScrapeStatus : BoxArtItem("scrapeStatus", "artwork")
 
     data object GlassTint : BoxArtItem(
         key = "glassTint",
@@ -177,6 +188,7 @@ internal sealed class BoxArtItem(
     )
 
     companion object {
+        private val ArtworkHeader = Header("artworkHeader", "artwork", R.string.settings_box_art_section_artwork)
         private val StylingHeader = Header("stylingHeader", "styling", R.string.settings_box_art_section_styling)
         private val IconHeader = Header("iconHeader", "icon", R.string.settings_box_art_section_icon)
         private val OuterHeader = Header("outerHeader", "outer", R.string.settings_box_art_section_outer)
@@ -190,6 +202,8 @@ internal sealed class BoxArtItem(
 
         val ALL: List<BoxArtItem>
             get() = listOf(
+                ArtworkHeader,
+                ScrapeMissing, RepairShapes, ReplaceCovers, ScrapeStatus,
                 StylingHeader,
                 Shape, CornerRadius, BorderThickness, BorderStyle, GlassTint,
                 GradientPresetItem, GradientAdvanced,
@@ -219,6 +233,7 @@ private val boxArtLayout = SettingsLayout<BoxArtItem, DisplayState>(
     sectionOf = { it.section },
     sectionTitleRes = {
         when (it) {
+            "artwork" -> R.string.settings_box_art_section_artwork
             "styling" -> R.string.settings_box_art_section_styling
             "icon" -> R.string.settings_box_art_section_icon
             "outer" -> R.string.settings_box_art_section_outer
@@ -240,6 +255,9 @@ fun BoxArtSection(
     viewModel: SettingsViewModel
 ) {
     val display = uiState.display
+    val scrapeState by viewModel.coverScrapeState.collectAsState()
+    val scrapeRunning = scrapeState.stage == CoverScrapeStage.RUNNING
+    val canScrape = viewModel.coverScrapeAvailable()
     val gradientConfig = uiState.gradientConfig
     val extractionResult = uiState.gradientExtractionResult
     val showGradientSection = display.boxArtBorderStyle == BoxArtBorderStyle.GRADIENT
@@ -276,6 +294,63 @@ fun BoxArtSection(
         ) { item ->
                 when (item) {
                     is BoxArtItem.Header -> BoxArtSectionHeader(stringResource(item.titleRes))
+
+                    BoxArtItem.ScrapeMissing -> ActionPreference(
+                        title = stringResource(R.string.settings_box_art_scrape_missing_title),
+                        subtitle = stringResource(R.string.settings_box_art_scrape_missing_subtitle),
+                        isFocused = isFocused(item),
+                        isEnabled = canScrape && !scrapeRunning,
+                        onClick = { viewModel.scrapeMissingCovers() }
+                    )
+                    BoxArtItem.RepairShapes -> ActionPreference(
+                        title = stringResource(R.string.settings_box_art_repair_shapes_title),
+                        subtitle = stringResource(R.string.settings_box_art_repair_shapes_subtitle),
+                        isFocused = isFocused(item),
+                        isEnabled = canScrape && !scrapeRunning,
+                        onClick = { viewModel.repairCoverShapes() }
+                    )
+                    BoxArtItem.ReplaceCovers -> ActionPreference(
+                        title = stringResource(R.string.settings_box_art_replace_all_title),
+                        subtitle = stringResource(R.string.settings_box_art_replace_all_subtitle),
+                        isFocused = isFocused(item),
+                        isDangerous = true,
+                        isEnabled = canScrape && !scrapeRunning,
+                        onClick = { viewModel.replaceAllCovers() }
+                    )
+                    BoxArtItem.ScrapeStatus -> if (scrapeRunning) {
+                        ActionPreference(
+                            title = stringResource(R.string.settings_box_art_scrape_status_title),
+                            subtitle = stringResource(
+                                R.string.settings_box_art_scrape_status_running,
+                                scrapeState.scanned,
+                                scrapeState.total
+                            ),
+                            isFocused = isFocused(item),
+                            spinIcon = true,
+                            trailingButtonLabel = stringResource(R.string.settings_box_art_scrape_stop),
+                            onClick = { viewModel.stopCoverScrape() }
+                        )
+                    } else {
+                        InfoPreference(
+                            title = stringResource(R.string.settings_box_art_scrape_status_title),
+                            value = when (scrapeState.stage) {
+                                CoverScrapeStage.RUNNING -> stringResource(
+                                    R.string.settings_box_art_scrape_status_running,
+                                    scrapeState.scanned,
+                                    scrapeState.total
+                                )
+                                CoverScrapeStage.FINISHED -> stringResource(
+                                    R.string.settings_box_art_scrape_status_done,
+                                    scrapeState.filled
+                                )
+                                CoverScrapeStage.UNAVAILABLE ->
+                                    stringResource(R.string.settings_box_art_scrape_status_unavailable)
+                                CoverScrapeStage.IDLE ->
+                                    stringResource(R.string.settings_box_art_scrape_status_idle)
+                            },
+                            isFocused = isFocused(item)
+                        )
+                    }
 
                     BoxArtItem.Shape -> SegmentedPreference(
                         title = stringResource(R.string.settings_box_art_shape_title),

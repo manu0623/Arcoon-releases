@@ -316,7 +316,11 @@ fun NavGraph(
                 SettingsScreen(
                 onBack = {
                     when {
-                        platformId != null -> navController.popBackStack()
+                        // Opened straight into a platform from a folder or a game page: Back
+                        // leaves Settings. A plain pop returns false when Settings is the first
+                        // entry (the Cocoon board lives outside this graph), which used to eat
+                        // the press and strand the user on the page.
+                        platformId != null -> if (!navController.popBackStack()) navigateToDefault()
                         onSettingsExit != null -> onSettingsExit()
                         else -> navigateToDefault()
                     }
@@ -334,12 +338,11 @@ fun NavGraph(
 
         composable(
             route = Screen.GameDetail.route,
-            // Cocoon sheets (?sheet=…) open in place over a still of the folder: no cross-fade.
-            enterTransition = {
-                if (targetState.arguments?.getString("sheet") != null) androidx.compose.animation.EnterTransition.None
-                // a touch longer than the other screens' cross-fade: the page then eases in
-                else fadeIn(animationSpec = tween(160))
-            },
+            // The page appears whole on its first frame instead of fading up from nothing. A
+            // cross-fade here left the screen empty until the heavy first frame landed, which read
+            // as a blank page before the cover artwork showed up. The page's own skeleton, fading
+            // into the loaded content, is the transition.
+            enterTransition = { androidx.compose.animation.EnterTransition.None },
             popExitTransition = {
                 if (initialState.arguments?.getString("sheet") != null) androidx.compose.animation.ExitTransition.None
                 else fadeOut(animationSpec = tween(100))

@@ -390,10 +390,6 @@ fun LibraryScreen(
                 val suspended = com.nendo.argosy.DualScreenManagerHolder.instance?.gameSessionManager?.sessionState?.value
                 suspended != null && suspended.gameId == viewModel.uiState.value.focusedGame?.id
             },
-            // A: back into the suspended game, exactly where it was left.
-            onResumeSuspended = {
-                viewModel.uiState.value.focusedGame?.let { viewModel.launchGame(it.id) }
-            },
             // X: Cocoon's "Quit game" sheet for the suspended game.
             onCloseSuspended = {
                 val game = viewModel.uiState.value.focusedGame
@@ -466,7 +462,16 @@ fun LibraryScreen(
     val folderHaptics = com.nendo.argosy.ui.input.LocalHaptics.current
     // Cocoon's folder entrance: header and covers rise a short way into place as they fade in;
     // the dock above them stays still.
-    val folderEnter = remember { androidx.compose.animation.core.Animatable(1f) }
+    /*
+     * Returning from a suspended game: the launcher steps off the game's own page and back onto
+     * this folder, so the grid is composed again from nothing. It has to land already settled -
+     * replaying the entrance showed the bare background while the covers waved in, which is the
+     * flash seen between the game and the folder it was started from.
+     */
+    val returnedFromSuspend = remember { com.nendo.argosy.ui.cocoon.CocoonSuspendTest.freshAny() }
+    val folderEnter = remember {
+        androidx.compose.animation.core.Animatable(if (returnedFromSuspend) 0f else 1f)
+    }
     // Rise once the covers actually exist; started any earlier it finishes before the games
     // arrive and the covers just pop in.
     val coversReady = uiState.games.isNotEmpty()
@@ -481,7 +486,7 @@ fun LibraryScreen(
         }
         if (coversReady && !coverWave.played) {
             // only on the way in from Home: coming back from a game's page the covers just stay
-            if (reducedMotion || coverWaveShown.value) coverWave.skipIn()
+            if (returnedFromSuspend || reducedMotion || coverWaveShown.value) coverWave.skipIn()
             else {
                 coverWaveShown.value = true
                 // A soft tick under each column as the covers populate, so the population is felt

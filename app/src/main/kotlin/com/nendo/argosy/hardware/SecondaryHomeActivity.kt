@@ -213,7 +213,6 @@ class SecondaryHomeActivity :
                             ) { CompanionRoleContent() }
                             com.nendo.argosy.ui.cocoon.CocoonLeaveVeil(blackOnArm = false)
                             com.nendo.argosy.ui.cocoon.CocoonSuspendLowerPicture()
-                            com.nendo.argosy.ui.cocoon.CocoonSuspendTestButton()
                         }
                     }
                 }
@@ -312,7 +311,11 @@ class SecondaryHomeActivity :
         }
         // A screen swap slides instead of cross-fading (the fade under the slide made it flicker).
         val swapping = com.nendo.argosy.ui.cocoon.cocoonSwapRecent()
-        com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = rolesSwapped) {
+        com.nendo.argosy.ui.cocoon.CocoonSwapSlide(key = rolesSwapped) { frameKey ->
+            // Each copy keeps the role its own key stands for, so the picture leaving the panel
+            // stays whole until the slide uncovers the arriving one.
+            val swappedHere = frameKey as? Boolean ?: rolesSwapped
+            val launcherShownHere = !swappedHere && !dashboardTransitionActive && settingsLifted == null
             val launcherBlocksTouch = androidx.compose.runtime.rememberUpdatedState(
                 !(launcherShown && !resumeTargetsDashboard && settingsLifted == null)
             )
@@ -321,15 +324,19 @@ class SecondaryHomeActivity :
              * threw away where you were: after a suspend it was rebuilt from the main menu and
              * then jumped to the last game, which showed as a reload on the lower screen.
              */
+            // The game panel above fades out over this layer, so this one must already be fully
+            // painted underneath it: fading both at once left the black window showing through
+            // the middle of the cross-fade, which read as the lower screen flashing black on every
+            // suspend. Hidden behind the opaque panel, snapping it up in one frame is invisible.
             val launcherAlpha by androidx.compose.animation.core.animateFloatAsState(
-                targetValue = if (launcherShown) 1f else 0f,
-                animationSpec = androidx.compose.animation.core.tween(
-                    when {
-                        launcherShown -> SUSPEND_PANEL_FADE_MS
-                        settingsLifted != null -> SETTINGS_LIFT_FADE_MS
-                        else -> handoffMs
-                    }
-                ),
+                targetValue = if (launcherShownHere) 1f else 0f,
+                animationSpec = if (launcherShownHere) {
+                    androidx.compose.animation.core.snap()
+                } else {
+                    androidx.compose.animation.core.tween(
+                        if (settingsLifted != null) SETTINGS_LIFT_FADE_MS else handoffMs
+                    )
+                },
                 label = "companion-launcher-alpha"
             )
             val blackHoldAlpha by androidx.compose.animation.core.animateFloatAsState(
@@ -372,14 +379,21 @@ class SecondaryHomeActivity :
                 )
             }
             androidx.compose.animation.AnimatedVisibility(
-                visible = !launcherShown,
+                visible = !launcherShownHere,
                 enter = if (swapping || dashboardTransitionActive) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(
                     androidx.compose.animation.core.tween(
                         if (settingsLifted != null) SETTINGS_LIFT_FADE_MS else handoffMs
                     )
                 ),
-                exit = if (rolesSwapped) androidx.compose.animation.ExitTransition.None
-                else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(SUSPEND_PANEL_FADE_MS))
+                // A swap used to cut this panel out in one frame: arriving content faded in while
+                // the picture leaving snapped away, which read as a teleport in that direction
+                // only. Both sides now cross over the same span.
+                exit = androidx.compose.animation.fadeOut(
+                    androidx.compose.animation.core.tween(
+                        if (swappedHere) com.nendo.argosy.ui.cocoon.CocoonSwap.SLIDE_MS.toInt()
+                        else SUSPEND_PANEL_FADE_MS
+                    )
+                )
             ) {
                 /*
                  * While the game panel leaves (game suspended, launcher coming back) it keeps
@@ -428,7 +442,10 @@ class SecondaryHomeActivity :
         val presentationSink = androidx.compose.runtime.remember {
             androidx.compose.ui.focus.FocusRequester()
         }
-        androidx.compose.runtime.LaunchedEffect(Unit) { presentationSink.requestFocus() }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            // Rebuilt by a role swap: the node can still be unattached here.
+            runCatching { presentationSink.requestFocus() }
+        }
         androidx.compose.foundation.layout.Box(
             modifier = androidx.compose.ui.Modifier
                 .fillMaxSize()

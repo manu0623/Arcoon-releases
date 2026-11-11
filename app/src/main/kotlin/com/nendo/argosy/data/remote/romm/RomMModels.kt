@@ -454,6 +454,8 @@ data class RomMHeartbeatResponse(
 data class RomMCoverSearchResult(
     @Json(name = "name") val name: String? = null,
     @Json(name = "art_type") val artType: String? = null,
+    /** The provider that served these: "sgdb", "steam", or absent on older servers. */
+    @Json(name = "provider") val provider: String? = null,
     @Json(name = "resources") val resources: List<RomMCoverResource>? = null
 )
 
@@ -469,6 +471,8 @@ data class RomMCoverResource(
     @Json(name = "width") val width: Int? = null,
     @Json(name = "height") val height: Int? = null,
     @Json(name = "style") val style: String? = null,
+    /** Filled by [usableResources] from the result's provider; not a field of the response. */
+    val provider: String? = null,
     @Json(name = "nsfw") val nsfw: Boolean? = null,
     @Json(name = "humor") val humor: Boolean? = null,
     @Json(name = "epilepsy") val epilepsy: Boolean? = null

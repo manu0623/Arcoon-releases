@@ -206,9 +206,19 @@ interface GameArtDao {
         FROM games
         LEFT JOIN game_art art ON art.gameId = games.id AND art.slot = 'COVER'
         WHERE art.overridePath IS NULL AND (
-            :rescanAll OR art.gameId IS NULL OR (
-                art.sourceUrl IS NOT NULL AND art.sourceUrl NOT LIKE '%steamgriddb%'
-            )
+            :scope = 'ALL'
+            OR (:scope = 'MISSING' AND (
+                art.gameId IS NULL OR art.sourceUrl IS NULL OR art.cachedPath IS NULL
+            ))
+            OR (:scope = 'SHAPE' AND (
+                art.gameId IS NULL
+                OR art.scrapedShape IS NULL
+                OR art.scrapedShape != :shape
+                OR (
+                    art.coverAspectRatio IS NOT NULL
+                    AND (art.coverAspectRatio < :minRatio OR art.coverAspectRatio > :maxRatio)
+                )
+            ))
         ) AND games.id > :afterGameId
           AND (:platformSlug IS NULL OR games.platformSlug = :platformSlug)
         ORDER BY games.id ASC
@@ -218,7 +228,10 @@ interface GameArtDao {
     suspend fun getNextArtScrapeCandidate(
         afterGameId: Long,
         platformSlug: String? = null,
-        rescanAll: Boolean = false
+        scope: String,
+        shape: String,
+        minRatio: Float,
+        maxRatio: Float
     ): ArtScrapeCandidate?
 
     @Query(
@@ -226,24 +239,50 @@ interface GameArtDao {
         SELECT COUNT(*) FROM games
         LEFT JOIN game_art art ON art.gameId = games.id AND art.slot = 'COVER'
         WHERE art.overridePath IS NULL AND (
-            :rescanAll OR art.gameId IS NULL OR (
-                art.sourceUrl IS NOT NULL AND art.sourceUrl NOT LIKE '%steamgriddb%'
-            )
+            :scope = 'ALL'
+            OR (:scope = 'MISSING' AND (
+                art.gameId IS NULL OR art.sourceUrl IS NULL OR art.cachedPath IS NULL
+            ))
+            OR (:scope = 'SHAPE' AND (
+                art.gameId IS NULL
+                OR art.scrapedShape IS NULL
+                OR art.scrapedShape != :shape
+                OR (
+                    art.coverAspectRatio IS NOT NULL
+                    AND (art.coverAspectRatio < :minRatio OR art.coverAspectRatio > :maxRatio)
+                )
+            ))
         ) AND (:platformSlug IS NULL OR games.platformSlug = :platformSlug)
         """
     )
-    suspend fun countArtScrapeCandidates(platformSlug: String? = null, rescanAll: Boolean = false): Int
+    suspend fun countArtScrapeCandidates(
+        platformSlug: String? = null,
+        scope: String,
+        shape: String,
+        minRatio: Float,
+        maxRatio: Float
+    ): Int
 
+    /** The scrape target for one game, or null when its cover was picked by hand. */
     @Query(
         """
-        SELECT games.rommId FROM games
-        JOIN game_art art ON art.gameId = games.id AND art.slot = 'COVER'
-        WHERE art.overridePath IS NULL AND art.sourceUrl LIKE '%steamgriddb%'
-          AND games.rommId IS NOT NULL
-        ORDER BY games.id ASC
+        SELECT games.id AS gameId, games.title AS title,
+               games.rommId AS rommId, games.steamAppId AS steamAppId
+        FROM games
+        WHERE games.id = :gameId
+          AND NOT EXISTS (
+              SELECT 1 FROM game_art art
+              WHERE art.gameId = games.id AND art.slot = 'COVER' AND art.overridePath IS NOT NULL
+          )
         """
     )
-    suspend fun getRommIdsWithSteamGridDbCover(): List<Long>
+    suspend fun getArtScrapeCandidate(gameId: Long): ArtScrapeCandidate?
+
+    @Query(
+        "UPDATE game_art SET scrapedAt = :atMillis, scrapedShape = :shape " +
+            "WHERE gameId = :gameId AND slot = 'COVER'"
+    )
+    suspend fun markCoverScraped(gameId: Long, shape: String, atMillis: Long)
 
     @Query("SELECT searchTitle, alternativeNames FROM games WHERE id = :gameId")
     suspend fun getTitleAliases(gameId: Long): TitleAliases?

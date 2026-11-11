@@ -1,5 +1,8 @@
 package com.nendo.argosy.ui.screens.gamedetail
 
+import androidx.annotation.StringRes
+import com.nendo.argosy.R
+import com.nendo.argosy.data.model.ArtProvider
 import com.nendo.argosy.data.model.ArtSlot
 
 /**
@@ -93,4 +96,39 @@ fun artGridStep(index: Int, delta: Int, size: Int, columns: Int): Int {
     val lastRowStart = ((size - 1) / columns) * columns
     val wrapped = lastRowStart + column
     return if (wrapped < size) wrapped else wrapped - columns
+}
+
+/** Providers this result set actually contains, in a stable order; the rail lists exactly these. */
+fun List<ArtCandidate>.providersIn(): List<ArtProvider> =
+    asSequence()
+        .filterNot { it.isScrape || it.isRevert }
+        .map { it.provider }
+        .distinct()
+        .sortedBy { it.ordinal }
+        .toList()
+
+/** [this] limited to [provider]. The scrape and revert tiles belong to both. */
+fun List<ArtCandidate>.forProvider(provider: ArtProvider): List<ArtCandidate> =
+    filter { candidate -> candidate.isScrape || candidate.isRevert || candidate.provider == provider }
+
+/** Cover shapes the picker can narrow to; a picture with no known size matches only ANY. */
+enum class CoverSizeFilter(@StringRes val labelRes: Int) {
+    ANY(R.string.cocoon_art_size_any),
+    SQUARE(R.string.cocoon_art_size_square),
+    PORTRAIT(R.string.cocoon_art_size_portrait),
+    WIDE(R.string.cocoon_art_size_wide)
+}
+
+fun ArtCandidate.matchesSize(size: CoverSizeFilter): Boolean {
+    if (size == CoverSizeFilter.ANY) return true
+    val w = width ?: return false
+    val h = height ?: return false
+    if (w <= 0 || h <= 0) return false
+    val ratio = w.toFloat() / h
+    return when (size) {
+        CoverSizeFilter.ANY -> true
+        CoverSizeFilter.SQUARE -> kotlin.math.abs(ratio - 1f) <= 0.06f
+        CoverSizeFilter.PORTRAIT -> ratio < 0.85f
+        CoverSizeFilter.WIDE -> ratio > 1.18f
+    }
 }

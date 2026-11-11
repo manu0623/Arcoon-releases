@@ -163,8 +163,10 @@ object CocoonFolderGrid {
         if (count == 0) return null
         val row = index % rows
         return when {
-            dRow < 0 -> if (row > 0) index - 1 else null
-            dRow > 0 -> if (row < rows - 1 && index + 1 < count) index + 1 else null
+            // Up/Down step through the covers. Ending at the top of a column used to read as an
+            // edge and lift the cursor onto the dock while games were still above-left of it.
+            dRow < 0 -> if (index > 0) index - 1 else null
+            dRow > 0 -> if (index + 1 < count) index + 1 else null
             dCol < 0 -> if (index - rows >= 0) index - rows else null
             dCol > 0 -> when {
                 index + rows < count -> index + rows

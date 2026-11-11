@@ -364,13 +364,11 @@ private fun BatteryIndicator(
             modifier = Modifier.size(width = Dimens.iconMd, height = Dimens.radiusLg)
         )
         Text(
-            text = "$level%",
-            style = chromeTextStyle(
-                MaterialTheme.typography.titleMedium,
-                TypographyTokens.titleMedium,
-                ComponentDefaults.FrostedSurface.chromeFontSizeSp.sp *
-                    ComponentDefaults.FrostedSurface.statusBatteryFontSizeRatio
-            ),
+            text = "$level%",                style = chromeTextStyle(
+                    MaterialTheme.typography.titleMedium,
+                    TypographyTokens.titleMedium,
+                    ComponentDefaults.FrostedSurface.chromeFontSizeSp.sp
+                ),
             color = color,
             maxLines = 1,
             softWrap = false

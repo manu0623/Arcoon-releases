@@ -1029,6 +1029,9 @@ class LibraryViewModel @Inject constructor(
         val dsm = DualScreenManagerHolder.instance ?: return
         dsm.setCompanionDetail(companionOwner, null)
         dsm.releaseSlot(platformShowcaseOwner)
+        // The game showcase is published as a slot too (see publishCompanionDetail): leaving it
+        // behind kept this screen's last game on the top screen after Home took over.
+        dsm.releaseSlot(companionOwner)
     }
 
     private fun extractGradientsForVisibleGames(focusedIndex: Int) {

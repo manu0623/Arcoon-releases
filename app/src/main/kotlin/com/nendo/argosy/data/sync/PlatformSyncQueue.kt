@@ -1,5 +1,6 @@
 package com.nendo.argosy.data.sync
 
+import com.nendo.argosy.data.cache.CoverArtScraper
 import com.nendo.argosy.domain.usecase.sync.SyncLibraryUseCase
 import com.nendo.argosy.domain.usecase.sync.SyncPlatformUseCase
 import kotlinx.coroutines.CoroutineScope
@@ -21,7 +22,8 @@ import javax.inject.Singleton
 @Singleton
 class PlatformSyncQueue @Inject constructor(
     private val syncPlatformUseCase: dagger.Lazy<SyncPlatformUseCase>,
-    private val syncLibraryUseCase: dagger.Lazy<SyncLibraryUseCase>
+    private val syncLibraryUseCase: dagger.Lazy<SyncLibraryUseCase>,
+    private val coverScraper: dagger.Lazy<CoverArtScraper>
 ) {
     sealed interface Job {
         data class Library(val initializeFirst: Boolean, val changesSince: java.time.Instant? = null) : Job
@@ -127,6 +129,9 @@ class PlatformSyncQueue @Inject constructor(
                         _activeJob.value = null
                     }
                     item.onComplete?.invoke()
+                    // A sync is where new games arrive, so it is also where covers are asked
+                    // for: the scrape follows Settings ▸ Interface ▸ Box Art ▸ Shape.
+                    coverScraper.get().fillMissingIfAny()
                 }
             }
         } finally {

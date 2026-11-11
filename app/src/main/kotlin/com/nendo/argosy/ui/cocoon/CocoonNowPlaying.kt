@@ -24,12 +24,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.nendo.argosy.R
+import com.nendo.argosy.ui.dualscreen.InGameChrome
+import com.nendo.argosy.ui.dualscreen.InGameSettle
+import com.nendo.argosy.ui.dualscreen.inGameRestFade
+import com.nendo.argosy.ui.dualscreen.inGameRestLogoFilter
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -57,6 +62,10 @@ private data class NowPlayingInfo(val title: String?, val background: String?, v
 /**
  * Cocoon's Now Playing screen. Artwork: the game's art with its logo, how long you've played and
  * the time. Minimal: the same on black. Screen Off: black, for OLED.
+ *
+ * Artwork and Minimal settle a few seconds into the session (see [InGameSettle]): the art goes
+ * black, the logo rests as a grey ghost and the clock and play time go out, leaving the screen
+ * quiet behind the game. A tap brings it back.
  */
 @Composable
 fun CocoonNowPlaying(style: CocoonNowPlayingStyle) {
@@ -78,62 +87,63 @@ fun CocoonNowPlaying(style: CocoonNowPlayingStyle) {
     }
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (style == CocoonNowPlayingStyle.OFF) return@Box
-        if (style == CocoonNowPlayingStyle.ARTWORK && info.background != null) {
-            coil.compose.AsyncImage(
-                model = info.background!!.let { if (it.startsWith("/")) java.io.File(it) else it },
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(0.35f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.85f))
-                )
-            )
-        }
-        Column(
-            modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            val logo = info.logo
-            if (style == CocoonNowPlayingStyle.ARTWORK && logo != null) {
+        InGameSettle(
+            gameId = gameId ?: -1L,
+            sessionStartTimeMillis = session?.startTime?.toEpochMilli() ?: 0L
+        ) { rest ->
+            val lit = 1f - rest
+            if (style == CocoonNowPlayingStyle.ARTWORK && info.background != null) {
                 coil.compose.AsyncImage(
-                    model = if (logo.startsWith("/")) java.io.File(logo) else logo,
-                    contentDescription = info.title,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.size(width = 360.dp, height = 140.dp)
+                    model = info.background!!.let { if (it.startsWith("/")) java.io.File(it) else it },
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = lit }
                 )
-            } else {
-                Text(
-                    info.title.orEmpty(),
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center
+                Box(
+                    Modifier.fillMaxSize().graphicsLayer { alpha = lit }.background(
+                        Brush.verticalGradient(0.35f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.85f))
+                    )
                 )
             }
-            Spacer(Modifier.height(14.dp))
-            val start = session?.startTime?.toEpochMilli()
-            if (start != null) {
-                val seconds = ((now - start) / 1000).coerceAtLeast(0)
-                Text(
-                    stringResource(R.string.cocoon_np_playing) + " · " +
-                        if (seconds >= 3600) "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
-                        else "%d:%02d".format(seconds / 60, seconds % 60),
-                    color = Color.White.copy(alpha = 0.8f),
-                    style = MaterialTheme.typography.titleMedium
-                )
+            Column(
+                modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                val logo = info.logo
+                if (style == CocoonNowPlayingStyle.ARTWORK && logo != null) {
+                    coil.compose.AsyncImage(
+                        model = if (logo.startsWith("/")) java.io.File(logo) else logo,
+                        contentDescription = info.title,
+                        contentScale = ContentScale.Fit,
+                        colorFilter = inGameRestLogoFilter(rest),
+                        modifier = Modifier
+                            .size(width = 360.dp, height = 140.dp)
+                            .graphicsLayer { alpha = inGameRestFade(rest) }
+                    )
+                } else {
+                    Text(
+                        info.title.orEmpty(),
+                        color = Color.White.copy(alpha = inGameRestFade(rest)),
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                val start = session?.startTime?.toEpochMilli()
+                if (start != null) {
+                    val seconds = ((now - start) / 1000).coerceAtLeast(0)
+                    Text(
+                        stringResource(R.string.cocoon_np_playing) + " · " +
+                            if (seconds >= 3600) "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
+                            else "%d:%02d".format(seconds / 60, seconds % 60),
+                        color = Color.White.copy(alpha = 0.8f * lit),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
             }
+            InGameChrome(lit = lit)
         }
-        Text(
-            java.text.SimpleDateFormat(
-                if (android.text.format.DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm",
-                java.util.Locale.getDefault()
-            ).format(java.util.Date(now)),
-            color = Color.White.copy(alpha = 0.85f),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.align(Alignment.TopEnd).padding(20.dp)
-        )
     }
 }
 

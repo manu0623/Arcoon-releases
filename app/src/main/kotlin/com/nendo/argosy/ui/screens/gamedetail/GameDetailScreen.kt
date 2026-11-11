@@ -477,12 +477,28 @@ fun GameDetailScreen(
     }
     val contentRise = with(androidx.compose.ui.platform.LocalDensity.current) { 14.dp.toPx() }
 
+    val skeletonVisible = uiState.isLoading || game == null
     Box(modifier = Modifier.fillMaxSize()) {
-        if (cocoonSheet != null && (uiState.isLoading || game == null)) {
-            CocoonSheetBackdrop()
-        } else if (uiState.isLoading || game == null) {
-            GameDetailSkeleton()
-        } else Box(
+        if (cocoonSheet != null) {
+            if (skeletonVisible) CocoonSheetBackdrop()
+        } else {
+            // The skeleton stays under the page and fades out as the page fades in. Swapping the
+            // two in a single frame left a stretch with neither drawn - a blank page - before the
+            // content was opaque enough to read as anything but an empty cover-shaped box.
+            AnimatedVisibility(
+                visible = skeletonVisible,
+                enter = androidx.compose.animation.EnterTransition.None,
+                exit = fadeOut(
+                    animationSpec = tween(
+                        260,
+                        easing = com.nendo.argosy.ui.theme.Motion.argosyEase
+                    )
+                )
+            ) {
+                GameDetailSkeleton()
+            }
+        }
+        if (game != null) Box(
             modifier = Modifier
                 .fillMaxSize()
                 .then(
@@ -1499,7 +1515,10 @@ private fun GameDetailModals(
         ArtPickerModal(
             gameTitle = game.title,
             slot = pickerState.artPickerSlot,
-            candidates = pickerState.artCandidates,
+            provider = pickerState.artProvider,
+            providers = pickerState.artProviders,
+            coverSize = pickerState.artCoverSize,
+            candidates = pickerState.artVisibleCandidates,
             focusIndex = pickerState.artPickerFocusIndex,
             isLoading = pickerState.artPickerLoading,
             errorMessage = pickerState.artPickerError,
@@ -1510,6 +1529,8 @@ private fun GameDetailModals(
             onChooseFile = viewModel::openArtFileBrowser,
             onSelect = viewModel::selectArtCandidate,
             onSelectSlot = viewModel::selectArtSlot,
+            onSelectProvider = viewModel::selectArtProvider,
+            onSelectCoverSize = viewModel::selectArtCoverSize,
             onDismiss = viewModel::dismissArtPicker
         )
     }

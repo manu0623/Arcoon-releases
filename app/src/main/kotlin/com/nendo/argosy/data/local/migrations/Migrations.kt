@@ -4492,3 +4492,15 @@ object Migration_221_222 : Migration(221, 222) {
         )
     }
 }
+
+/**
+ * The cover scrape marker. A scraped cover records when it was chosen and for which Box Art
+ * Shape, which is what lets a later run skip covers that already fit instead of asking RomM
+ * about every game again.
+ */
+object Migration_222_223 : Migration(222, 223) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `game_art` ADD COLUMN `scrapedAt` INTEGER")
+        db.execSQL("ALTER TABLE `game_art` ADD COLUMN `scrapedShape` TEXT")
+    }
+}

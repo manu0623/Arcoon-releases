@@ -46,6 +46,12 @@ fun CocoonNowPlayingTile(
     val art = com.nendo.argosy.ui.common.rememberResolvedArt(gameId)
     val image = art?.backgroundPath ?: art?.coverPath
     val label = stringResource(R.string.cocoon_now_playing)
+    val tileDisplay = androidx.compose.ui.platform.LocalView.current.display?.displayId
+    androidx.compose.runtime.LaunchedEffect(gameId) {
+        com.nendo.argosy.util.ArcoonTrace.log(
+            "board now-playing square for $gameId on display $tileDisplay"
+        )
+    }
     val scope = rememberCoroutineScope()
     Box(
         modifier = modifier

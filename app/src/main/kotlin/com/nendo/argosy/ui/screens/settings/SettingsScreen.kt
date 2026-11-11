@@ -261,8 +261,13 @@ fun SettingsScreen(
     }
 
     val inputDispatcher = LocalInputDispatcher.current
-    val inputHandler = remember(onBack) {
-        viewModel.createInputHandler(onBack = onBack)
+    // Opened straight into a page from outside (a folder's Y ▸ platform settings): Back there
+    // leaves Settings rather than stepping into Settings' own list.
+    val entrySection = remember(initialSection) {
+        settingsEntrySection(initialSection)?.takeIf { it != SettingsSection.MAIN }
+    }
+    val inputHandler = remember(onBack, entrySection) {
+        viewModel.createInputHandler(onBack = onBack, leaveAt = entrySection)
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -927,13 +932,6 @@ fun SettingsScreen(
         com.nendo.argosy.ui.cocoon.theme.CocoonPersonalizationScreen(
             onDismiss = { com.nendo.argosy.ui.cocoon.theme.CocoonThemeEngine.jinglesOpen.value = false },
             jinglesOnly = true
-        )
-    }
-
-    if (com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value) {
-        com.nendo.argosy.ui.cocoon.CocoonSteamGridDbSettings(
-            viewModel = viewModel,
-            onDismiss = { com.nendo.argosy.ui.cocoon.CocoonIntegrationsState.steamGridDbOpen.value = false }
         )
     }
 
